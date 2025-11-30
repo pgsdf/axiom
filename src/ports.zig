@@ -784,6 +784,7 @@ pub const PortsMigrator = struct {
     }
 
     fn parseOptions(self: *PortsMigrator, port_path: []const u8) ![]const PortOption {
+        _ = self;
         _ = port_path;
         // TODO: Parse OPTIONS_DEFINE, OPTIONS_DEFAULT, etc.
         return &[_]PortOption{};
