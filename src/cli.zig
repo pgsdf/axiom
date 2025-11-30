@@ -2518,12 +2518,12 @@ pub const CLI = struct {
         };
 
         switch (result) {
-            .success => |info| {
+            .success => |bundle_info| {
                 std.debug.print("\nBundle created successfully!\n", .{});
-                std.debug.print("  Output: {s}\n", .{info.output_path});
-                std.debug.print("  Size: {d} bytes\n", .{info.size});
-                std.debug.print("  Packages: {d}\n", .{info.packages_included});
-                self.allocator.free(info.output_path);
+                std.debug.print("  Output: {s}\n", .{bundle_info.output_path});
+                std.debug.print("  Size: {d} bytes\n", .{bundle_info.size});
+                std.debug.print("  Packages: {d}\n", .{bundle_info.packages_included});
+                self.allocator.free(bundle_info.output_path);
             },
             .failure => |err_info| {
                 std.debug.print("Bundle creation failed: {s}\n", .{err_info.message});
