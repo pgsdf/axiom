@@ -169,12 +169,12 @@ pub const SecureTarExtractor = struct {
             const file_entry = entry.?;
 
             // Validate and extract the entry
-            try self.processEntry(&tar_iter, file_entry);
+            try self.processEntry(file_entry);
         }
     }
 
     /// Process a single tar entry with security validation
-    fn processEntry(self: *SecureTarExtractor, tar_iter: anytype, entry: anytype) !void {
+    fn processEntry(self: *SecureTarExtractor, entry: anytype) !void {
         // Get the file name
         const name = entry.name;
 
@@ -188,7 +188,7 @@ pub const SecureTarExtractor = struct {
 
         // Process based on file type
         switch (entry.kind) {
-            .file => try self.extractRegularFile(tar_iter, entry, full_path),
+            .file => try self.extractRegularFile(entry, full_path),
             .directory => try self.extractDirectory(full_path),
             .sym_link => try self.extractSymlink(entry, full_path, validated_path),
         }
@@ -197,7 +197,6 @@ pub const SecureTarExtractor = struct {
     /// Extract a regular file
     fn extractRegularFile(
         self: *SecureTarExtractor,
-        tar_iter: anytype,
         entry: anytype,
         full_path: []const u8,
     ) !void {
@@ -228,27 +227,12 @@ pub const SecureTarExtractor = struct {
         };
         defer file.close();
 
-        // Read and write file contents using tar iterator reader
-        var reader = tar_iter.reader();
-        var bytes_written: u64 = 0;
-        var buf: [8192]u8 = undefined;
-
-        while (bytes_written < entry.size) {
-            const to_read = @min(buf.len, entry.size - bytes_written);
-            const n = reader.read(buf[0..to_read]) catch |err| {
-                std.debug.print("SecureTarExtractor: Read error: {}\n", .{err});
-                return ExtractionError.IoError;
-            };
-
-            if (n == 0) break;
-
-            file.writeAll(buf[0..n]) catch |err| {
-                std.debug.print("SecureTarExtractor: Write error: {}\n", .{err});
-                return ExtractionError.IoError;
-            };
-
-            bytes_written += n;
-        }
+        // Write file contents directly using tar entry's writeAll method
+        entry.writeAll(file.writer()) catch |err| {
+            std.debug.print("SecureTarExtractor: Write error: {}\n", .{err});
+            return ExtractionError.IoError;
+        };
+        const bytes_written = entry.size;
 
         // Apply permissions
         try self.applyFilePermissions(full_path, entry.mode);
