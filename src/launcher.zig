@@ -221,7 +221,7 @@ pub const Launcher = struct {
             return LaunchError.SpawnFailed;
         };
 
-        return switch (result.term) {
+        return switch (result) {
             .Exited => |code| .{
                 .exited = .{
                     .code = code,
@@ -240,7 +240,7 @@ pub const Launcher = struct {
         };
     }
 
-    fn detectMainExecutable(self: *Launcher, dataset_path: []const u8) ![]const u8 {
+    pub fn detectMainExecutable(self: *Launcher, dataset_path: []const u8) ![]const u8 {
         const bin_path = try std.fs.path.join(self.allocator, &[_][]const u8{
             dataset_path,
             "root",
