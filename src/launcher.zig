@@ -146,7 +146,7 @@ pub const Launcher = struct {
         defer self.allocator.free(exec_path);
 
         // Verify executable exists
-        std.fs.cwd().access(exec_path, .{ .mode = .execute_only }) catch {
+        std.fs.cwd().access(exec_path, .{}) catch {
             return LaunchError.ExecutableNotFound;
         };
 

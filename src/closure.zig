@@ -251,7 +251,7 @@ pub const ClosureComputer = struct {
 
         for (packages) |pkg_id| {
             if (std.mem.eql(u8, pkg_id.name, dep.name)) {
-                if (dep.constraint.satisfiedBy(pkg_id.version)) {
+                if (dep.constraint.satisfies(pkg_id.version)) {
                     return pkg_id;
                 }
             }
