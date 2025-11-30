@@ -138,6 +138,9 @@ pub const Command = enum {
     // Kernel compatibility operations
     kernel_check,
 
+    // ZFS path validation (Phase 26)
+    zfs_validate,
+
     unknown,
 };
 
@@ -239,6 +242,10 @@ pub fn parseCommand(cmd: []const u8) Command {
     // Kernel compatibility commands
     if (std.mem.eql(u8, cmd, "kernel")) return .kernel_check;
     if (std.mem.eql(u8, cmd, "kernel-check")) return .kernel_check;
+
+    // ZFS path validation (Phase 26)
+    if (std.mem.eql(u8, cmd, "zfs-validate")) return .zfs_validate;
+    if (std.mem.eql(u8, cmd, "validate-path")) return .zfs_validate;
 
     return .unknown;
 }
@@ -407,6 +414,9 @@ pub const CLI = struct {
 
             // Kernel compatibility commands
             .kernel_check => try self.kernelCheck(args[1..]),
+
+            // ZFS path validation (Phase 26)
+            .zfs_validate => try self.zfsValidate(args[1..]),
 
             .unknown => {
                 std.debug.print("Unknown command: {s}\n", .{args[0]});
@@ -2979,6 +2989,122 @@ pub const CLI = struct {
             std.debug.print("\nTo scan a category:\n", .{});
             std.debug.print("  axiom ports-scan <category>\n", .{});
             std.debug.print("  axiom ports-scan devel\n", .{});
+        }
+    }
+
+    // =============================================================
+    // Phase 26: ZFS Path Validation
+    // =============================================================
+
+    /// Validate ZFS dataset path components
+    fn zfsValidate(self: *CLI, args: []const []const u8) !void {
+        std.debug.print("ZFS Path Validation (Phase 26)\n", .{});
+        std.debug.print("==============================\n\n", .{});
+
+        if (args.len == 0) {
+            std.debug.print("Usage: axiom zfs-validate <path|component> [--type dataset|snapshot|component]\n\n", .{});
+            std.debug.print("Validates ZFS dataset paths and components for security.\n", .{});
+            std.debug.print("Prevents path injection, traversal attacks, and special character abuse.\n\n", .{});
+            std.debug.print("Examples:\n", .{});
+            std.debug.print("  axiom zfs-validate bash                    # Validate as component\n", .{});
+            std.debug.print("  axiom zfs-validate ../../../etc/passwd     # Detects traversal\n", .{});
+            std.debug.print("  axiom zfs-validate pkg@snap --type dataset # Detects snapshot in dataset\n", .{});
+            std.debug.print("  axiom zfs-validate 'pkg name'              # Detects invalid chars\n", .{});
+            std.debug.print("\nValid characters: a-z, A-Z, 0-9, -, _, .\n", .{});
+            std.debug.print("Reserved names: ., .., zfs, zpool, snapshot, bookmark, clone, origin\n", .{});
+            return;
+        }
+
+        const input = args[0];
+        var validate_type: enum { component, dataset, snapshot } = .component;
+
+        // Parse options
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--type") and i + 1 < args.len) {
+                i += 1;
+                if (std.mem.eql(u8, args[i], "dataset")) {
+                    validate_type = .dataset;
+                } else if (std.mem.eql(u8, args[i], "snapshot")) {
+                    validate_type = .snapshot;
+                } else if (std.mem.eql(u8, args[i], "component")) {
+                    validate_type = .component;
+                }
+            }
+        }
+
+        const validator = zfs.ZfsPathValidator.init(self.allocator, self.store.paths.store_root);
+
+        std.debug.print("Input: \"{s}\"\n", .{input});
+        std.debug.print("Type:  {s}\n\n", .{@tagName(validate_type)});
+
+        switch (validate_type) {
+            .component => {
+                validator.validateComponent(input) catch |err| {
+                    std.debug.print("✗ INVALID: {s}\n", .{zfs.ZfsPathValidator.errorMessage(err)});
+                    std.debug.print("\nSecurity implication: This input could be used for path injection.\n", .{});
+                    return;
+                };
+                std.debug.print("✓ VALID: Component is safe to use in ZFS dataset paths\n", .{});
+            },
+            .dataset => {
+                // For dataset validation, prepend store root if not already present
+                const full_path = if (std.mem.startsWith(u8, input, self.store.paths.store_root))
+                    input
+                else blk: {
+                    const p = std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ self.store.paths.store_root, input }) catch {
+                        std.debug.print("✗ ERROR: Memory allocation failed\n", .{});
+                        return;
+                    };
+                    break :blk p;
+                };
+
+                validator.validateDatasetPath(full_path) catch |err| {
+                    std.debug.print("✗ INVALID: {s}\n", .{zfs.ZfsPathValidator.errorMessage(err)});
+                    std.debug.print("\nSecurity implication: This path could escape the store hierarchy.\n", .{});
+                    return;
+                };
+                std.debug.print("✓ VALID: Dataset path is within the store hierarchy and safe\n", .{});
+            },
+            .snapshot => {
+                // For snapshot validation, ensure it has @ separator
+                if (std.mem.indexOfScalar(u8, input, '@') == null) {
+                    std.debug.print("✗ INVALID: Snapshot path must contain '@' separator\n", .{});
+                    std.debug.print("  Example: dataset@snapshot_name\n", .{});
+                    return;
+                }
+
+                // Prepend store root if not present
+                const full_path = if (std.mem.startsWith(u8, input, self.store.paths.store_root))
+                    input
+                else blk: {
+                    const p = std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ self.store.paths.store_root, input }) catch {
+                        std.debug.print("✗ ERROR: Memory allocation failed\n", .{});
+                        return;
+                    };
+                    break :blk p;
+                };
+
+                validator.validateSnapshotPath(full_path) catch |err| {
+                    std.debug.print("✗ INVALID: {s}\n", .{zfs.ZfsPathValidator.errorMessage(err)});
+                    std.debug.print("\nSecurity implication: This snapshot path is malformed or escapes hierarchy.\n", .{});
+                    return;
+                };
+                std.debug.print("✓ VALID: Snapshot path is safe\n", .{});
+            },
+        }
+
+        // Also test sanitization
+        std.debug.print("\nSanitization:\n", .{});
+        if (validator.sanitizeComponent(input)) |sanitized| {
+            defer self.allocator.free(sanitized);
+            if (std.mem.eql(u8, input, sanitized)) {
+                std.debug.print("  Input is already safe (no changes needed)\n", .{});
+            } else {
+                std.debug.print("  Sanitized form: \"{s}\"\n", .{sanitized});
+            }
+        } else |_| {
+            std.debug.print("  Cannot be sanitized (empty input)\n", .{});
         }
     }
 
