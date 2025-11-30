@@ -93,12 +93,6 @@ pub const SecurityOptions = struct {
     secure_extraction: bool = true,
     /// Allow symlinks in imported packages
     allow_symlinks: bool = true,
-    /// Allow hardlinks in imported packages (dangerous)
-    allow_hardlinks: bool = false,
-    /// Allow device nodes (dangerous)
-    allow_devices: bool = false,
-    /// Allow FIFOs/sockets
-    allow_fifos: bool = false,
     /// Strip setuid/setgid bits
     strip_setuid: bool = true,
     /// Maximum file size (bytes)
@@ -299,9 +293,6 @@ pub const Importer = struct {
             // Configure secure extraction options
             const extract_options = SecureTarExtractor.ExtractOptions{
                 .allow_symlinks = security.allow_symlinks,
-                .allow_hardlinks = security.allow_hardlinks,
-                .allow_devices = security.allow_devices,
-                .allow_fifos = security.allow_fifos,
                 .allow_absolute_paths = false, // Always reject absolute paths
                 .allow_parent_refs = false, // Always reject path traversal
                 .strip_setuid = security.strip_setuid,
@@ -330,18 +321,6 @@ pub const Importer = struct {
                     SecureTarExtractor.ExtractionError.SymlinkEscape => {
                         std.debug.print("SECURITY: Symlink escape detected in tarball!\n", .{});
                         return ImportError.SymlinkEscape;
-                    },
-                    SecureTarExtractor.ExtractionError.HardlinkEscape => {
-                        std.debug.print("SECURITY: Hardlink escape detected in tarball!\n", .{});
-                        return ImportError.SymlinkEscape;
-                    },
-                    SecureTarExtractor.ExtractionError.DeviceNode => {
-                        std.debug.print("SECURITY: Device node detected in tarball!\n", .{});
-                        return ImportError.DeviceNodeRejected;
-                    },
-                    SecureTarExtractor.ExtractionError.FifoSocket => {
-                        std.debug.print("SECURITY: FIFO/socket detected in tarball!\n", .{});
-                        return ImportError.DeviceNodeRejected;
                     },
                     SecureTarExtractor.ExtractionError.FileTooLarge,
                     SecureTarExtractor.ExtractionError.TotalSizeTooLarge,

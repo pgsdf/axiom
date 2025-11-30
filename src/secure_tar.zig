@@ -13,16 +13,10 @@ pub const SecureTarExtractor = struct {
     pub const ExtractOptions = struct {
         /// Allow symlinks in the archive (default: true, but validated)
         allow_symlinks: bool = true,
-        /// Allow hardlinks in the archive (default: false - security risk)
-        allow_hardlinks: bool = false,
         /// Allow absolute paths (default: false - security risk)
         allow_absolute_paths: bool = false,
         /// Allow parent directory references (default: false - path traversal)
         allow_parent_refs: bool = false,
-        /// Allow device nodes (default: false - security risk)
-        allow_devices: bool = false,
-        /// Allow FIFOs and sockets (default: false - DoS risk)
-        allow_fifos: bool = false,
         /// Maximum path length (default: 1024)
         max_path_length: usize = 1024,
         /// Maximum file size in bytes (default: 1GB)
@@ -36,8 +30,6 @@ pub const SecureTarExtractor = struct {
         strip_setuid: bool = true,
         /// Strip sticky bit (default: true)
         strip_sticky: bool = true,
-        /// Validate ownership (reject root-owned files) (default: false)
-        reject_root_ownership: bool = false,
     };
 
     /// Statistics gathered during extraction
@@ -58,26 +50,14 @@ pub const SecureTarExtractor = struct {
         AbsolutePath,
         /// Symlink target escapes extraction root
         SymlinkEscape,
-        /// Hardlink target escapes extraction root
-        HardlinkEscape,
-        /// Device node not allowed
-        DeviceNode,
-        /// FIFO or socket not allowed
-        FifoSocket,
         /// Path exceeds maximum length
         PathTooLong,
         /// Filename contains invalid characters (NUL, control chars)
         InvalidFilename,
-        /// SetUID/SetGID bit detected when not allowed
-        SetuidBit,
         /// File size exceeds maximum
         FileTooLarge,
         /// Total extraction size exceeds maximum
         TotalSizeTooLarge,
-        /// Root ownership detected when not allowed
-        RootOwnership,
-        /// Unknown file type in archive
-        UnknownFileType,
         /// Archive is malformed
         MalformedArchive,
         /// I/O error during extraction
@@ -167,10 +147,15 @@ pub const SecureTarExtractor = struct {
         try self.extractTar(decompress.reader());
     }
 
-    /// Extract from a tar reader
+    /// Extract from a tar reader using std.tar.iterator
     fn extractTar(self: *SecureTarExtractor, reader: anytype) !void {
+        // Allocate buffers for tar iterator
+        var file_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
+        var link_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
+
         var tar_iter = std.tar.iterator(reader, .{
-            .file_name_encoding = .utf8,
+            .file_name_buffer = &file_name_buffer,
+            .link_name_buffer = &link_name_buffer,
             .diagnostics = null,
         });
 
@@ -184,14 +169,14 @@ pub const SecureTarExtractor = struct {
             const file_entry = entry.?;
 
             // Validate and extract the entry
-            try self.processEntry(&tar_iter, &file_entry);
+            try self.processEntry(&tar_iter, file_entry);
         }
     }
 
     /// Process a single tar entry with security validation
-    fn processEntry(self: *SecureTarExtractor, tar_iter: anytype, entry: *const std.tar.Header) !void {
+    fn processEntry(self: *SecureTarExtractor, tar_iter: anytype, entry: std.tar.Header) !void {
         // Get the file name
-        const name = entry.name();
+        const name = entry.name;
 
         // Validate the path
         const validated_path = try self.validatePath(name);
@@ -202,29 +187,10 @@ pub const SecureTarExtractor = struct {
         defer self.allocator.free(full_path);
 
         // Process based on file type
-        switch (entry.file_type) {
-            .regular => try self.extractRegularFile(tar_iter, entry, full_path),
+        switch (entry.kind) {
+            .file => try self.extractRegularFile(tar_iter, entry, full_path),
             .directory => try self.extractDirectory(full_path),
-            .symbolic_link => try self.extractSymlink(entry, full_path, validated_path),
-            .hard_link => try self.extractHardlink(entry, full_path),
-            .character_device, .block_device => {
-                if (!self.options.allow_devices) {
-                    self.stats.paths_rejected += 1;
-                    std.debug.print("SecureTarExtractor: Rejected device node: {s}\n", .{name});
-                    return ExtractionError.DeviceNode;
-                }
-            },
-            .fifo => {
-                if (!self.options.allow_fifos) {
-                    self.stats.paths_rejected += 1;
-                    std.debug.print("SecureTarExtractor: Rejected FIFO: {s}\n", .{name});
-                    return ExtractionError.FifoSocket;
-                }
-            },
-            else => {
-                std.debug.print("SecureTarExtractor: Unknown file type in archive: {s}\n", .{name});
-                return ExtractionError.UnknownFileType;
-            },
+            .sym_link => try self.extractSymlink(entry, full_path, validated_path),
         }
     }
 
@@ -232,7 +198,7 @@ pub const SecureTarExtractor = struct {
     fn extractRegularFile(
         self: *SecureTarExtractor,
         tar_iter: anytype,
-        entry: *const std.tar.Header,
+        entry: std.tar.Header,
         full_path: []const u8,
     ) !void {
         // Check file size
@@ -262,26 +228,26 @@ pub const SecureTarExtractor = struct {
         };
         defer file.close();
 
-        // Read and write file contents
+        // Read and write file contents using tar iterator reader
         var reader = tar_iter.reader();
         var bytes_written: u64 = 0;
         var buf: [8192]u8 = undefined;
 
         while (bytes_written < entry.size) {
             const to_read = @min(buf.len, entry.size - bytes_written);
-            const bytes_read = reader.read(buf[0..to_read]) catch |err| {
+            const n = reader.read(buf[0..to_read]) catch |err| {
                 std.debug.print("SecureTarExtractor: Read error: {}\n", .{err});
                 return ExtractionError.IoError;
             };
 
-            if (bytes_read == 0) break;
+            if (n == 0) break;
 
-            file.writeAll(buf[0..bytes_read]) catch |err| {
+            file.writeAll(buf[0..n]) catch |err| {
                 std.debug.print("SecureTarExtractor: Write error: {}\n", .{err});
                 return ExtractionError.IoError;
             };
 
-            bytes_written += bytes_read;
+            bytes_written += n;
         }
 
         // Apply permissions
@@ -307,7 +273,7 @@ pub const SecureTarExtractor = struct {
     /// Extract a symbolic link with validation
     fn extractSymlink(
         self: *SecureTarExtractor,
-        entry: *const std.tar.Header,
+        entry: std.tar.Header,
         full_path: []const u8,
         validated_path: []const u8,
     ) !void {
@@ -316,10 +282,11 @@ pub const SecureTarExtractor = struct {
             return; // Silently skip
         }
 
-        const link_target = entry.link_name() orelse {
+        const link_target = entry.link_name;
+        if (link_target.len == 0) {
             std.debug.print("SecureTarExtractor: Symlink without target\n", .{});
             return ExtractionError.MalformedArchive;
-        };
+        }
 
         // Validate symlink target doesn't escape extraction root
         try self.validateSymlinkTarget(validated_path, link_target);
@@ -339,40 +306,6 @@ pub const SecureTarExtractor = struct {
         };
 
         self.stats.symlinks_created += 1;
-    }
-
-    /// Extract a hard link
-    fn extractHardlink(self: *SecureTarExtractor, entry: *const std.tar.Header, full_path: []const u8) !void {
-        if (!self.options.allow_hardlinks) {
-            self.stats.paths_rejected += 1;
-            return ExtractionError.HardlinkEscape; // Hardlinks are dangerous
-        }
-
-        const link_target = entry.link_name() orelse {
-            std.debug.print("SecureTarExtractor: Hardlink without target\n", .{});
-            return ExtractionError.MalformedArchive;
-        };
-
-        // Validate hardlink target
-        const validated_target = try self.validatePath(link_target);
-        defer self.allocator.free(validated_target);
-
-        const full_target = try std.fs.path.join(self.allocator, &[_][]const u8{ self.extraction_root, validated_target });
-        defer self.allocator.free(full_target);
-
-        // Ensure parent directory exists
-        if (std.fs.path.dirname(full_path)) |parent| {
-            std.fs.cwd().makePath(parent) catch |err| {
-                std.debug.print("SecureTarExtractor: Failed to create parent dir: {}\n", .{err});
-                return ExtractionError.IoError;
-            };
-        }
-
-        // Create hardlink
-        std.posix.link(full_target, full_path) catch |err| {
-            std.debug.print("SecureTarExtractor: Failed to create hardlink: {}\n", .{err});
-            return ExtractionError.IoError;
-        };
     }
 
     /// Validate a path from the archive
@@ -560,7 +493,13 @@ pub const SecureTarExtractor = struct {
         mode = mode & mask;
 
         // Actually set the permissions
-        std.fs.cwd().chmod(path, @truncate(mode)) catch |err| {
+        const cpath = std.fs.cwd().realpathAlloc(self.allocator, path) catch return;
+        defer self.allocator.free(cpath);
+
+        // Use chmod via posix
+        const fd = std.fs.cwd().openFile(path, .{ .mode = .read_only }) catch return;
+        defer fd.close();
+        fd.chmod(@truncate(mode)) catch |err| {
             std.debug.print("SecureTarExtractor: Failed to set permissions on {s}: {}\n", .{ path, err });
             return;
         };
