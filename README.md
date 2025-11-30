@@ -410,7 +410,7 @@ See [ROADMAP.md](ROADMAP.md) for detailed planning of future phases:
 | 21 | Desktop Integration | Medium | ✓ Complete |
 | 22 | Ports Migration Tool | High | ✓ Complete |
 | 23 | Kernel Module Compatibility | Medium | ✓ Complete |
-| 24 | Secure Tar Extraction | Critical | Planned |
+| 24 | Secure Tar Extraction | Critical | ✓ Complete |
 | 25 | Mandatory Signature Verification | Critical | Planned |
 | 26 | ZFS Dataset Path Validation | High | Planned |
 | 27 | Build Sandboxing | High | Planned |
@@ -430,14 +430,14 @@ See [ROADMAP.md](ROADMAP.md) for detailed planning of future phases:
 - FreeBSD ports migration tool for ecosystem bootstrapping (Phase 22)
 - Kernel module compatibility checking for kernel-bound packages (Phase 23)
 
-**Security Hardening Planned (Phases 24-30):**
-- Secure tar extraction with path traversal prevention
-- Mandatory signature verification with type-safe status
-- ZFS dataset path validation
-- Build sandboxing with FreeBSD jails
-- Secure bundle verification
-- Resolver resource limits to prevent DoS
-- Thread-safe libzfs operations
+**Security Hardening (Phases 24-30):**
+- ✓ Secure tar extraction with path traversal prevention (Phase 24)
+- Mandatory signature verification with type-safe status (Phase 25)
+- ZFS dataset path validation (Phase 26)
+- Build sandboxing with FreeBSD jails (Phase 27)
+- Secure bundle verification (Phase 28)
+- Resolver resource limits to prevent DoS (Phase 29)
+- Thread-safe libzfs operations (Phase 30)
 
 ## Quick Start
 
