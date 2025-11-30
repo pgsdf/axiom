@@ -32,6 +32,41 @@ pub const KernelCompat = struct {
     /// Names of .ko files installed by this package
     kld_names: []const []const u8 = &[_][]const u8{},
 
+    /// Validation errors for kernel compatibility metadata
+    pub const ValidationError = error{
+        /// freebsd_version_min is greater than freebsd_version_max
+        VersionRangeInverted,
+        /// require_exact_ident is true but kernel_idents is empty
+        IdentRequiredButEmpty,
+        /// kmod is false but kernel-specific fields are set
+        NonKmodWithKernelFields,
+    };
+
+    /// Validate kernel compatibility metadata for logical consistency
+    pub fn validate(self: KernelCompat) ValidationError!void {
+        // Check that version range is valid
+        if (self.freebsd_version_min != null and self.freebsd_version_max != null) {
+            if (self.freebsd_version_min.? > self.freebsd_version_max.?) {
+                return ValidationError.VersionRangeInverted;
+            }
+        }
+
+        // Check that require_exact_ident has kernel_idents to match against
+        if (self.require_exact_ident and self.kernel_idents.len == 0) {
+            return ValidationError.IdentRequiredButEmpty;
+        }
+
+        // Warn (but don't error) if kmod is false but kernel fields are set
+        // This is a soft validation - we just check for the most obvious case
+        if (!self.kmod) {
+            const has_version_constraint = self.freebsd_version_min != null or self.freebsd_version_max != null;
+            const has_ident_constraint = self.require_exact_ident or self.kernel_idents.len > 0;
+            if (has_version_constraint or has_ident_constraint) {
+                return ValidationError.NonKmodWithKernelFields;
+            }
+        }
+    }
+
     /// Free allocated memory
     pub fn deinit(self: *KernelCompat, allocator: std.mem.Allocator) void {
         for (self.kernel_idents) |ident| {

@@ -3072,14 +3072,33 @@ pub const CLI = struct {
                     ok_count += 1;
                 } else {
                     std.debug.print("  [INCOMPATIBLE] {s}-{s}\n", .{ pkg.name, pkg.version });
-                    if (k.freebsd_version_min) |min| {
-                        std.debug.print("       freebsd_version_min: {d}\n", .{min});
-                    }
-                    if (k.freebsd_version_max) |max| {
-                        std.debug.print("       freebsd_version_max: {d}\n", .{max});
-                    }
-                    if (result.reason) |reason| {
-                        std.debug.print("       reason: {s}\n", .{reason});
+                    std.debug.print("       reason: {s}\n", .{result.getMessage()});
+                    // Show detailed diagnostics based on error type
+                    switch (result.reason) {
+                        .version_below_minimum => {
+                            std.debug.print("       running version: {d}\n", .{result.running_version});
+                            if (result.required_min) |min| {
+                                std.debug.print("       required minimum: {d}\n", .{min});
+                            }
+                        },
+                        .version_above_maximum => {
+                            std.debug.print("       running version: {d}\n", .{result.running_version});
+                            if (result.required_max) |max| {
+                                std.debug.print("       required maximum: {d}\n", .{max});
+                            }
+                        },
+                        .ident_mismatch => {
+                            std.debug.print("       running ident: \"{s}\"\n", .{result.running_ident});
+                            if (k.kernel_idents.len > 0) {
+                                std.debug.print("       allowed idents: ", .{});
+                                for (k.kernel_idents, 0..) |ident, idx| {
+                                    if (idx > 0) std.debug.print(", ", .{});
+                                    std.debug.print("{s}", .{ident});
+                                }
+                                std.debug.print("\n", .{});
+                            }
+                        },
+                        .none => {},
                     }
                     incompatible_count += 1;
                 }
