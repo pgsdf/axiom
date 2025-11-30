@@ -50,10 +50,40 @@ pub const KernelContext = struct {
     }
 };
 
-/// Result of kernel compatibility check
+/// Reason for kernel incompatibility
+pub const KernelIncompatReason = enum {
+    none,
+    version_below_minimum,
+    version_above_maximum,
+    ident_mismatch,
+
+    pub fn message(self: KernelIncompatReason) []const u8 {
+        return switch (self) {
+            .none => "",
+            .version_below_minimum => "running kernel version is below minimum required",
+            .version_above_maximum => "running kernel version exceeds maximum supported",
+            .ident_mismatch => "running kernel ident not in allowed list",
+        };
+    }
+};
+
+/// Result of kernel compatibility check with detailed diagnostics
 pub const KernelCompatResult = struct {
     compatible: bool,
-    reason: ?[]const u8 = null,
+    reason: KernelIncompatReason = .none,
+    /// Running kernel version (for diagnostics)
+    running_version: u32 = 0,
+    /// Required minimum version (if failed due to version)
+    required_min: ?u32 = null,
+    /// Required maximum version (if failed due to version)
+    required_max: ?u32 = null,
+    /// Running kernel ident (for diagnostics)
+    running_ident: []const u8 = "",
+
+    /// Get human-readable reason message
+    pub fn getMessage(self: KernelCompatResult) []const u8 {
+        return self.reason.message();
+    }
 };
 
 /// Check if a package's kernel requirements are compatible with running kernel
@@ -73,7 +103,10 @@ pub fn kernelIsCompatible(
         if (fv < minv) {
             return .{
                 .compatible = false,
-                .reason = "running kernel version is below minimum required",
+                .reason = .version_below_minimum,
+                .running_version = fv,
+                .required_min = minv,
+                .running_ident = kernel_ctx.kernel_ident,
             };
         }
     }
@@ -83,7 +116,10 @@ pub fn kernelIsCompatible(
         if (fv > maxv) {
             return .{
                 .compatible = false,
-                .reason = "running kernel version exceeds maximum supported",
+                .reason = .version_above_maximum,
+                .running_version = fv,
+                .required_max = maxv,
+                .running_ident = kernel_ctx.kernel_ident,
             };
         }
     }
@@ -100,12 +136,14 @@ pub fn kernelIsCompatible(
         if (!matched) {
             return .{
                 .compatible = false,
-                .reason = "running kernel ident not in allowed list",
+                .reason = .ident_mismatch,
+                .running_version = fv,
+                .running_ident = kernel_ctx.kernel_ident,
             };
         }
     }
 
-    return .{ .compatible = true };
+    return .{ .compatible = true, .running_version = fv, .running_ident = kernel_ctx.kernel_ident };
 }
 
 /// Errors that can occur during resolution
@@ -669,9 +707,33 @@ pub const Resolver = struct {
             if (candidate.kernel_compat) |kc| {
                 const compat_result = kernelIsCompatible(&self.kernel_ctx, &kc);
                 if (!compat_result.compatible) {
-                    std.debug.print("  ⚠ Skipping {s}@{} due to kernel incompatibility", .{ pkg_name, candidate.id.version });
-                    if (compat_result.reason) |reason| {
-                        std.debug.print(": {s}", .{reason});
+                    std.debug.print("  ⚠ Skipping {s}@{} - {s}", .{
+                        pkg_name,
+                        candidate.id.version,
+                        compat_result.getMessage(),
+                    });
+                    // Print version details for version-related errors
+                    switch (compat_result.reason) {
+                        .version_below_minimum => {
+                            if (compat_result.required_min) |min| {
+                                std.debug.print(" (running: {d}, required: >={d})", .{
+                                    compat_result.running_version,
+                                    min,
+                                });
+                            }
+                        },
+                        .version_above_maximum => {
+                            if (compat_result.required_max) |max| {
+                                std.debug.print(" (running: {d}, required: <={d})", .{
+                                    compat_result.running_version,
+                                    max,
+                                });
+                            }
+                        },
+                        .ident_mismatch => {
+                            std.debug.print(" (running: \"{s}\")", .{compat_result.running_ident});
+                        },
+                        .none => {},
                     }
                     std.debug.print("\n", .{});
                     kernel_rejected_count += 1;
@@ -1041,7 +1103,7 @@ test "kernelIsCompatible.basic_checks" {
     const kmod_result_ok = kernelIsCompatible(&kernel_ctx, &kmod_compat_ok);
     try std.testing.expect(kmod_result_ok.compatible);
 
-    // Test kmod below version range
+    // Test kmod below version range (running 1502000 < min 1600000)
     const kmod_compat_new = KernelCompat{
         .kmod = true,
         .freebsd_version_min = 1600000,
@@ -1049,9 +1111,11 @@ test "kernelIsCompatible.basic_checks" {
     };
     const kmod_result_new = kernelIsCompatible(&kernel_ctx, &kmod_compat_new);
     try std.testing.expect(!kmod_result_new.compatible);
-    try std.testing.expect(kmod_result_new.reason != null);
+    try std.testing.expectEqual(KernelIncompatReason.version_below_minimum, kmod_result_new.reason);
+    try std.testing.expectEqual(@as(u32, 1502000), kmod_result_new.running_version);
+    try std.testing.expectEqual(@as(?u32, 1600000), kmod_result_new.required_min);
 
-    // Test kmod above version range
+    // Test kmod above version range (running 1502000 > max 1499999)
     const kmod_compat_old = KernelCompat{
         .kmod = true,
         .freebsd_version_min = 1400000,
@@ -1059,6 +1123,9 @@ test "kernelIsCompatible.basic_checks" {
     };
     const kmod_result_old = kernelIsCompatible(&kernel_ctx, &kmod_compat_old);
     try std.testing.expect(!kmod_result_old.compatible);
+    try std.testing.expectEqual(KernelIncompatReason.version_above_maximum, kmod_result_old.reason);
+    try std.testing.expectEqual(@as(u32, 1502000), kmod_result_old.running_version);
+    try std.testing.expectEqual(@as(?u32, 1499999), kmod_result_old.required_max);
 }
 
 test "kernelIsCompatible.ident_matching" {
@@ -1085,4 +1152,6 @@ test "kernelIsCompatible.ident_matching" {
     };
     const result_nomatch = kernelIsCompatible(&kernel_ctx, &compat_nomatch);
     try std.testing.expect(!result_nomatch.compatible);
+    try std.testing.expectEqual(KernelIncompatReason.ident_mismatch, result_nomatch.reason);
+    try std.testing.expectEqualStrings("PGSD-GENERIC", result_nomatch.running_ident);
 }
