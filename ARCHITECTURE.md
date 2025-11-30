@@ -166,6 +166,12 @@ zroot/axiom/env/<name>/
 └── activate       # Activation script
 ```
 
+The `bin`, `lib`, and `share` directories represent the **logical merged view** of all packages. Internally, Axiom can implement this as either:
+1. A premerged tree under the environment dataset, or
+2. A stack of package `root/` trees overlaid with unionfs or similar mechanism.
+
+The external layout remains consistent regardless of implementation.
+
 #### `src/conflict.zig` - File Conflict Resolution
 Handles file conflicts when merging packages.
 
@@ -265,7 +271,7 @@ Computes complete transitive dependency closures.
 - `getTopologicalOrder()` - Return packages in dependency order
 - `estimateSize()` - Estimate total disk space
 
-**Base Packages:** libc, libm, libpthread, ld-linux (excluded from closures)
+**Base Packages:** libc, libm, libpthread, and the runtime linker (e.g., `ld-elf.so.1` on FreeBSD) are excluded from closures.
 
 #### `src/launcher.zig` - Runtime Launcher
 Direct package execution without full environment setup.
@@ -310,10 +316,14 @@ Creates portable, self-contained package bundles.
 ```
 #!/bin/sh
 # Self-extracting Axiom bundle
-[metadata]
+# axiom-bundle: version=1 format=pgsdimg
+# axiom-bundle: name=<package> pkgver=<version>
+# axiom-bundle: manifest-offset=<offset>
 __ARCHIVE_START__
 [compressed tarball]
 ```
+
+The structured `# axiom-bundle:` comments provide machine-readable metadata that can be extracted without parsing the entire file.
 
 #### `src/runtime.zig` - Runtime Layer Management
 Manages shared runtime layers (similar to Flatpak runtimes).
@@ -506,7 +516,7 @@ Main CLI implementation with all user commands.
 - **Signature**: key, key-generate, key-add, key-remove, sign, verify
 - **Cache**: cache, cache-add, cache-remove, cache-fetch, cache-push
 - **Build**: build
-- **AppImage**: run, closure, export, bundle
+- **Bundles**: run, closure, export, bundle
 - **Runtime**: runtime, runtime-create, runtime-use
 - **Desktop**: desktop-install, desktop-remove
 - **Multi-user**: user-*, system-*
