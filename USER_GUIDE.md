@@ -16,8 +16,9 @@ A comprehensive guide to using the Axiom package manager for the Pacific Grove S
 10. [Binary Cache](#binary-cache)
 11. [Multi-user Support](#multi-user-support)
 12. [Building Packages](#building-packages)
-13. [Troubleshooting](#troubleshooting)
-14. [Best Practices](#best-practices)
+13. [Direct Execution & Bundles](#direct-execution--bundles)
+14. [Troubleshooting](#troubleshooting)
+15. [Best Practices](#best-practices)
 
 ---
 
@@ -800,6 +801,156 @@ post_process:
   strip: true
   compress_man: true
 ```
+
+---
+
+## Direct Execution & Bundles
+
+Axiom provides AppImage-inspired features for running packages directly and creating portable bundles.
+
+### Running Packages Directly
+
+Instead of creating full environments, you can run packages directly:
+
+```bash
+# Run a package
+sudo axiom run bash
+
+# Run with arguments
+sudo axiom run python -- script.py
+
+# Run in isolated mode
+sudo axiom run --isolated myapp
+```
+
+This automatically:
+1. Computes the package's dependency closure
+2. Sets up `LD_LIBRARY_PATH` and `PATH`
+3. Executes the main binary
+4. Cleans up on exit
+
+### Viewing Dependency Closures
+
+See all dependencies (direct and transitive) for a package:
+
+```bash
+sudo axiom closure bash
+```
+
+Output:
+```
+Dependency closure for bash@5.2.0:
+==================================
+
+Direct dependencies:
+  - readline 8.2.0
+  - ncurses 6.4.0
+
+Transitive dependencies:
+  - libc 2.38.0
+
+Total: 4 packages
+```
+
+### Exporting Packages
+
+Export packages in portable formats:
+
+```bash
+# Export as tarball
+sudo axiom export bash --format tarball --output bash.tar.gz
+
+# Export with dependencies
+sudo axiom export bash --format tarball --include-deps
+
+# Export as ZFS stream (for ZFS-to-ZFS transfer)
+sudo axiom export bash --format zfs-stream
+```
+
+### Creating Portable Bundles
+
+Create self-contained bundles that work without Axiom or ZFS:
+
+```bash
+# Create a .pgsdimg bundle (self-extracting executable)
+sudo axiom bundle bash --output bash.pgsdimg
+
+# With compression
+sudo axiom bundle bash --output bash.pgsdimg --compression zstd
+
+# Signed bundle
+sudo axiom bundle bash --output bash.pgsdimg --sign
+```
+
+#### Using .pgsdimg Bundles
+
+The generated bundle is a self-extracting shell script:
+
+```bash
+# Run directly
+./bash.pgsdimg
+
+# Extract to a directory
+./bash.pgsdimg --extract /opt/bash
+
+# Show bundle information
+./bash.pgsdimg --info
+```
+
+### Bundle Formats
+
+| Format | Description | Use Case |
+|--------|-------------|----------|
+| `pgsdimg` | Self-extracting executable | Distribution to any Linux system |
+| `zfs-stream` | ZFS send stream | Fast transfer between ZFS systems |
+| `tarball` | Compressed tar archive | Traditional distribution |
+| `directory` | Plain directory | Development and testing |
+
+### Runtime Layers
+
+Runtime layers provide shared base environments (similar to Flatpak runtimes):
+
+```bash
+# List available runtimes
+sudo axiom runtime
+
+# Create a custom runtime
+sudo axiom runtime-create my-runtime libc ncurses readline
+
+# Run a package with a specific runtime
+sudo axiom runtime-use base-2025 myapp
+```
+
+Standard runtimes:
+- `base-2025` - Minimal runtime (libc, libm, libpthread)
+- `full-2025` - Full runtime with common libraries
+- `gui-2025` - GUI runtime with X11/Wayland support
+
+### Desktop Integration
+
+Integrate packages with your desktop environment:
+
+```bash
+# Install desktop integration
+sudo axiom desktop-install firefox
+
+# This creates:
+# - ~/.local/share/applications/firefox.desktop
+# - Icons in ~/.local/share/icons/
+# - MIME type associations
+
+# Remove desktop integration
+sudo axiom desktop-remove firefox
+```
+
+### When to Use Each Approach
+
+| Approach | Best For |
+|----------|----------|
+| Full environment (`realize`) | Long-term development, production |
+| Direct execution (`run`) | Quick testing, one-off runs |
+| Bundle (`.pgsdimg`) | Distributing to non-Axiom systems |
+| Export (`export`) | Sharing between Axiom systems |
 
 ---
 
