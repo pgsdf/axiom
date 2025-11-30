@@ -1,0 +1,150 @@
+# Axiom Setup Guide
+
+## ZFS Dataset Configuration
+
+Axiom requires proper ZFS dataset configuration before use. Follow these steps:
+
+### 1. Set Mountpoint
+
+Change the `zroot/axiom` dataset from `legacy` to use `/axiom` as its mountpoint:
+
+```bash
+zfs set mountpoint=/axiom zroot/axiom
+```
+
+**Why `/axiom` instead of `legacy`?**
+- Automatic mounting by ZFS (no /etc/fstab entries needed)
+- Self-contained and independent from system directories
+- Cleaner separation of concerns
+- Simplifies disaster recovery
+
+### 2. Create Subdataset Structure
+
+Create the required subdatasets for Axiom's operation:
+
+```bash
+# Package store
+zfs create zroot/axiom/store
+
+# Profile storage
+zfs create zroot/axiom/profiles
+
+# Environment storage
+zfs create zroot/axiom/env
+```
+
+### 3. Verify Configuration
+
+Check that datasets are properly configured:
+
+```bash
+zfs list -r zroot/axiom
+```
+
+Expected output:
+```
+NAME                     USED  AVAIL  REFER  MOUNTPOINT
+zroot/axiom              XXX   XXX    96K    /axiom
+zroot/axiom/store        96K   XXX    96K    /axiom/store
+zroot/axiom/profiles     96K   XXX    96K    /axiom/profiles
+zroot/axiom/env          96K   XXX    96K    /axiom/env
+```
+
+### 4. Filesystem Layout
+
+After setup, you'll have:
+
+```
+/axiom/
+├── store/              # Immutable package storage
+│   └── pkg/           # Package datasets will go here
+├── profiles/          # Profile definitions
+└── env/               # Realized environments
+```
+
+### 5. Permissions
+
+Ensure proper permissions (Axiom typically runs as root for ZFS operations):
+
+```bash
+ls -ld /axiom
+# Should show: drwxr-xr-x  root  wheel  /axiom
+```
+
+## Next Steps
+
+After completing dataset setup:
+
+1. Build Axiom: `zig build`
+2. Run the demo: `sudo ./zig-out/bin/axiom`
+3. Verify ZFS integration works correctly
+
+## Troubleshooting
+
+### Dataset already has legacy mountpoint
+
+If you see an error about the legacy mountpoint:
+
+```bash
+# Unmount if currently mounted via /etc/fstab
+umount /axiom  # if it exists
+
+# Set new mountpoint
+zfs set mountpoint=/axiom zroot/axiom
+
+# Mount it
+zfs mount zroot/axiom
+```
+
+### Permission denied
+
+Axiom requires root privileges for ZFS operations:
+
+```bash
+sudo zig build run
+```
+
+### Cannot create datasets
+
+Ensure the parent dataset exists and is mounted:
+
+```bash
+zfs list zroot/axiom
+zfs get mounted zroot/axiom
+```
+
+## Advanced Configuration
+
+### Custom Mountpoint
+
+If you prefer a different location than `/axiom`:
+
+```bash
+zfs set mountpoint=/your/custom/path zroot/axiom
+```
+
+Then update Axiom's configuration accordingly (future feature).
+
+### Compression
+
+Enable compression for space efficiency:
+
+```bash
+zfs set compression=lz4 zroot/axiom
+```
+
+This will be inherited by all subdatasets.
+
+### Quota
+
+Set a quota if desired:
+
+```bash
+zfs set quota=100G zroot/axiom
+```
+
+---
+
+**Author**: Vester "Vic" Thacker  
+**Organization**: Pacific Grove Software Distribution Foundation  
+**License**: BSD 2-Clause

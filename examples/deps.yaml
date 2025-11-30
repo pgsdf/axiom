@@ -1,0 +1,10 @@
+dependencies:
+  - name: readline
+    version: ">=8.0.0"
+    constraint: range
+  - name: ncurses
+    version: "~6.4"
+    constraint: tilde
+  - name: libc
+    version: "*"
+    constraint: any

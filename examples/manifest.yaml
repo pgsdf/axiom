@@ -1,0 +1,11 @@
+name: bash
+version: 5.2.0
+revision: 1
+description: GNU Bourne Again Shell
+license: GPL-3.0-or-later
+homepage: https://www.gnu.org/software/bash/
+maintainer: Vester Thacker <vic@pgsdf.org>
+tags:
+  - shell
+  - terminal
+  - posix

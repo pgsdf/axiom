@@ -1,0 +1,38 @@
+profile_name: development
+lock_version: 1
+resolved:
+  - name: bash
+    version: "5.2.0"
+    revision: 1
+    build_id: abc123
+    requested: true
+  - name: readline
+    version: "8.2.0"
+    revision: 1
+    build_id: def456
+    requested: false
+  - name: ncurses
+    version: "6.4.0"
+    revision: 1
+    build_id: ghi789
+    requested: false
+  - name: git
+    version: "2.43.0"
+    revision: 1
+    build_id: jkl012
+    requested: true
+  - name: vim
+    version: "9.0.0"
+    revision: 2
+    build_id: mno345
+    requested: true
+  - name: gcc
+    version: "13.2.1"
+    revision: 1
+    build_id: pqr678
+    requested: true
+  - name: python
+    version: "3.11.0"
+    revision: 3
+    build_id: stu901
+    requested: true

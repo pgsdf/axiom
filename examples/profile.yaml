@@ -1,0 +1,18 @@
+name: development
+description: Development environment with common tools
+packages:
+  - name: bash
+    version: "^5.0.0"
+    constraint: caret
+  - name: git
+    version: ">=2.40.0"
+    constraint: range
+  - name: vim
+    version: "*"
+    constraint: any
+  - name: gcc
+    version: "~13.2"
+    constraint: tilde
+  - name: python
+    version: "3.11.0"
+    constraint: exact

@@ -1,0 +1,612 @@
+const std = @import("std");
+const zfs = @import("zfs.zig");
+const types = @import("types.zig");
+const store = @import("store.zig");
+const profile = @import("profile.zig");
+const conflict = @import("conflict.zig");
+
+const ZfsHandle = zfs.ZfsHandle;
+const PackageId = types.PackageId;
+const PackageStore = store.PackageStore;
+const ProfileLock = profile.ProfileLock;
+const ResolvedPackage = profile.ResolvedPackage;
+const ConflictConfig = conflict.ConflictConfig;
+const ConflictTracker = conflict.ConflictTracker;
+const ConflictPolicy = conflict.ConflictPolicy;
+const FileConflict = conflict.FileConflict;
+const ConflictResolution = conflict.ConflictResolution;
+
+/// Errors that can occur during realization
+pub const RealizationError = error{
+    EnvironmentExists,
+    EnvironmentNotFound,
+    PackageNotFound,
+    RealizationFailed,
+    ActivationFailed,
+    FileConflict,
+};
+
+/// An environment is a realized profile - a set of package clones
+pub const Environment = struct {
+    name: []const u8,
+    profile_name: []const u8,
+    dataset_path: []const u8,
+    packages: []PackageId,
+    active: bool = false,
+};
+
+/// Realization engine - creates environments from lock files
+pub const RealizationEngine = struct {
+    allocator: std.mem.Allocator,
+    zfs_handle: *ZfsHandle,
+    store: *PackageStore,
+    env_root: []const u8 = "zroot/axiom/env",
+    conflict_policy: ConflictPolicy = .error_on_conflict,
+
+    /// Initialize realization engine
+    pub fn init(
+        allocator: std.mem.Allocator,
+        zfs_handle_ptr: *ZfsHandle,
+        store_ptr: *PackageStore,
+    ) RealizationEngine {
+        return RealizationEngine{
+            .allocator = allocator,
+            .zfs_handle = zfs_handle_ptr,
+            .store = store_ptr,
+        };
+    }
+
+    /// Set conflict resolution policy
+    pub fn setConflictPolicy(self: *RealizationEngine, policy: ConflictPolicy) void {
+        self.conflict_policy = policy;
+    }
+
+    /// Create an environment from a lock file
+    pub fn realize(
+        self: *RealizationEngine,
+        env_name: []const u8,
+        lock: ProfileLock,
+    ) !Environment {
+        std.debug.print("Realizing environment: {s}\n", .{env_name});
+        std.debug.print("  Profile: {s}\n", .{lock.profile_name});
+        std.debug.print("  Packages: {d}\n", .{lock.resolved.len});
+
+        // Create environment dataset
+        const env_dataset = try std.fmt.allocPrint(
+            self.allocator,
+            "{s}/{s}",
+            .{ self.env_root, env_name },
+        );
+        defer self.allocator.free(env_dataset);
+
+        // Check if environment already exists
+        const exists = try self.zfs_handle.datasetExists(
+            self.allocator,
+            env_dataset,
+            .filesystem,
+        );
+
+        if (exists) {
+            return RealizationError.EnvironmentExists;
+        }
+
+        std.debug.print("\nCreating environment dataset...\n", .{});
+        
+        // Create environment root dataset
+        try self.zfs_handle.createDataset(self.allocator, env_dataset, .{
+            .compression = "lz4",
+            .atime = false,
+        });
+
+        // Get environment mountpoint
+        const env_mountpoint = try self.zfs_handle.getMountpoint(
+            self.allocator,
+            env_dataset,
+        );
+        defer self.allocator.free(env_mountpoint);
+
+        std.debug.print("  Environment root: {s}\n", .{env_mountpoint});
+
+        // Create directory structure
+        const bin_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ env_mountpoint, "bin" });
+        defer self.allocator.free(bin_dir);
+        try std.fs.cwd().makePath(bin_dir);
+
+        const lib_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ env_mountpoint, "lib" });
+        defer self.allocator.free(lib_dir);
+        try std.fs.cwd().makePath(lib_dir);
+
+        const share_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ env_mountpoint, "share" });
+        defer self.allocator.free(share_dir);
+        try std.fs.cwd().makePath(share_dir);
+
+        // Set up conflict tracking
+        var conflict_config = ConflictConfig.init(self.allocator);
+        defer conflict_config.deinit();
+        conflict_config.default_policy = self.conflict_policy;
+
+        var conflict_tracker = ConflictTracker.init(self.allocator, &conflict_config);
+        defer conflict_tracker.deinit();
+
+        // Clone and merge all packages
+        std.debug.print("\nCloning packages...\n", .{});
+
+        var package_ids = std.ArrayList(PackageId).init(self.allocator);
+        defer package_ids.deinit();
+
+        // Track files already in environment for conflict detection
+        var env_files = std.StringHashMap(PackageId).init(self.allocator);
+        defer env_files.deinit();
+
+        for (lock.resolved, 0..) |pkg, i| {
+            std.debug.print("  [{d}/{d}] {s} {}\n", .{
+                i + 1,
+                lock.resolved.len,
+                pkg.id.name,
+                pkg.id.version,
+            });
+
+            // Get package dataset path
+            const pkg_dataset = try self.store.paths.packageDataset(self.allocator, pkg.id);
+            defer self.allocator.free(pkg_dataset);
+
+            // Verify package exists
+            const pkg_exists = try self.zfs_handle.datasetExists(
+                self.allocator,
+                pkg_dataset,
+                .filesystem,
+            );
+
+            if (!pkg_exists) {
+                std.debug.print("    ✗ Package not found in store\n", .{});
+                return RealizationError.PackageNotFound;
+            }
+
+            // Clone package to environment with conflict detection
+            const conflicts_found = try self.clonePackageWithConflicts(
+                env_mountpoint,
+                pkg_dataset,
+                pkg.id,
+                &env_files,
+                &conflict_tracker,
+            );
+
+            if (conflicts_found > 0) {
+                std.debug.print("    ⚠ {d} file conflict(s) detected\n", .{conflicts_found});
+            }
+
+            try package_ids.append(.{
+                .name = try self.allocator.dupe(u8, pkg.id.name),
+                .version = pkg.id.version,
+                .revision = pkg.id.revision,
+                .build_id = try self.allocator.dupe(u8, pkg.id.build_id),
+            });
+        }
+
+        // Check for blocking conflicts
+        if (conflict_tracker.hasBlockingConflicts()) {
+            const summary = conflict_tracker.getSummary();
+            std.debug.print("\n✗ Realization blocked by {d} unresolved conflict(s)\n", .{summary.total});
+            for (conflict_tracker.conflicts.items) |file_conflict| {
+                std.debug.print("  - {s}\n", .{file_conflict.path});
+            }
+            return RealizationError.FileConflict;
+        }
+
+        // Show conflict summary if any were found
+        const summary = conflict_tracker.getSummary();
+        if (summary.total > 0) {
+            std.debug.print("\nConflict Summary:\n", .{});
+            std.debug.print("  Total conflicts: {d}\n", .{summary.total});
+            if (summary.same_content > 0)
+                std.debug.print("  - Identical files: {d} (no action needed)\n", .{summary.same_content});
+            if (summary.different_content > 0)
+                std.debug.print("  - Different content: {d}\n", .{summary.different_content});
+            if (summary.type_mismatch > 0)
+                std.debug.print("  - Type mismatch: {d}\n", .{summary.type_mismatch});
+            if (summary.permission_diff > 0)
+                std.debug.print("  - Permission diff: {d}\n", .{summary.permission_diff});
+            std.debug.print("  Resolved: {d}\n", .{summary.resolved});
+        }
+
+        // Create activation script
+        try self.createActivationScript(env_mountpoint, env_name);
+
+        // Snapshot the environment
+        std.debug.print("\nCreating snapshot...\n", .{});
+        try self.zfs_handle.snapshot(self.allocator, env_dataset, "initial", false);
+
+        std.debug.print("\n✓ Environment '{s}' realized successfully\n", .{env_name});
+        std.debug.print("  Location: {s}\n", .{env_mountpoint});
+
+        return Environment{
+            .name = try self.allocator.dupe(u8, env_name),
+            .profile_name = try self.allocator.dupe(u8, lock.profile_name),
+            .dataset_path = try self.allocator.dupe(u8, env_dataset),
+            .packages = try package_ids.toOwnedSlice(),
+            .active = false,
+        };
+    }
+
+    /// Clone a package into the environment (legacy - no conflict detection)
+    fn clonePackage(
+        self: *RealizationEngine,
+        env_mountpoint: []const u8,
+        pkg_dataset: []const u8,
+        pkg_id: PackageId,
+    ) !void {
+        // Get package mountpoint
+        const pkg_mountpoint = try self.zfs_handle.getMountpoint(
+            self.allocator,
+            pkg_dataset,
+        );
+        defer self.allocator.free(pkg_mountpoint);
+
+        // Package files are in root/ subdirectory
+        const pkg_root = try std.fs.path.join(
+            self.allocator,
+            &[_][]const u8{ pkg_mountpoint, "root" },
+        );
+        defer self.allocator.free(pkg_root);
+
+        // Copy files from package to environment
+        // Using rsync-like behavior: merge into environment
+        const cmd = try std.fmt.allocPrint(
+            self.allocator,
+            "cp -R -n {s}/. {s}/",
+            .{ pkg_root, env_mountpoint },
+        );
+        defer self.allocator.free(cmd);
+
+        var child = std.process.Child.init(&[_][]const u8{ "sh", "-c", cmd }, self.allocator);
+        child.stdout_behavior = .Ignore;
+        child.stderr_behavior = .Pipe;
+
+        try child.spawn();
+        const stderr = try child.stderr.?.readToEndAlloc(self.allocator, 1024 * 1024);
+        defer self.allocator.free(stderr);
+
+        const term = try child.wait();
+        if (term.Exited != 0 and stderr.len > 0) {
+            std.debug.print("    Warning: {s}\n", .{stderr});
+        }
+
+        _ = pkg_id; // May be used for metadata in future
+    }
+
+    /// Clone a package into the environment with conflict detection
+    fn clonePackageWithConflicts(
+        self: *RealizationEngine,
+        env_mountpoint: []const u8,
+        pkg_dataset: []const u8,
+        pkg_id: PackageId,
+        env_files: *std.StringHashMap(PackageId),
+        tracker: *ConflictTracker,
+    ) !usize {
+        // Get package mountpoint
+        const pkg_mountpoint = try self.zfs_handle.getMountpoint(
+            self.allocator,
+            pkg_dataset,
+        );
+        defer self.allocator.free(pkg_mountpoint);
+
+        // Package files are in root/ subdirectory
+        const pkg_root = try std.fs.path.join(
+            self.allocator,
+            &[_][]const u8{ pkg_mountpoint, "root" },
+        );
+        defer self.allocator.free(pkg_root);
+
+        // Use recursive copy with conflict detection
+        return copyDirRecursive(
+            self.allocator,
+            pkg_root,
+            env_mountpoint,
+            pkg_id,
+            env_files,
+            tracker,
+        );
+    }
+
+    /// Create activation script for the environment
+    fn createActivationScript(
+        self: *RealizationEngine,
+        env_mountpoint: []const u8,
+        env_name: []const u8,
+    ) !void {
+        const script_path = try std.fs.path.join(
+            self.allocator,
+            &[_][]const u8{ env_mountpoint, "activate" },
+        );
+        defer self.allocator.free(script_path);
+
+        const file = try std.fs.cwd().createFile(script_path, .{ .mode = 0o755 });
+        defer file.close();
+
+        const writer = file.writer();
+
+        try writer.writeAll("#!/bin/sh\n");
+        try writer.writeAll("# Axiom environment activation script\n");
+        try writer.print("# Environment: {s}\n\n", .{env_name});
+
+        try writer.print("export AXIOM_ENV=\"{s}\"\n", .{env_name});
+        try writer.print("export PATH=\"{s}/bin:$PATH\"\n", .{env_mountpoint});
+        try writer.print("export LD_LIBRARY_PATH=\"{s}/lib:$LD_LIBRARY_PATH\"\n", .{env_mountpoint});
+        try writer.print("export MANPATH=\"{s}/share/man:$MANPATH\"\n", .{env_mountpoint});
+
+        try writer.writeAll("\necho \"Axiom environment '");
+        try writer.writeAll(env_name);
+        try writer.writeAll("' activated\"\n");
+        try writer.writeAll("echo \"To deactivate, run: deactivate\"\n\n");
+
+        try writer.writeAll("deactivate() {\n");
+        try writer.writeAll("  unset AXIOM_ENV\n");
+        try writer.writeAll("  # PATH and other vars are inherited from parent shell\n");
+        try writer.writeAll("  echo \"Environment deactivated\"\n");
+        try writer.writeAll("}\n");
+    }
+
+    /// Activate an environment (mount to standard location)
+    pub fn activate(
+        self: *RealizationEngine,
+        env_name: []const u8,
+    ) !void {
+        const env_dataset = try std.fmt.allocPrint(
+            self.allocator,
+            "{s}/{s}",
+            .{ self.env_root, env_name },
+        );
+        defer self.allocator.free(env_dataset);
+
+        // Verify environment exists
+        const exists = try self.zfs_handle.datasetExists(
+            self.allocator,
+            env_dataset,
+            .filesystem,
+        );
+
+        if (!exists) {
+            return RealizationError.EnvironmentNotFound;
+        }
+
+        std.debug.print("Activating environment: {s}\n", .{env_name});
+        
+        const env_mountpoint = try self.zfs_handle.getMountpoint(
+            self.allocator,
+            env_dataset,
+        );
+        defer self.allocator.free(env_mountpoint);
+
+        std.debug.print("  Mountpoint: {s}\n", .{env_mountpoint});
+        std.debug.print("\nTo activate in your shell, run:\n", .{});
+        std.debug.print("  source {s}/activate\n", .{env_mountpoint});
+    }
+
+    /// Deactivate an environment
+    pub fn deactivate(
+        self: *RealizationEngine,
+        env_name: []const u8,
+    ) !void {
+        _ = self;
+        std.debug.print("Deactivating environment: {s}\n", .{env_name});
+        std.debug.print("Run: deactivate\n", .{});
+    }
+
+    /// Destroy an environment
+    pub fn destroy(
+        self: *RealizationEngine,
+        env_name: []const u8,
+    ) !void {
+        const env_dataset = try std.fmt.allocPrint(
+            self.allocator,
+            "{s}/{s}",
+            .{ self.env_root, env_name },
+        );
+        defer self.allocator.free(env_dataset);
+
+        std.debug.print("Destroying environment: {s}\n", .{env_name});
+
+        // Destroy dataset (this unmounts and removes everything)
+        try self.zfs_handle.destroyDataset(self.allocator, env_dataset, true);
+
+        std.debug.print("  ✓ Environment destroyed\n", .{});
+    }
+
+    /// List all environments
+    pub fn listEnvironments(
+        self: *RealizationEngine,
+    ) ![][]const u8 {
+        // TODO: Implement by querying ZFS datasets under env_root
+        _ = self;
+        return &[_][]const u8{};
+    }
+
+    /// Get environment information
+    pub fn getEnvironment(
+        self: *RealizationEngine,
+        env_name: []const u8,
+    ) !Environment {
+        const env_dataset = try std.fmt.allocPrint(
+            self.allocator,
+            "{s}/{s}",
+            .{ self.env_root, env_name },
+        );
+        defer self.allocator.free(env_dataset);
+
+        const exists = try self.zfs_handle.datasetExists(
+            self.allocator,
+            env_dataset,
+            .filesystem,
+        );
+
+        if (!exists) {
+            return RealizationError.EnvironmentNotFound;
+        }
+
+        // TODO: Read metadata to get profile name and packages
+        // For now, return minimal environment info
+        return Environment{
+            .name = try self.allocator.dupe(u8, env_name),
+            .profile_name = try self.allocator.dupe(u8, "unknown"),
+            .dataset_path = try self.allocator.dupe(u8, env_dataset),
+            .packages = &[_]PackageId{},
+            .active = false,
+        };
+    }
+};
+
+/// Copy a file from source to destination, creating directories as needed
+fn copyFile(src_path: []const u8, dst_path: []const u8) !void {
+    // Create parent directory if needed
+    if (std.fs.path.dirname(dst_path)) |parent| {
+        std.fs.cwd().makePath(parent) catch |err| {
+            if (err != error.PathAlreadyExists) return err;
+        };
+    }
+
+    // Open source file
+    const src_file = try std.fs.cwd().openFile(src_path, .{});
+    defer src_file.close();
+
+    // Get source file stats for permissions
+    const stat = try src_file.stat();
+
+    // Create destination file with same permissions
+    const dst_file = try std.fs.cwd().createFile(dst_path, .{
+        .mode = @intCast(stat.mode & 0o7777),
+    });
+    defer dst_file.close();
+
+    // Copy content in chunks
+    var buffer: [8192]u8 = undefined;
+    while (true) {
+        const bytes_read = try src_file.read(&buffer);
+        if (bytes_read == 0) break;
+        try dst_file.writeAll(buffer[0..bytes_read]);
+    }
+}
+
+/// Copy a directory recursively from source to destination
+fn copyDirRecursive(
+    allocator: std.mem.Allocator,
+    src_dir: []const u8,
+    dst_dir: []const u8,
+    pkg_id: PackageId,
+    env_files: *std.StringHashMap(PackageId),
+    tracker: *ConflictTracker,
+) !usize {
+    var conflicts_found: usize = 0;
+
+    // Open source directory
+    var dir = std.fs.cwd().openDir(src_dir, .{ .iterate = true }) catch |err| {
+        if (err == error.FileNotFound or err == error.NotDir) return 0;
+        return err;
+    };
+    defer dir.close();
+
+    // Create destination directory
+    std.fs.cwd().makePath(dst_dir) catch |err| {
+        if (err != error.PathAlreadyExists) return err;
+    };
+
+    var iter = dir.iterate();
+    while (try iter.next()) |entry| {
+        const src_path = try std.fs.path.join(allocator, &[_][]const u8{ src_dir, entry.name });
+        defer allocator.free(src_path);
+
+        const dst_path = try std.fs.path.join(allocator, &[_][]const u8{ dst_dir, entry.name });
+        defer allocator.free(dst_path);
+
+        switch (entry.kind) {
+            .directory => {
+                // Recurse into subdirectory
+                conflicts_found += try copyDirRecursive(
+                    allocator,
+                    src_path,
+                    dst_path,
+                    pkg_id,
+                    env_files,
+                    tracker,
+                );
+            },
+            .file => {
+                // Get relative path for tracking
+                const rel_path = try allocator.dupe(u8, entry.name);
+
+                // Check if file already exists from another package
+                if (env_files.get(rel_path)) |existing_pkg| {
+                    // Potential conflict
+                    if (try tracker.checkFileConflict(
+                        rel_path,
+                        existing_pkg,
+                        dst_path,
+                        pkg_id,
+                        src_path,
+                    )) |file_conflict| {
+                        try tracker.recordConflict(file_conflict);
+                        conflicts_found += 1;
+
+                        // Resolve and apply
+                        const resolution = try tracker.resolveConflict(file_conflict);
+                        switch (resolution) {
+                            .use_package => |selected_pkg| {
+                                if (std.mem.eql(u8, selected_pkg.name, pkg_id.name)) {
+                                    try copyFile(src_path, dst_path);
+                                }
+                            },
+                            .keep_both => {
+                                const renamed = try conflict.applyRenameStrategy(
+                                    allocator,
+                                    dst_path,
+                                    pkg_id.name,
+                                    .{ .pattern = "{name}.{package}{ext}" },
+                                );
+                                defer allocator.free(renamed);
+                                try copyFile(src_path, renamed);
+                            },
+                            .skip => {},
+                            .@"error" => {},
+                            .rename => |strategy| {
+                                const renamed = try conflict.applyRenameStrategy(
+                                    allocator,
+                                    dst_path,
+                                    pkg_id.name,
+                                    strategy,
+                                );
+                                defer allocator.free(renamed);
+                                try copyFile(src_path, renamed);
+                            },
+                            .merge => {},
+                        }
+                        allocator.free(rel_path);
+                    }
+                } else {
+                    // No conflict - copy file
+                    try copyFile(src_path, dst_path);
+                    try env_files.put(rel_path, pkg_id);
+                }
+            },
+            .sym_link => {
+                // Handle symlinks
+                var target_buf: [std.fs.max_path_bytes]u8 = undefined;
+                const target = try dir.readLink(entry.name, &target_buf);
+                try std.fs.cwd().symLink(target, dst_path, .{});
+            },
+            else => {},
+        }
+    }
+
+    return conflicts_found;
+}
+
+/// Free environment memory
+pub fn freeEnvironment(env: *Environment, allocator: std.mem.Allocator) void {
+    allocator.free(env.name);
+    allocator.free(env.profile_name);
+    allocator.free(env.dataset_path);
+    for (env.packages) |pkg| {
+        allocator.free(pkg.name);
+        allocator.free(pkg.build_id);
+    }
+    allocator.free(env.packages);
+}

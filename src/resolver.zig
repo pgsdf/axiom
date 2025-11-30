@@ -1,0 +1,889 @@
+const std = @import("std");
+const types = @import("types.zig");
+const store = @import("store.zig");
+const profile = @import("profile.zig");
+const manifest_mod = @import("manifest.zig");
+const sat_resolver = @import("sat_resolver.zig");
+
+const Version = types.Version;
+const VersionConstraint = types.VersionConstraint;
+const Dependency = types.Dependency;
+const PackageId = types.PackageId;
+const PackageStore = store.PackageStore;
+const Profile = profile.Profile;
+const ProfileLock = profile.ProfileLock;
+const ResolvedPackage = profile.ResolvedPackage;
+const PackageRequest = profile.PackageRequest;
+const Manifest = manifest_mod.Manifest;
+const VirtualPackage = manifest_mod.VirtualPackage;
+const SATResolver = sat_resolver.SATResolver;
+
+/// Errors that can occur during resolution
+pub const ResolverError = error{
+    NoSolution,
+    ConflictingConstraints,
+    PackageNotFound,
+    CircularDependency,
+    ConflictingPackages,
+    VirtualPackageAmbiguous,
+};
+
+/// A candidate package version available in the store
+pub const Candidate = struct {
+    id: PackageId,
+    dependencies: []Dependency,
+    /// Virtual packages this candidate provides
+    provides: [][]const u8 = &[_][]const u8{},
+    /// Packages this candidate conflicts with
+    conflicts: []VirtualPackage = &[_]VirtualPackage{},
+    /// Packages this candidate replaces
+    replaces: []VirtualPackage = &[_]VirtualPackage{},
+};
+
+/// Tracks a conflict between two packages
+pub const ConflictInfo = struct {
+    package_a: []const u8,
+    package_b: []const u8,
+    reason: []const u8,
+};
+
+/// Maps virtual package names to packages that provide them
+pub const VirtualPackageIndex = struct {
+    allocator: std.mem.Allocator,
+    /// Virtual name -> list of real package names that provide it
+    providers: std.StringHashMap(std.ArrayList([]const u8)),
+
+    pub fn init(allocator: std.mem.Allocator) VirtualPackageIndex {
+        return VirtualPackageIndex{
+            .allocator = allocator,
+            .providers = std.StringHashMap(std.ArrayList([]const u8)).init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *VirtualPackageIndex) void {
+        var iter = self.providers.iterator();
+        while (iter.next()) |entry| {
+            entry.value_ptr.deinit();
+        }
+        self.providers.deinit();
+    }
+
+    /// Register a package as a provider of a virtual package
+    pub fn addProvider(self: *VirtualPackageIndex, virtual_name: []const u8, real_name: []const u8) !void {
+        const entry = try self.providers.getOrPut(virtual_name);
+        if (!entry.found_existing) {
+            entry.value_ptr.* = std.ArrayList([]const u8).init(self.allocator);
+        }
+        try entry.value_ptr.append(real_name);
+    }
+
+    /// Get all packages that provide a virtual package
+    pub fn getProviders(self: *VirtualPackageIndex, virtual_name: []const u8) ?[][]const u8 {
+        if (self.providers.get(virtual_name)) |list| {
+            return list.items;
+        }
+        return null;
+    }
+
+    /// Check if a name is a virtual package
+    pub fn isVirtual(self: *VirtualPackageIndex, name: []const u8) bool {
+        return self.providers.contains(name);
+    }
+};
+
+/// Resolution context tracking state during dependency resolution
+pub const ResolutionContext = struct {
+    allocator: std.mem.Allocator,
+    store: *PackageStore,
+
+    /// Packages we're trying to resolve (name -> constraints)
+    constraints: std.StringHashMap(std.ArrayList(VersionConstraint)),
+
+    /// Resolved packages (name -> PackageId)
+    resolved: std.StringHashMap(PackageId),
+
+    /// Packages directly requested (not dependencies)
+    requested: std.StringHashMap(bool),
+
+    /// Packages currently being resolved (for cycle detection)
+    resolving: std.StringHashMap(bool),
+
+    /// Virtual package index for this resolution
+    virtual_index: VirtualPackageIndex,
+
+    /// Detected conflicts during resolution
+    conflicts: std.ArrayList(ConflictInfo),
+
+    /// Candidates for resolved packages (for conflict checking)
+    resolved_candidates: std.StringHashMap(Candidate),
+
+    pub fn init(allocator: std.mem.Allocator, store_ptr: *PackageStore) ResolutionContext {
+        return ResolutionContext{
+            .allocator = allocator,
+            .store = store_ptr,
+            .constraints = std.StringHashMap(std.ArrayList(VersionConstraint)).init(allocator),
+            .resolved = std.StringHashMap(PackageId).init(allocator),
+            .requested = std.StringHashMap(bool).init(allocator),
+            .resolving = std.StringHashMap(bool).init(allocator),
+            .virtual_index = VirtualPackageIndex.init(allocator),
+            .conflicts = std.ArrayList(ConflictInfo).init(allocator),
+            .resolved_candidates = std.StringHashMap(Candidate).init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *ResolutionContext) void {
+        var constraint_iter = self.constraints.iterator();
+        while (constraint_iter.next()) |entry| {
+            entry.value_ptr.deinit();
+        }
+        self.constraints.deinit();
+        self.resolved.deinit();
+        self.requested.deinit();
+        self.resolving.deinit();
+        self.virtual_index.deinit();
+        self.conflicts.deinit();
+        self.resolved_candidates.deinit();
+    }
+
+    /// Check if adding a package would create a conflict with already resolved packages
+    pub fn checkConflicts(self: *ResolutionContext, candidate: Candidate) !bool {
+        // Check if the candidate conflicts with any resolved package
+        for (candidate.conflicts) |conflict| {
+            if (self.resolved.get(conflict.name)) |resolved_id| {
+                // Check version constraint if present
+                if (conflict.constraint) |constraint| {
+                    if (constraint.satisfies(resolved_id.version)) {
+                        try self.conflicts.append(.{
+                            .package_a = candidate.id.name,
+                            .package_b = conflict.name,
+                            .reason = "explicit conflict declaration",
+                        });
+                        return true;
+                    }
+                } else {
+                    try self.conflicts.append(.{
+                        .package_a = candidate.id.name,
+                        .package_b = conflict.name,
+                        .reason = "explicit conflict declaration",
+                    });
+                    return true;
+                }
+            }
+        }
+
+        // Check if any resolved package conflicts with this candidate
+        var iter = self.resolved_candidates.iterator();
+        while (iter.next()) |entry| {
+            const resolved_candidate = entry.value_ptr.*;
+            for (resolved_candidate.conflicts) |conflict| {
+                if (std.mem.eql(u8, conflict.name, candidate.id.name)) {
+                    if (conflict.constraint) |constraint| {
+                        if (constraint.satisfies(candidate.id.version)) {
+                            try self.conflicts.append(.{
+                                .package_a = resolved_candidate.id.name,
+                                .package_b = candidate.id.name,
+                                .reason = "explicit conflict declaration",
+                            });
+                            return true;
+                        }
+                    } else {
+                        try self.conflicts.append(.{
+                            .package_a = resolved_candidate.id.name,
+                            .package_b = candidate.id.name,
+                            .reason = "explicit conflict declaration",
+                        });
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// Check if a candidate replaces a package that's already resolved
+    pub fn checkReplaces(self: *ResolutionContext, candidate: Candidate) ?[]const u8 {
+        for (candidate.replaces) |replace| {
+            if (self.resolved.contains(replace.name)) {
+                // Check version constraint if present
+                if (replace.constraint) |constraint| {
+                    if (self.resolved.get(replace.name)) |resolved_id| {
+                        if (constraint.satisfies(resolved_id.version)) {
+                            return replace.name;
+                        }
+                    }
+                } else {
+                    return replace.name;
+                }
+            }
+        }
+        return null;
+    }
+};
+
+/// Resolution strategy
+pub const ResolutionStrategy = enum {
+    /// Fast greedy algorithm - picks newest satisfying version
+    greedy,
+    /// SAT solver - finds optimal solution, handles complex constraints
+    sat,
+    /// Try greedy first, fall back to SAT on failure
+    greedy_with_sat_fallback,
+};
+
+/// Dependency resolver with greedy and SAT solving capabilities
+pub const Resolver = struct {
+    allocator: std.mem.Allocator,
+    store: *PackageStore,
+    strategy: ResolutionStrategy,
+    /// Last resolution failure details (for diagnostics)
+    last_failure: ?sat_resolver.ResolutionFailure = null,
+
+    /// Initialize resolver with default greedy strategy
+    pub fn init(allocator: std.mem.Allocator, store_ptr: *PackageStore) Resolver {
+        return Resolver{
+            .allocator = allocator,
+            .store = store_ptr,
+            .strategy = .greedy_with_sat_fallback,
+        };
+    }
+
+    /// Set resolution strategy
+    pub fn setStrategy(self: *Resolver, strategy: ResolutionStrategy) void {
+        self.strategy = strategy;
+    }
+
+    /// Get last resolution failure details
+    pub fn getLastFailure(self: *Resolver) ?*sat_resolver.ResolutionFailure {
+        if (self.last_failure) |*failure| {
+            return failure;
+        }
+        return null;
+    }
+
+    /// Clear last failure
+    pub fn clearLastFailure(self: *Resolver) void {
+        if (self.last_failure) |*failure| {
+            failure.deinit();
+            self.last_failure = null;
+        }
+    }
+
+    /// Resolve a profile to a lock file
+    pub fn resolve(
+        self: *Resolver,
+        prof: Profile,
+    ) !ProfileLock {
+        std.debug.print("Resolving profile: {s}\n", .{prof.name});
+
+        // Clear any previous failure
+        self.clearLastFailure();
+
+        return switch (self.strategy) {
+            .greedy => self.resolveGreedy(prof),
+            .sat => self.resolveSAT(prof),
+            .greedy_with_sat_fallback => self.resolveWithFallback(prof),
+        };
+    }
+
+    /// Resolve using greedy algorithm
+    fn resolveGreedy(self: *Resolver, prof: Profile) !ProfileLock {
+        var ctx = ResolutionContext.init(self.allocator, self.store);
+        defer ctx.deinit();
+
+        // Add all requested packages to constraints
+        for (prof.packages) |pkg_req| {
+            std.debug.print("  Request: {s} ", .{pkg_req.name});
+            self.printConstraint(pkg_req.constraint);
+            std.debug.print("\n", .{});
+
+            try self.addConstraint(&ctx, pkg_req.name, pkg_req.constraint);
+            try ctx.requested.put(pkg_req.name, true);
+        }
+
+        // Resolve all packages
+        var constraint_iter = ctx.constraints.iterator();
+        while (constraint_iter.next()) |entry| {
+            const pkg_name = entry.key_ptr.*;
+            if (!ctx.resolved.contains(pkg_name)) {
+                try self.resolvePackage(&ctx, pkg_name);
+            }
+        }
+
+        // Build result
+        var resolved_packages = std.ArrayList(ResolvedPackage).init(self.allocator);
+        defer resolved_packages.deinit();
+
+        var resolved_iter = ctx.resolved.iterator();
+        while (resolved_iter.next()) |entry| {
+            const is_requested = ctx.requested.get(entry.key_ptr.*) orelse false;
+            try resolved_packages.append(.{
+                .id = .{
+                    .name = try self.allocator.dupe(u8, entry.value_ptr.name),
+                    .version = entry.value_ptr.version,
+                    .revision = entry.value_ptr.revision,
+                    .build_id = try self.allocator.dupe(u8, entry.value_ptr.build_id),
+                },
+                .requested = is_requested,
+            });
+        }
+
+        std.debug.print("✓ Resolved {d} packages ({d} requested, {d} dependencies)\n", .{
+            resolved_packages.items.len,
+            prof.packages.len,
+            resolved_packages.items.len - prof.packages.len,
+        });
+
+        return ProfileLock{
+            .profile_name = try self.allocator.dupe(u8, prof.name),
+            .lock_version = 1,
+            .resolved = try resolved_packages.toOwnedSlice(),
+        };
+    }
+
+    /// Resolve using SAT solver
+    fn resolveSAT(self: *Resolver, prof: Profile) !ProfileLock {
+        std.debug.print("  Using SAT solver for dependency resolution...\n", .{});
+
+        var sat = SATResolver.init(self.allocator);
+        defer sat.deinit();
+
+        // Build SAT resolver from store
+        // Register all available packages
+        const packages = try self.store.listPackages();
+        // Note: listPackages returns static/internal data, no need to free
+
+        for (packages) |pkg_id| {
+            // Load package metadata for dependencies and conflicts
+            var pkg_meta = self.store.getPackage(pkg_id) catch continue;
+            defer {
+                // Clean up allocated fields in PackageMetadata
+                pkg_meta.manifest.deinit(self.allocator);
+                self.allocator.free(pkg_meta.dataset_path);
+                for (pkg_meta.dependencies) |dep| {
+                    self.allocator.free(dep.name);
+                }
+                self.allocator.free(pkg_meta.dependencies);
+            }
+
+            // Convert dependencies
+            var deps = std.ArrayList(sat_resolver.PackageCandidate.Dependency).init(self.allocator);
+            defer deps.deinit();
+
+            for (pkg_meta.dependencies) |dep| {
+                try deps.append(.{
+                    .name = dep.name,
+                    .constraint = dep.constraint,
+                });
+            }
+
+            // Convert conflicts
+            var conflicts = std.ArrayList([]const u8).init(self.allocator);
+            defer conflicts.deinit();
+
+            for (pkg_meta.manifest.conflicts) |conflict| {
+                try conflicts.append(conflict.name);
+            }
+
+            try sat.registerPackage(pkg_id, deps.items, conflicts.items);
+        }
+
+        // Convert profile requests to SAT requests
+        var requests = try self.allocator.alloc(sat_resolver.PackageRequest, prof.packages.len);
+        defer self.allocator.free(requests);
+
+        for (prof.packages, 0..) |pkg_req, i| {
+            requests[i] = .{
+                .name = pkg_req.name,
+                .constraint = pkg_req.constraint,
+                .requested = true,
+            };
+        }
+
+        // Solve
+        const result = try sat.resolve(requests);
+
+        switch (result) {
+            .success => |resolved_ids| {
+                defer self.allocator.free(resolved_ids);
+
+                var resolved_packages = std.ArrayList(ResolvedPackage).init(self.allocator);
+                defer resolved_packages.deinit();
+
+                for (resolved_ids) |pkg_id| {
+                    // Check if this was directly requested
+                    var is_requested = false;
+                    for (prof.packages) |req| {
+                        if (std.mem.eql(u8, req.name, pkg_id.name)) {
+                            is_requested = true;
+                            break;
+                        }
+                    }
+
+                    try resolved_packages.append(.{
+                        .id = .{
+                            .name = try self.allocator.dupe(u8, pkg_id.name),
+                            .version = pkg_id.version,
+                            .revision = pkg_id.revision,
+                            .build_id = try self.allocator.dupe(u8, pkg_id.build_id),
+                        },
+                        .requested = is_requested,
+                    });
+                }
+
+                std.debug.print("✓ SAT solver found solution with {d} packages\n", .{resolved_packages.items.len});
+
+                return ProfileLock{
+                    .profile_name = try self.allocator.dupe(u8, prof.name),
+                    .lock_version = 1,
+                    .resolved = try resolved_packages.toOwnedSlice(),
+                };
+            },
+            .failure => |failure| {
+                std.debug.print("✗ SAT solver found no solution\n", .{});
+
+                // Store failure for diagnostics
+                self.last_failure = failure;
+
+                // Print suggestions
+                for (failure.suggestions) |suggestion| {
+                    std.debug.print("  Suggestion: {s}\n", .{suggestion});
+                }
+
+                return ResolverError.NoSolution;
+            },
+        }
+    }
+
+    /// Try greedy first, fall back to SAT on failure
+    fn resolveWithFallback(self: *Resolver, prof: Profile) !ProfileLock {
+        // Try greedy first
+        return self.resolveGreedy(prof) catch |err| {
+            switch (err) {
+                ResolverError.NoSolution,
+                ResolverError.ConflictingConstraints,
+                ResolverError.ConflictingPackages,
+                => {
+                    std.debug.print("  Greedy resolution failed, trying SAT solver...\n", .{});
+                    return self.resolveSAT(prof);
+                },
+                else => return err,
+            }
+        };
+    }
+
+    /// Add a constraint for a package
+    fn addConstraint(
+        self: *Resolver,
+        ctx: *ResolutionContext,
+        pkg_name: []const u8,
+        constraint: VersionConstraint,
+    ) !void {
+        const entry = try ctx.constraints.getOrPut(pkg_name);
+        if (!entry.found_existing) {
+            entry.value_ptr.* = std.ArrayList(VersionConstraint).init(self.allocator);
+        }
+        try entry.value_ptr.append(constraint);
+    }
+
+    /// Resolve a single package and its dependencies
+    fn resolvePackage(
+        self: *Resolver,
+        ctx: *ResolutionContext,
+        pkg_name: []const u8,
+    ) !void {
+        // Check for circular dependency
+        if (ctx.resolving.contains(pkg_name)) {
+            std.debug.print("  ✗ Circular dependency detected: {s}\n", .{pkg_name});
+            return ResolverError.CircularDependency;
+        }
+
+        try ctx.resolving.put(pkg_name, true);
+        defer _ = ctx.resolving.remove(pkg_name);
+
+        // Check if this is a virtual package request
+        if (ctx.virtual_index.isVirtual(pkg_name)) {
+            // Get providers and resolve one of them
+            if (ctx.virtual_index.getProviders(pkg_name)) |providers| {
+                if (providers.len == 1) {
+                    // Only one provider, resolve it directly
+                    std.debug.print("  → Virtual package {s} provided by {s}\n", .{ pkg_name, providers[0] });
+                    try self.resolvePackage(ctx, providers[0]);
+                    return;
+                } else if (providers.len > 1) {
+                    // Multiple providers - for now, pick the first one
+                    // Future: Could use heuristics or user preference
+                    std.debug.print("  → Virtual package {s} has {d} providers, selecting {s}\n", .{
+                        pkg_name,
+                        providers.len,
+                        providers[0],
+                    });
+                    try self.resolvePackage(ctx, providers[0]);
+                    return;
+                }
+            }
+        }
+
+        // Get all constraints for this package
+        const constraints = ctx.constraints.get(pkg_name) orelse {
+            std.debug.print("  ✗ No constraints for: {s}\n", .{pkg_name});
+            return ResolverError.PackageNotFound;
+        };
+
+        // Find candidates that satisfy all constraints
+        const candidates = try self.findCandidates(ctx, pkg_name, constraints.items);
+        defer self.allocator.free(candidates);
+
+        if (candidates.len == 0) {
+            std.debug.print("  ✗ No candidates found for: {s}\n", .{pkg_name});
+            return ResolverError.NoSolution;
+        }
+
+        // Pick the best candidate that doesn't conflict
+        var chosen: ?Candidate = null;
+        for (candidates) |candidate| {
+            // Check for conflicts
+            const has_conflict = try ctx.checkConflicts(candidate);
+            if (has_conflict) {
+                std.debug.print("  ⚠ Skipping {s}@{} due to conflict\n", .{ pkg_name, candidate.id.version });
+                continue;
+            }
+
+            // Check if this candidate replaces an already resolved package
+            if (ctx.checkReplaces(candidate)) |replaced| {
+                std.debug.print("  → {s}@{} replaces {s}\n", .{ pkg_name, candidate.id.version, replaced });
+                // Remove the replaced package from resolved set
+                _ = ctx.resolved.remove(replaced);
+                _ = ctx.resolved_candidates.remove(replaced);
+            }
+
+            if (chosen == null or candidate.id.version.greaterThan(chosen.?.id.version)) {
+                chosen = candidate;
+            }
+        }
+
+        if (chosen == null) {
+            std.debug.print("  ✗ All candidates for {s} have conflicts\n", .{pkg_name});
+            return ResolverError.ConflictingPackages;
+        }
+
+        const final_choice = chosen.?;
+        std.debug.print("  → Resolved {s} to {}\n", .{ pkg_name, final_choice.id.version });
+
+        // Add to resolved set
+        try ctx.resolved.put(pkg_name, final_choice.id);
+        try ctx.resolved_candidates.put(pkg_name, final_choice);
+
+        // Register virtual packages this candidate provides
+        for (final_choice.provides) |virtual_name| {
+            try ctx.virtual_index.addProvider(virtual_name, pkg_name);
+        }
+
+        // Recursively resolve dependencies
+        for (final_choice.dependencies) |dep| {
+            if (!ctx.resolved.contains(dep.name)) {
+                try self.addConstraint(ctx, dep.name, dep.constraint);
+                try self.resolvePackage(ctx, dep.name);
+            }
+        }
+    }
+
+    /// Find all package versions that satisfy the given constraints
+    fn findCandidates(
+        self: *Resolver,
+        ctx: *ResolutionContext,
+        pkg_name: []const u8,
+        constraints: []VersionConstraint,
+    ) ![]Candidate {
+        _ = ctx;
+        
+        // For now, we'll simulate finding candidates
+        // In a real implementation, this would query the package store index
+        
+        // TODO: Query store.listPackages() filtered by name
+        // For demonstration, we'll create mock candidates
+        
+        var candidates = std.ArrayList(Candidate).init(self.allocator);
+        defer candidates.deinit();
+
+        // Mock: Create a few versions that might satisfy constraints
+        const test_versions = [_]Version{
+            Version{ .major = 5, .minor = 2, .patch = 0 },
+            Version{ .major = 5, .minor = 1, .patch = 0 },
+            Version{ .major = 5, .minor = 0, .patch = 0 },
+            Version{ .major = 4, .minor = 9, .patch = 0 },
+        };
+
+        for (test_versions) |ver| {
+            var satisfies_all = true;
+            for (constraints) |constraint| {
+                if (!constraint.satisfies(ver)) {
+                    satisfies_all = false;
+                    break;
+                }
+            }
+
+            if (satisfies_all) {
+                // Create mock package ID
+                const build_id = try std.fmt.allocPrint(
+                    self.allocator,
+                    "mock{d}{d}{d}",
+                    .{ ver.major, ver.minor, ver.patch },
+                );
+                
+                try candidates.append(.{
+                    .id = .{
+                        .name = try self.allocator.dupe(u8, pkg_name),
+                        .version = ver,
+                        .revision = 1,
+                        .build_id = build_id,
+                    },
+                    .dependencies = &[_]Dependency{},
+                });
+            }
+        }
+
+        return candidates.toOwnedSlice();
+    }
+
+    /// Pick the best candidate from available options
+    /// Current strategy: newest version
+    fn pickBest(self: *Resolver, candidates: []Candidate) Candidate {
+        _ = self;
+        
+        var best = candidates[0];
+        for (candidates[1..]) |candidate| {
+            if (candidate.id.version.greaterThan(best.id.version)) {
+                best = candidate;
+            }
+        }
+        return best;
+    }
+
+    /// Print a constraint for debugging
+    fn printConstraint(self: *Resolver, constraint: VersionConstraint) void {
+        _ = self;
+        switch (constraint) {
+            .exact => |v| std.debug.print("={}", .{v}),
+            .tilde => |v| std.debug.print("~{}", .{v}),
+            .caret => |v| std.debug.print("^{}", .{v}),
+            .any => std.debug.print("*", .{}),
+            .range => |r| {
+                if (r.min) |min| {
+                    std.debug.print("{s}{}", .{ if (r.min_inclusive) ">=" else ">", min });
+                }
+                if (r.max) |max| {
+                    if (r.min != null) std.debug.print(",", .{});
+                    std.debug.print("{s}{}", .{ if (r.max_inclusive) "<=" else "<", max });
+                }
+            },
+        }
+    }
+
+    /// Build a virtual package index from all packages in the store
+    /// Returns a mapping of virtual names to providers
+    pub fn buildVirtualIndex(self: *Resolver) !VirtualPackageIndex {
+        const index = VirtualPackageIndex.init(self.allocator);
+
+        // TODO: Query store for all packages and their manifests
+        // For now, we'll need the caller to register providers manually
+        // or integrate with the package store's manifest loading
+
+        return index;
+    }
+
+    /// Query packages that provide a virtual package
+    pub fn findProviders(
+        self: *Resolver,
+        virtual_index: *VirtualPackageIndex,
+        virtual_name: []const u8,
+    ) ?[][]const u8 {
+        _ = self;
+        return virtual_index.getProviders(virtual_name);
+    }
+
+    /// Check if two packages conflict
+    pub fn checkPackageConflict(
+        self: *Resolver,
+        pkg_a: Candidate,
+        pkg_b: Candidate,
+    ) bool {
+        _ = self;
+        // Check if A conflicts with B
+        for (pkg_a.conflicts) |conflict| {
+            if (std.mem.eql(u8, conflict.name, pkg_b.id.name)) {
+                if (conflict.constraint) |constraint| {
+                    if (constraint.satisfies(pkg_b.id.version)) {
+                        return true;
+                    }
+                } else {
+                    return true;
+                }
+            }
+        }
+
+        // Check if B conflicts with A
+        for (pkg_b.conflicts) |conflict| {
+            if (std.mem.eql(u8, conflict.name, pkg_a.id.name)) {
+                if (conflict.constraint) |constraint| {
+                    if (constraint.satisfies(pkg_a.id.version)) {
+                        return true;
+                    }
+                } else {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// Get list of conflicts detected during resolution
+    pub fn getConflicts(self: *Resolver, ctx: *ResolutionContext) []ConflictInfo {
+        _ = self;
+        return ctx.conflicts.items;
+    }
+};
+
+// Tests
+test "Resolver.constraint_satisfaction" {
+    const allocator = std.testing.allocator;
+
+    // Test exact constraint
+    const exact = VersionConstraint{ .exact = Version{ .major = 1, .minor = 2, .patch = 3 } };
+    try std.testing.expect(exact.satisfies(Version{ .major = 1, .minor = 2, .patch = 3 }));
+    try std.testing.expect(!exact.satisfies(Version{ .major = 1, .minor = 2, .patch = 4 }));
+
+    // Test tilde constraint
+    const tilde = VersionConstraint{ .tilde = Version{ .major = 1, .minor = 2, .patch = 0 } };
+    try std.testing.expect(tilde.satisfies(Version{ .major = 1, .minor = 2, .patch = 0 }));
+    try std.testing.expect(tilde.satisfies(Version{ .major = 1, .minor = 2, .patch = 5 }));
+    try std.testing.expect(!tilde.satisfies(Version{ .major = 1, .minor = 3, .patch = 0 }));
+
+    // Test caret constraint
+    const caret = VersionConstraint{ .caret = Version{ .major = 1, .minor = 2, .patch = 0 } };
+    try std.testing.expect(caret.satisfies(Version{ .major = 1, .minor = 2, .patch = 0 }));
+    try std.testing.expect(caret.satisfies(Version{ .major = 1, .minor = 5, .patch = 0 }));
+    try std.testing.expect(!caret.satisfies(Version{ .major = 2, .minor = 0, .patch = 0 }));
+
+    _ = allocator;
+}
+
+test "Resolver.version_comparison" {
+    const v1 = Version{ .major = 1, .minor = 2, .patch = 3 };
+    const v2 = Version{ .major = 1, .minor = 2, .patch = 4 };
+    const v3 = Version{ .major = 1, .minor = 3, .patch = 0 };
+    const v4 = Version{ .major = 2, .minor = 0, .patch = 0 };
+
+    try std.testing.expect(v1.lessThan(v2));
+    try std.testing.expect(v2.lessThan(v3));
+    try std.testing.expect(v3.lessThan(v4));
+    try std.testing.expect(v4.greaterThan(v1));
+}
+
+test "VirtualPackageIndex.basic_operations" {
+    const allocator = std.testing.allocator;
+
+    var index = VirtualPackageIndex.init(allocator);
+    defer index.deinit();
+
+    // Add providers for virtual packages
+    try index.addProvider("shell", "bash");
+    try index.addProvider("shell", "zsh");
+    try index.addProvider("shell", "fish");
+    try index.addProvider("http-client", "curl");
+    try index.addProvider("http-client", "wget");
+
+    // Check that shell is virtual
+    try std.testing.expect(index.isVirtual("shell"));
+    try std.testing.expect(index.isVirtual("http-client"));
+    try std.testing.expect(!index.isVirtual("bash"));
+
+    // Get providers
+    const shell_providers = index.getProviders("shell").?;
+    try std.testing.expectEqual(@as(usize, 3), shell_providers.len);
+    try std.testing.expectEqualStrings("bash", shell_providers[0]);
+    try std.testing.expectEqualStrings("zsh", shell_providers[1]);
+    try std.testing.expectEqualStrings("fish", shell_providers[2]);
+
+    const http_providers = index.getProviders("http-client").?;
+    try std.testing.expectEqual(@as(usize, 2), http_providers.len);
+
+    // Non-existent virtual package
+    try std.testing.expect(index.getProviders("nonexistent") == null);
+}
+
+test "ResolutionContext.conflict_detection" {
+    const allocator = std.testing.allocator;
+
+    // Create a mock store (we won't actually use it for this test)
+    var ctx = ResolutionContext.init(allocator, undefined);
+    defer ctx.deinit();
+
+    // Add a resolved package
+    const bash_id = PackageId{
+        .name = "bash",
+        .version = Version{ .major = 5, .minor = 2, .patch = 0 },
+        .revision = 1,
+        .build_id = "abc123",
+    };
+    try ctx.resolved.put("bash", bash_id);
+    try ctx.resolved_candidates.put("bash", Candidate{
+        .id = bash_id,
+        .dependencies = &[_]Dependency{},
+        .conflicts = &[_]VirtualPackage{
+            .{ .name = "csh", .constraint = null },
+        },
+    });
+
+    // Try to add a package that conflicts with bash
+    const csh_candidate = Candidate{
+        .id = .{
+            .name = "csh",
+            .version = Version{ .major = 1, .minor = 0, .patch = 0 },
+            .revision = 1,
+            .build_id = "def456",
+        },
+        .dependencies = &[_]Dependency{},
+    };
+
+    // Check if csh conflicts with resolved packages
+    const has_conflict = try ctx.checkConflicts(csh_candidate);
+    try std.testing.expect(has_conflict);
+    try std.testing.expectEqual(@as(usize, 1), ctx.conflicts.items.len);
+}
+
+test "ResolutionContext.replaces_detection" {
+    const allocator = std.testing.allocator;
+
+    var ctx = ResolutionContext.init(allocator, undefined);
+    defer ctx.deinit();
+
+    // Add an old package that will be replaced
+    const sh_id = PackageId{
+        .name = "sh",
+        .version = Version{ .major = 1, .minor = 0, .patch = 0 },
+        .revision = 1,
+        .build_id = "old123",
+    };
+    try ctx.resolved.put("sh", sh_id);
+
+    // Create a candidate that replaces sh
+    const bash_candidate = Candidate{
+        .id = .{
+            .name = "bash",
+            .version = Version{ .major = 5, .minor = 2, .patch = 0 },
+            .revision = 1,
+            .build_id = "new456",
+        },
+        .dependencies = &[_]Dependency{},
+        .replaces = &[_]VirtualPackage{
+            .{ .name = "sh", .constraint = null },
+        },
+    };
+
+    // Check if bash replaces anything
+    const replaced = ctx.checkReplaces(bash_candidate);
+    try std.testing.expect(replaced != null);
+    try std.testing.expectEqualStrings("sh", replaced.?);
+}

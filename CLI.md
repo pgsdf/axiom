@@ -1,0 +1,1302 @@
+# Axiom CLI Reference
+
+## Overview
+
+The Axiom CLI provides a user-friendly interface to the Axiom package manager. It combines all subsystems (store, profiles, resolver, realization) into cohesive workflows.
+
+## Installation
+
+```bash
+zig build
+sudo cp zig-out/bin/axiom-cli /usr/local/bin/axiom
+```
+
+## General Usage
+
+```bash
+axiom <command> [options]
+```
+
+All commands require root privileges (via `sudo`) since they interact with ZFS.
+
+## Commands
+
+### Help and Version
+
+#### `axiom help`
+
+Show help message with all available commands.
+
+```bash
+axiom help
+```
+
+#### `axiom version`
+
+Display version information.
+
+```bash
+axiom version
+```
+
+---
+
+### Profile Management
+
+Profiles define sets of packages you want installed.
+
+#### `axiom profile`
+
+List all available profiles.
+
+```bash
+axiom profile
+```
+
+**Example output:**
+```
+Available profiles:
+  development
+  server
+  desktop
+```
+
+#### `axiom profile-create <name>`
+
+Create a new empty profile.
+
+```bash
+axiom profile-create development
+```
+
+**Creates:**
+- Dataset: `zroot/axiom/profiles/development`
+- File: `/axiom/profiles/development/profile.yaml`
+
+#### `axiom profile-show <name>`
+
+Display profile details and packages.
+
+```bash
+axiom profile-show development
+```
+
+**Example output:**
+```
+Profile: development
+Description: Created via axiom CLI
+Packages (0):
+```
+
+#### `axiom profile-update <name>`
+
+Update a profile (interactive).
+
+```bash
+axiom profile-update development
+```
+
+**Note:** Currently shows workflow - full implementation pending.
+
+#### `axiom profile-delete <name>`
+
+Delete a profile.
+
+```bash
+axiom profile-delete development
+```
+
+**Warning:** This destroys the ZFS dataset. Use with caution.
+
+---
+
+### Package Operations
+
+Manage packages in the store and profiles.
+
+#### `axiom install <package>`
+
+Add a package to the current profile.
+
+```bash
+axiom install bash
+```
+
+**Workflow:**
+1. Adds package to profile.yaml
+2. Run `axiom resolve` to update dependencies
+3. Run `axiom realize` to create/update environment
+
+#### `axiom remove <package>`
+
+Remove a package from the current profile.
+
+```bash
+axiom remove vim
+```
+
+#### `axiom search <query>`
+
+Search for available packages.
+
+```bash
+axiom search bash
+```
+
+#### `axiom info <package>`
+
+Show detailed package information.
+
+```bash
+axiom info bash
+```
+
+**Example output:**
+```
+Package: bash
+Version: 5.2.0
+Revision: 1
+Description: GNU Bourne Again Shell
+License: GPL-3.0-or-later
+Dependencies:
+  - readline ~8.2.0
+  - ncurses ^6.0.0
+```
+
+#### `axiom list`
+
+List all installed packages in the store.
+
+```bash
+axiom list
+```
+
+---
+
+### Environment Operations
+
+Create and manage environments from profiles.
+
+#### `axiom resolve <profile>`
+
+Resolve profile dependencies and create lock file.
+
+```bash
+axiom resolve development
+```
+
+**Process:**
+1. Loads `profile.yaml`
+2. Resolves all dependencies
+3. Saves `profile.lock.yaml`
+
+**Example output:**
+```
+Resolving profile: development
+  Request: bash ^5.0.0
+  Request: git >=2.40.0
+  → Resolved bash to 5.2.0
+  → Resolved git to 2.43.0
+  → Resolved readline to 8.2.0 (dependency)
+  → Resolved ncurses to 6.4.0 (dependency)
+✓ Resolved 4 packages (2 requested, 2 dependencies)
+
+✓ Profile resolved and lock file saved
+```
+
+#### `axiom realize <env-name> <profile> [options]`
+
+Create an environment from a profile's lock file.
+
+```bash
+axiom realize dev-env development
+axiom realize dev-env development --conflict-policy priority
+```
+
+**Options:**
+- `--conflict-policy <policy>` - How to handle file conflicts between packages
+
+**Conflict Policies:**
+- `error` - Fail on any file conflict (default)
+- `priority` - Later packages in the lock file override earlier ones
+- `keep-both` - Keep both files with package name suffix
+
+**Process:**
+1. Loads `profile.lock.yaml`
+2. Creates dataset `zroot/axiom/env/dev-env`
+3. Clones all packages into environment (detecting file conflicts)
+4. Applies conflict resolution policy
+5. Generates activation script
+
+**Example output:**
+```
+Realizing environment: dev-env
+From profile: development
+Conflict policy: error_on_conflict
+
+Creating environment dataset...
+  Environment root: /axiom/env/dev-env
+
+Cloning packages...
+  [1/4] bash 5.2.0
+  [2/4] git 2.43.0
+  [3/4] readline 8.2.0
+  [4/4] ncurses 6.4.0
+
+Creating snapshot...
+
+✓ Environment realized
+To activate: source /axiom/env/dev-env/activate
+```
+
+**With conflicts (priority policy):**
+```
+Realizing environment: dev-env
+From profile: development
+Conflict policy: priority_wins
+
+...
+  [2/4] git 2.43.0
+    ⚠ 1 file conflict(s) detected
+
+Conflict Summary:
+  Total conflicts: 1
+  - Different content: 1
+  Resolved: 1
+
+✓ Environment realized
+```
+
+**With blocking conflicts (error policy):**
+```
+Realizing environment: dev-env
+From profile: development
+Conflict policy: error_on_conflict
+
+...
+  [2/4] git 2.43.0
+    ⚠ 1 file conflict(s) detected
+
+✗ Realization blocked by 1 unresolved conflict(s)
+  - bin/gettext
+
+✗ File conflicts detected. Options:
+  - Use --conflict-policy priority to let later packages win
+  - Use --conflict-policy keep-both to keep both files
+```
+
+#### `axiom activate <env>`
+
+Show how to activate an environment.
+
+```bash
+axiom activate dev-env
+```
+
+**Output:**
+```
+Activating environment: dev-env
+  Mountpoint: /axiom/env/dev-env
+
+To activate in your shell, run:
+  source /axiom/env/dev-env/activate
+```
+
+#### `axiom env`
+
+List all environments.
+
+```bash
+axiom env
+```
+
+**Example output:**
+```
+Available environments:
+  dev-env (profile: development)
+  prod-env (profile: production)
+```
+
+#### `axiom env-destroy <env>`
+
+Destroy an environment.
+
+```bash
+axiom env-destroy dev-env
+```
+
+**Interactive confirmation:**
+```
+Destroying environment: dev-env
+Are you sure? (y/N): y
+  ✓ Environment destroyed
+```
+
+---
+
+### Maintenance
+
+#### `axiom gc`
+
+Run garbage collector to remove unreferenced packages.
+
+```bash
+axiom gc
+```
+
+**Process:**
+1. Scans all profiles and environments
+2. Identifies referenced packages
+3. Removes unreferenced packages from store
+
+**Example output:**
+```
+Running garbage collector...
+  Found 42 packages in store
+  Found 15 referenced packages
+  Removing 27 unreferenced packages
+  Freed 2.3 GB
+✓ Garbage collection complete
+```
+
+---
+
+### Signature Operations
+
+Manage cryptographic keys and package signatures.
+
+#### `axiom key`
+
+List trusted public keys.
+
+```bash
+axiom key
+```
+
+**Example output:**
+```
+Trusted keys:
+  [1] pgsd-main (trusted)
+      ID: a1b2c3d4e5f6...
+      Added: 2024-01-15
+  [2] developer-alice
+      ID: f6e5d4c3b2a1...
+      Added: 2024-01-20
+```
+
+#### `axiom key-generate --output <name>`
+
+Generate a new Ed25519 key pair.
+
+```bash
+axiom key-generate --output mykey
+```
+
+**Creates:**
+- `mykey.priv` - Private key (keep secure!)
+- `mykey.pub` - Public key (share freely)
+
+#### `axiom key-add <keyfile>`
+
+Add a public key to the trust store.
+
+```bash
+axiom key-add developer.pub
+```
+
+#### `axiom key-remove <key-id>`
+
+Remove a key from the trust store.
+
+```bash
+axiom key-remove a1b2c3d4
+```
+
+#### `axiom key-trust <key-id>`
+
+Mark a key as trusted for signature verification.
+
+```bash
+axiom key-trust a1b2c3d4
+```
+
+#### `axiom sign <package-path> --key <keyfile>`
+
+Sign a package with a private key.
+
+```bash
+axiom sign /axiom/store/pkg/bash/5.2.0/1/abc123 --key mykey.priv
+```
+
+**Creates:** `signature.yaml` in the package directory containing:
+- Ed25519 signature
+- SHA-256 hashes of all files
+- Signing timestamp
+
+#### `axiom verify <package-path>`
+
+Verify a package's signature.
+
+```bash
+axiom verify /axiom/store/pkg/bash/5.2.0/1/abc123
+```
+
+**Example output:**
+```
+Verifying package: bash 5.2.0
+  Signature: valid
+  Signed by: pgsd-main (trusted)
+  Files checked: 47
+  All hashes: match
+✓ Package verification passed
+```
+
+---
+
+### Binary Cache Operations
+
+Manage remote package caches for binary distribution.
+
+#### `axiom cache`
+
+List configured remote caches.
+
+```bash
+axiom cache
+```
+
+**Example output:**
+```
+Configured caches:
+  [1] https://cache.pgsdf.org (priority 1)
+  [2] https://mirror.example.com/axiom (priority 2)
+
+Local cache:
+  Path: /var/cache/axiom
+  Size: 2.3 GB / 10 GB
+  Entries: 47
+```
+
+#### `axiom cache-add <url> [priority]`
+
+Add a remote cache.
+
+```bash
+axiom cache-add https://cache.pgsdf.org 1
+```
+
+**Parameters:**
+- `url` - Cache server URL
+- `priority` - Lower numbers tried first (default: 10)
+
+#### `axiom cache-remove <url>`
+
+Remove a remote cache.
+
+```bash
+axiom cache-remove https://mirror.example.com/axiom
+```
+
+#### `axiom cache-fetch <package> [--no-verify] [--install]`
+
+Fetch a package from remote cache.
+
+```bash
+axiom cache-fetch bash@5.2.0 --install
+```
+
+**Options:**
+- `--no-verify` - Skip signature verification
+- `--install` - Import into local store after download
+
+**Process:**
+1. Queries configured caches by priority
+2. Downloads ZFS stream
+3. Verifies signature (unless `--no-verify`)
+4. Optionally imports to local store
+
+#### `axiom cache-push <package> <cache-url>`
+
+Push a package to a remote cache (requires write access).
+
+```bash
+axiom cache-push bash@5.2.0 https://cache.pgsdf.org
+```
+
+#### `axiom cache-sync`
+
+Sync local store with remote caches.
+
+```bash
+axiom cache-sync
+```
+
+**Process:**
+1. Compares local packages with cache index
+2. Downloads missing packages
+3. Verifies signatures
+
+#### `axiom cache-clean [-f|--force]`
+
+Clean local cache to free disk space.
+
+```bash
+axiom cache-clean
+```
+
+**Options:**
+- `-f, --force` - Skip confirmation prompt
+
+**Process:**
+1. Applies cleanup policy (LRU by default)
+2. Removes entries exceeding size limit
+3. Reports space freed
+
+---
+
+### Build Operations
+
+Build packages from source using YAML recipes.
+
+#### `axiom build <recipe.yaml>`
+
+Build a package from a recipe file.
+
+```bash
+axiom build bash.yaml
+```
+
+**Options:**
+- `--jobs <n>` - Number of parallel jobs (default: 4)
+- `--no-test` - Skip test phase
+- `--dry-run` - Show build plan without executing
+- `--keep-sandbox` - Don't destroy build sandbox after completion
+- `--no-import` - Don't import result into store
+- `--verbose` - Show detailed output
+
+**Example recipe (bash.yaml):**
+```yaml
+name: bash
+version: "5.2.0"
+description: GNU Bourne Again SHell
+
+source:
+  url: https://ftp.gnu.org/gnu/bash/bash-5.2.tar.gz
+  sha256: a139c166df7ff4471c5e0733051642ee5556c1cc8a4a78f145583c5c81c32fb2
+
+build_dependencies:
+  - name: gcc
+  - name: make
+
+runtime_dependencies:
+  - name: readline
+  - name: ncurses
+
+phases:
+  configure:
+    command: "./configure --prefix=$OUTPUT"
+  build:
+    command: "make -j$JOBS"
+  install:
+    command: "make install DESTDIR=$OUTPUT"
+  test:
+    command: "make test"
+    optional: true
+
+output:
+  strip_binaries: true
+  compress_man: true
+```
+
+**Build process:**
+1. Creates isolated ZFS sandbox for the build
+2. Fetches and extracts source (URL, local path, or git)
+3. Injects build dependencies into sandbox
+4. Executes build phases (configure, build, install, test)
+5. Post-processes output (strip binaries, compress man pages)
+6. Imports result into package store
+
+---
+
+### Shell Completions
+
+Generate shell completion scripts for command-line autocompletion.
+
+#### `axiom completions <shell>`
+
+Generate completion script for the specified shell.
+
+```bash
+axiom completions bash
+axiom completions zsh
+axiom completions fish
+```
+
+**Installation:**
+
+**Bash:**
+```bash
+axiom completions bash > /usr/local/share/bash-completion/completions/axiom
+# Or for user-local:
+axiom completions bash >> ~/.bashrc
+```
+
+**Zsh:**
+```bash
+axiom completions zsh > /usr/local/share/zsh/site-functions/_axiom
+# Or add to fpath in ~/.zshrc:
+# fpath=(~/.zsh/completions $fpath)
+axiom completions zsh > ~/.zsh/completions/_axiom
+```
+
+**Fish:**
+```bash
+axiom completions fish > ~/.config/fish/completions/axiom.fish
+```
+
+**Features:**
+- Command completion
+- Option completion
+- Dynamic completion for profiles, environments, packages, and keys
+- File completion where appropriate
+
+---
+
+### Multi-user Operations
+
+Phase 12 adds support for per-user profiles and environments, allowing non-root users to manage their own package configurations.
+
+#### User Profile Operations
+
+##### `axiom user`
+
+List user profiles.
+
+```bash
+axiom user
+```
+
+**Example output:**
+```
+User Profiles for 'alice':
+========================
+
+  - development
+  - testing
+
+2 profile(s) total
+```
+
+##### `axiom user-profile-create <name>`
+
+Create a user-scoped profile (no root required).
+
+```bash
+axiom user-profile-create my-dev
+```
+
+**Creates:**
+- Dataset: `zroot/axiom/users/alice/profiles/my-dev`
+- Profile stored in user's area
+
+##### `axiom user-profile-show <name>`
+
+Show user profile details.
+
+```bash
+axiom user-profile-show my-dev
+```
+
+##### `axiom user-profile-update <name>`
+
+Update a user profile.
+
+```bash
+axiom user-profile-update my-dev
+```
+
+##### `axiom user-profile-delete <name>`
+
+Delete a user profile.
+
+```bash
+axiom user-profile-delete my-dev
+```
+
+#### User Environment Operations
+
+##### `axiom user-resolve <profile>`
+
+Resolve dependencies for a user profile.
+
+```bash
+axiom user-resolve my-dev
+```
+
+**Note:** Uses packages from the shared system store.
+
+##### `axiom user-realize <env-name> <profile> [options]`
+
+Create a user environment from a profile.
+
+```bash
+axiom user-realize my-env my-dev
+axiom user-realize my-env my-dev --conflict-policy priority
+```
+
+**Options:**
+- `--conflict-policy <policy>` - How to handle file conflicts between packages
+  - `error` - Fail on any file conflict (default)
+  - `priority` - Later packages override earlier ones
+  - `keep-both` - Keep both files with package name suffix
+
+**Creates:**
+- Dataset: `zroot/axiom/users/alice/env/my-env`
+- Activation script in user's area
+
+##### `axiom user-activate <env>`
+
+Activate a user environment.
+
+```bash
+axiom user-activate my-env
+```
+
+**Output:**
+```
+Activating user environment: my-env
+  Mountpoint: /axiom/users/alice/env/my-env
+
+To activate in your shell, run:
+  source /axiom/users/alice/env/my-env/activate
+```
+
+##### `axiom user-env`
+
+List user environments.
+
+```bash
+axiom user-env
+```
+
+##### `axiom user-env-destroy <env>`
+
+Destroy a user environment.
+
+```bash
+axiom user-env-destroy my-env
+```
+
+#### System Administration Commands (Root Only)
+
+##### `axiom system-import <source>`
+
+Import a package to the system store.
+
+```bash
+sudo axiom system-import /path/to/package.tar.gz
+```
+
+**Note:** This is the privileged version of import.
+
+##### `axiom system-gc`
+
+Run system-wide garbage collection.
+
+```bash
+sudo axiom system-gc
+```
+
+##### `axiom system-users`
+
+List all users with Axiom data.
+
+```bash
+sudo axiom system-users
+```
+
+**Example output:**
+```
+Axiom Users
+===========
+
+  alice: 2147483648 bytes
+  bob: 1073741824 bytes
+
+2 user(s) total
+```
+
+##### `axiom system-user-remove <username>`
+
+Remove all Axiom data for a user (root only).
+
+```bash
+sudo axiom system-user-remove bob
+```
+
+**Warning:** Destroys all profiles and environments for the user.
+
+---
+
+## Virtual Package Operations
+
+Virtual packages provide an abstraction layer for package capabilities. For example, multiple packages can provide "shell" capability, allowing users to depend on the capability rather than a specific implementation.
+
+### Listing Virtual Packages
+
+##### `axiom virtual`
+
+List all known virtual packages and their providers.
+
+```bash
+axiom virtual
+```
+
+Output:
+```
+Virtual Packages
+================
+
+Scanning package store for virtual package declarations...
+
+Common virtual packages:
+  shell          - Command line shell (bash, zsh, fish, etc.)
+  http-client    - HTTP download tools (curl, wget, etc.)
+  editor         - Text editors (vim, emacs, nano, etc.)
+  cc             - C compiler (gcc, clang, etc.)
+  c++            - C++ compiler (g++, clang++, etc.)
+```
+
+### Querying Virtual Package Providers
+
+##### `axiom virtual-providers <name>`
+
+List packages that provide a virtual package.
+
+```bash
+axiom virtual-providers shell
+```
+
+Output:
+```
+Packages providing 'shell':
+===========================
+
+  - bash
+  - zsh
+  - fish
+```
+
+### Package Provides Query
+
+##### `axiom provides <package>`
+
+Show what virtual packages a package provides.
+
+```bash
+axiom provides bash
+```
+
+Output:
+```
+Virtual packages provided by 'bash':
+=====================================
+
+  - shell
+  - posix-shell
+```
+
+### Conflict Query
+
+##### `axiom conflicts <package>`
+
+Show packages that conflict with a given package.
+
+```bash
+axiom conflicts bash
+```
+
+Output:
+```
+Packages conflicting with 'bash':
+=================================
+
+  - csh (explicit conflict)
+  - zsh<5.0.0 (version-constrained conflict)
+```
+
+### Replace Query
+
+##### `axiom replaces <package>`
+
+Show packages that a package replaces/supersedes.
+
+```bash
+axiom replaces bash
+```
+
+Output:
+```
+Packages replaced by 'bash':
+============================
+
+  - sh
+```
+
+---
+
+### Manifest Virtual Package Fields
+
+Packages declare virtual package relationships in `manifest.yaml`:
+
+```yaml
+name: bash
+version: 5.2.0
+revision: 1
+description: GNU Bourne Again Shell
+
+# Virtual packages this package provides
+provides:
+  - shell
+  - posix-shell
+
+# Packages that cannot coexist with this one
+conflicts:
+  - csh              # Conflicts with any version
+  - zsh<5.0.0        # Conflicts with specific versions
+
+# Packages this one supersedes
+replaces:
+  - sh               # Replaces any sh version
+```
+
+**Provides:** Declares abstract capabilities this package satisfies. When a profile requests a virtual package, the resolver finds packages that provide it.
+
+**Conflicts:** Declares packages that cannot be installed alongside this one. The resolver will fail if conflicting packages are requested.
+
+**Replaces:** Declares packages this one supersedes. During resolution, if a replaced package is already resolved, it will be removed in favor of the replacing package.
+
+---
+
+### Dataset Structure (Multi-user)
+
+With multi-user support, the ZFS dataset structure is:
+
+```
+zroot/axiom/
+├── store/              # Shared package store (root-managed)
+│   └── pkg/
+├── profiles/           # System-wide profiles (root)
+├── env/                # System-wide environments (root)
+└── users/              # Per-user data
+    ├── alice/
+    │   ├── profiles/   # Alice's profiles
+    │   └── env/        # Alice's environments
+    └── bob/
+        ├── profiles/   # Bob's profiles
+        └── env/        # Bob's environments
+```
+
+---
+
+## Complete Workflow Example
+
+### 1. Create a Development Environment
+
+```bash
+# Create profile
+sudo axiom profile-create development
+
+# Edit profile.yaml manually to add packages
+cat > /axiom/profiles/development/profile.yaml << EOF
+name: development
+description: Development tools
+packages:
+  - name: bash
+    version: "^5.0.0"
+    constraint: caret
+  - name: git
+    version: ">=2.40.0"
+    constraint: range
+  - name: vim
+    version: "*"
+    constraint: any
+EOF
+
+# Resolve dependencies
+sudo axiom resolve development
+
+# Create environment
+sudo axiom realize dev-env development
+
+# Activate
+source /axiom/env/dev-env/activate
+```
+
+### 2. Use the Environment
+
+```bash
+# Now using packages from environment
+which bash
+# /axiom/env/dev-env/bin/bash
+
+bash --version
+# GNU bash, version 5.2.0
+
+# Check environment variable
+echo $AXIOM_ENV
+# dev-env
+```
+
+### 3. Deactivate
+
+```bash
+# Return to system packages
+deactivate
+```
+
+### 4. Update Environment
+
+```bash
+# Update profile
+vim /axiom/profiles/development/profile.yaml
+
+# Re-resolve
+sudo axiom resolve development
+
+# Destroy old environment
+sudo axiom env-destroy dev-env
+
+# Create updated environment
+sudo axiom realize dev-env development
+```
+
+### 5. Clean Up
+
+```bash
+# Remove environment
+sudo axiom env-destroy dev-env
+
+# Remove profile
+sudo axiom profile-delete development
+
+# Clean unreferenced packages
+sudo axiom gc
+```
+
+---
+
+## Environment Activation
+
+When you activate an environment, the activation script:
+
+1. **Sets environment variables:**
+   ```bash
+   export AXIOM_ENV="dev-env"
+   export PATH="/axiom/env/dev-env/bin:$PATH"
+   export LD_LIBRARY_PATH="/axiom/env/dev-env/lib:$LD_LIBRARY_PATH"
+   export MANPATH="/axiom/env/dev-env/share/man:$MANPATH"
+   ```
+
+2. **Provides deactivation function:**
+   ```bash
+   deactivate() {
+     unset AXIOM_ENV
+     echo "Environment deactivated"
+   }
+   ```
+
+3. **Notification:**
+   ```
+   Axiom environment 'dev-env' activated
+   To deactivate, run: deactivate
+   ```
+
+---
+
+## Configuration Files
+
+### Profile (profile.yaml)
+
+```yaml
+name: development
+description: Development environment
+packages:
+  - name: bash
+    version: "^5.0.0"
+    constraint: caret
+  - name: git
+    version: ">=2.40.0"
+    constraint: range
+```
+
+### Lock File (profile.lock.yaml)
+
+```yaml
+profile_name: development
+lock_version: 1
+resolved:
+  - name: bash
+    version: "5.2.0"
+    revision: 1
+    build_id: abc123
+    requested: true
+  - name: readline
+    version: "8.2.0"
+    revision: 1
+    build_id: def456
+    requested: false
+```
+
+---
+
+## File Conflict Resolution
+
+When realizing an environment, multiple packages may contain files with the same path. Axiom detects these conflicts and handles them according to the configured policy.
+
+### Conflict Types
+
+- **same_content** - Files are identical (no real conflict, handled automatically)
+- **different_content** - Files have different content
+- **type_mismatch** - One is a file, one is a directory
+- **permission_diff** - Same content but different permissions
+
+### Resolution Strategies
+
+| Policy | Behavior |
+|--------|----------|
+| `error` | Fail immediately on conflict (safe default) |
+| `priority` | Later package in lock file wins |
+| `keep-both` | Keep both files with package suffix (e.g., `file.bash`, `file.coreutils`) |
+
+### Example Scenarios
+
+**Scenario 1: Two packages provide `/bin/gettext`**
+- `gettext` package installs `/bin/gettext`
+- `gettext-tiny` package also installs `/bin/gettext`
+
+With `--conflict-policy error`: Realization fails, prompting user to choose.
+
+With `--conflict-policy priority`: The package listed later in the lock file wins.
+
+With `--conflict-policy keep-both`: Both files are kept as:
+- `/bin/gettext.gettext`
+- `/bin/gettext.gettext-tiny`
+
+**Scenario 2: Identical files from multiple packages**
+
+If both packages contain identical files (same content, same permissions), no conflict is reported - the file is installed once.
+
+---
+
+## Exit Codes
+
+- `0` - Success
+- `1` - General error
+- `2` - Invalid usage
+- `3` - ZFS error
+- `4` - Package not found
+- `5` - Profile not found
+- `6` - Environment not found
+- `7` - File conflict (when using `error` policy)
+
+---
+
+## Tips and Best Practices
+
+### Profile Naming
+
+Use descriptive names:
+- `development` - Development tools
+- `server-production` - Production server packages
+- `desktop-minimal` - Minimal desktop environment
+
+### Version Constraints
+
+Choose appropriate constraints:
+- Exact (`=1.2.3`) - Pin specific version
+- Tilde (`~1.2.3`) - Allow patch updates
+- Caret (`^1.2.3`) - Allow compatible updates
+- Range (`>=1.0.0,<2.0.0`) - Explicit bounds
+- Wildcard (`*`) - Any version (use sparingly)
+
+### Environment Workflow
+
+1. Create profile once
+2. Resolve when dependencies change
+3. Realize creates new environment instance
+4. Multiple environments from same profile OK
+5. Destroy old environments after updates
+
+### Garbage Collection
+
+Run `axiom gc` periodically to:
+- Reclaim disk space
+- Remove old package versions
+- Clean up after profile updates
+
+### Snapshots
+
+ZFS snapshots enable rollback:
+```bash
+# List snapshots
+zfs list -t snapshot -r zroot/axiom/env/dev-env
+
+# Rollback
+zfs rollback zroot/axiom/env/dev-env@initial
+```
+
+---
+
+## Troubleshooting
+
+### "Failed to initialize ZFS"
+
+**Cause:** Not running as root or ZFS not available
+
+**Solution:**
+```bash
+sudo axiom <command>
+```
+
+### "Profile not found"
+
+**Cause:** Profile doesn't exist
+
+**Solution:**
+```bash
+# List profiles
+sudo axiom profile
+
+# Create profile
+sudo axiom profile-create <name>
+```
+
+### "Environment already exists"
+
+**Cause:** Environment name conflict
+
+**Solution:**
+```bash
+# Destroy old environment
+sudo axiom env-destroy <name>
+
+# Or use different name
+sudo axiom realize <new-name> <profile>
+```
+
+### "Package not found in store"
+
+**Cause:** Package hasn't been imported
+
+**Solution:**
+Import package (Phase 7 TODO):
+```bash
+sudo axiom import /path/to/package
+```
+
+---
+
+**Author**: Vester "Vic" Thacker  
+**Organization**: Pacific Grove Software Distribution Foundation  
+**License**: BSD 2-Clause
