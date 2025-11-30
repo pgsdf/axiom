@@ -3,11 +3,13 @@ const zfs = @import("zfs.zig");
 const types = @import("types.zig");
 const store = @import("store.zig");
 const manifest = @import("manifest.zig");
+const secure_tar = @import("secure_tar.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageId = types.PackageId;
 const PackageStore = store.PackageStore;
 const Version = types.Version;
+const SecureTarExtractor = secure_tar.SecureTarExtractor;
 
 /// Import errors
 pub const ImportError = error{
@@ -17,6 +19,12 @@ pub const ImportError = error{
     ExtractionFailed,
     ImportFailed,
     UnsupportedFormat,
+    // Security errors
+    PathTraversal,
+    SymlinkEscape,
+    DeviceNodeRejected,
+    FileTooLarge,
+    InvalidArchive,
 };
 
 /// Source types for package import
@@ -75,6 +83,28 @@ pub const ImportOptions = struct {
     dry_run: bool = false,
     auto_detect: bool = true,
     build_id: ?[]const u8 = null,
+    /// Security options for tarball extraction
+    security: SecurityOptions = .{},
+};
+
+/// Security options for import operations
+pub const SecurityOptions = struct {
+    /// Use secure extraction (Phase 24 hardening)
+    secure_extraction: bool = true,
+    /// Allow symlinks in imported packages
+    allow_symlinks: bool = true,
+    /// Allow hardlinks in imported packages (dangerous)
+    allow_hardlinks: bool = false,
+    /// Allow device nodes (dangerous)
+    allow_devices: bool = false,
+    /// Allow FIFOs/sockets
+    allow_fifos: bool = false,
+    /// Strip setuid/setgid bits
+    strip_setuid: bool = true,
+    /// Maximum file size (bytes)
+    max_file_size: u64 = 1024 * 1024 * 1024, // 1GB
+    /// Maximum total extraction size (bytes)
+    max_total_size: u64 = 10 * 1024 * 1024 * 1024, // 10GB
 };
 
 /// Package importer
@@ -119,7 +149,7 @@ pub const Importer = struct {
         const pkg_dir: []const u8 = switch (source) {
             .directory => |dir| dir,
             .tarball => |path| blk: {
-                extract_dir = try self.extractTarball(path);
+                extract_dir = try self.extractTarball(path, options.security);
                 cleanup_extract = true;
                 break :blk extract_dir.?;
             },
@@ -244,55 +274,109 @@ pub const Importer = struct {
         };
     }
 
-    /// Extract tarball to temporary directory
-    fn extractTarball(self: *Importer, tarball_path: []const u8) ![]const u8 {
+    /// Extract tarball to temporary directory using secure extraction
+    fn extractTarball(self: *Importer, tarball_path: []const u8, security: SecurityOptions) ![]const u8 {
         std.debug.print("Extracting tarball: {s}\n", .{tarball_path});
 
-        // Create temp directory
+        // Create temp directory with random component for security
         const timestamp = std.time.timestamp();
+        var random_bytes: [4]u8 = undefined;
+        std.crypto.random.bytes(&random_bytes);
+
         const temp_dir = try std.fmt.allocPrint(
             self.allocator,
-            "/tmp/axiom-import-{d}",
-            .{timestamp},
+            "/tmp/axiom-import-{d}-{x:0>2}{x:0>2}{x:0>2}{x:0>2}",
+            .{ timestamp, random_bytes[0], random_bytes[1], random_bytes[2], random_bytes[3] },
         );
         errdefer self.allocator.free(temp_dir);
 
         try std.fs.cwd().makePath(temp_dir);
 
-        // Determine compression based on extension
-        var tar_args: []const []const u8 = undefined;
-        
-        if (std.mem.endsWith(u8, tarball_path, ".tar.gz") or 
-            std.mem.endsWith(u8, tarball_path, ".tgz")) {
-            tar_args = &[_][]const u8{ "tar", "-xzf", tarball_path, "-C", temp_dir };
-        } else if (std.mem.endsWith(u8, tarball_path, ".tar.xz") or
-                   std.mem.endsWith(u8, tarball_path, ".txz")) {
-            tar_args = &[_][]const u8{ "tar", "-xJf", tarball_path, "-C", temp_dir };
-        } else if (std.mem.endsWith(u8, tarball_path, ".tar.zst") or
-                   std.mem.endsWith(u8, tarball_path, ".tzst")) {
-            tar_args = &[_][]const u8{ "tar", "--zstd", "-xf", tarball_path, "-C", temp_dir };
-        } else if (std.mem.endsWith(u8, tarball_path, ".tar.bz2") or
-                   std.mem.endsWith(u8, tarball_path, ".tbz2")) {
-            tar_args = &[_][]const u8{ "tar", "-xjf", tarball_path, "-C", temp_dir };
-        } else if (std.mem.endsWith(u8, tarball_path, ".tar")) {
-            tar_args = &[_][]const u8{ "tar", "-xf", tarball_path, "-C", temp_dir };
-        } else {
-            std.debug.print("Error: Unknown tarball format\n", .{});
-            return ImportError.UnsupportedFormat;
-        }
+        // Use secure extraction by default
+        if (security.secure_extraction) {
+            std.debug.print("Using secure tar extraction (Phase 24 hardening)\n", .{});
 
-        var child = std.process.Child.init(tar_args, self.allocator);
-        child.stderr_behavior = .Pipe;
-        
-        try child.spawn();
-        const stderr = try child.stderr.?.readToEndAlloc(self.allocator, 1024 * 1024);
-        defer self.allocator.free(stderr);
-        
-        const term = try child.wait();
-        
-        if (term.Exited != 0) {
-            std.debug.print("Error extracting tarball: {s}\n", .{stderr});
-            return ImportError.ExtractionFailed;
+            // Configure secure extraction options
+            const extract_options = SecureTarExtractor.ExtractOptions{
+                .allow_symlinks = security.allow_symlinks,
+                .allow_hardlinks = security.allow_hardlinks,
+                .allow_devices = security.allow_devices,
+                .allow_fifos = security.allow_fifos,
+                .allow_absolute_paths = false, // Always reject absolute paths
+                .allow_parent_refs = false, // Always reject path traversal
+                .strip_setuid = security.strip_setuid,
+                .strip_sticky = true,
+                .max_file_size = security.max_file_size,
+                .max_total_size = security.max_total_size,
+            };
+
+            var extractor = SecureTarExtractor.init(
+                self.allocator,
+                temp_dir,
+                extract_options,
+            );
+
+            extractor.extractFromPath(tarball_path) catch |err| {
+                // Map secure_tar errors to ImportError
+                switch (err) {
+                    SecureTarExtractor.ExtractionError.PathTraversal => {
+                        std.debug.print("SECURITY: Path traversal attack detected in tarball!\n", .{});
+                        return ImportError.PathTraversal;
+                    },
+                    SecureTarExtractor.ExtractionError.AbsolutePath => {
+                        std.debug.print("SECURITY: Absolute path detected in tarball!\n", .{});
+                        return ImportError.PathTraversal;
+                    },
+                    SecureTarExtractor.ExtractionError.SymlinkEscape => {
+                        std.debug.print("SECURITY: Symlink escape detected in tarball!\n", .{});
+                        return ImportError.SymlinkEscape;
+                    },
+                    SecureTarExtractor.ExtractionError.HardlinkEscape => {
+                        std.debug.print("SECURITY: Hardlink escape detected in tarball!\n", .{});
+                        return ImportError.SymlinkEscape;
+                    },
+                    SecureTarExtractor.ExtractionError.DeviceNode => {
+                        std.debug.print("SECURITY: Device node detected in tarball!\n", .{});
+                        return ImportError.DeviceNodeRejected;
+                    },
+                    SecureTarExtractor.ExtractionError.FifoSocket => {
+                        std.debug.print("SECURITY: FIFO/socket detected in tarball!\n", .{});
+                        return ImportError.DeviceNodeRejected;
+                    },
+                    SecureTarExtractor.ExtractionError.FileTooLarge,
+                    SecureTarExtractor.ExtractionError.TotalSizeTooLarge,
+                    => {
+                        std.debug.print("SECURITY: Archive size limit exceeded!\n", .{});
+                        return ImportError.FileTooLarge;
+                    },
+                    SecureTarExtractor.ExtractionError.MalformedArchive => {
+                        std.debug.print("Error: Malformed archive\n", .{});
+                        return ImportError.InvalidArchive;
+                    },
+                    else => {
+                        std.debug.print("Error extracting tarball: {}\n", .{err});
+                        return ImportError.ExtractionFailed;
+                    },
+                }
+            };
+
+            // Report extraction statistics
+            const stats = extractor.getStats();
+            std.debug.print("Extraction complete:\n", .{});
+            std.debug.print("  Files: {d}\n", .{stats.files_extracted});
+            std.debug.print("  Directories: {d}\n", .{stats.directories_created});
+            std.debug.print("  Symlinks: {d}\n", .{stats.symlinks_created});
+            std.debug.print("  Bytes: {d}\n", .{stats.bytes_extracted});
+            if (stats.paths_rejected > 0) {
+                std.debug.print("  Rejected paths: {d}\n", .{stats.paths_rejected});
+            }
+            if (stats.permissions_modified > 0) {
+                std.debug.print("  Permissions modified: {d}\n", .{stats.permissions_modified});
+            }
+        } else {
+            // Legacy extraction using system tar (insecure, for compatibility)
+            std.debug.print("WARNING: Using legacy tar extraction (insecure)\n", .{});
+            try self.extractTarballLegacy(tarball_path, temp_dir);
         }
 
         // Check if tarball extracted to a subdirectory
@@ -320,6 +404,49 @@ pub const Importer = struct {
 
         if (first_entry) |f| self.allocator.free(f);
         return temp_dir;
+    }
+
+    /// Legacy extraction using system tar command (kept for compatibility)
+    fn extractTarballLegacy(self: *Importer, tarball_path: []const u8, temp_dir: []const u8) !void {
+        // Determine compression based on extension
+        var tar_args: []const []const u8 = undefined;
+
+        if (std.mem.endsWith(u8, tarball_path, ".tar.gz") or
+            std.mem.endsWith(u8, tarball_path, ".tgz"))
+        {
+            tar_args = &[_][]const u8{ "tar", "-xzf", tarball_path, "-C", temp_dir };
+        } else if (std.mem.endsWith(u8, tarball_path, ".tar.xz") or
+            std.mem.endsWith(u8, tarball_path, ".txz"))
+        {
+            tar_args = &[_][]const u8{ "tar", "-xJf", tarball_path, "-C", temp_dir };
+        } else if (std.mem.endsWith(u8, tarball_path, ".tar.zst") or
+            std.mem.endsWith(u8, tarball_path, ".tzst"))
+        {
+            tar_args = &[_][]const u8{ "tar", "--zstd", "-xf", tarball_path, "-C", temp_dir };
+        } else if (std.mem.endsWith(u8, tarball_path, ".tar.bz2") or
+            std.mem.endsWith(u8, tarball_path, ".tbz2"))
+        {
+            tar_args = &[_][]const u8{ "tar", "-xjf", tarball_path, "-C", temp_dir };
+        } else if (std.mem.endsWith(u8, tarball_path, ".tar")) {
+            tar_args = &[_][]const u8{ "tar", "-xf", tarball_path, "-C", temp_dir };
+        } else {
+            std.debug.print("Error: Unknown tarball format\n", .{});
+            return ImportError.UnsupportedFormat;
+        }
+
+        var child = std.process.Child.init(tar_args, self.allocator);
+        child.stderr_behavior = .Pipe;
+
+        try child.spawn();
+        const stderr = try child.stderr.?.readToEndAlloc(self.allocator, 1024 * 1024);
+        defer self.allocator.free(stderr);
+
+        const term = try child.wait();
+
+        if (term.Exited != 0) {
+            std.debug.print("Error extracting tarball: {s}\n", .{stderr});
+            return ImportError.ExtractionFailed;
+        }
     }
 
     /// Detect metadata from package directory contents
