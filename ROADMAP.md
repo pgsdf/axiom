@@ -25,7 +25,7 @@ This document outlines the planned enhancements for Axiom beyond the core 8 phas
 | 23 | Kernel Module Compatibility | Medium | Medium | Phase 22 | ✓ Complete |
 | 24 | Secure Tar Extraction | Critical | Medium | Phase 9 | ✓ Complete |
 | 25 | Mandatory Signature Verification | Critical | Medium | Phase 15 | ✓ Complete |
-| 26 | ZFS Dataset Path Validation | High | Low | None | Planned |
+| 26 | ZFS Dataset Path Validation | High | Low | None | ✓ Complete |
 | 27 | Build Sandboxing | High | High | Phase 10 | Planned |
 | 28 | Secure Bundle Verification | High | Medium | Phase 18 | Planned |
 | 29 | Resolver Resource Limits | Medium | Low | Phase 16 | Planned |
@@ -2313,11 +2313,39 @@ axiom verify package@1.0.0
 **Priority**: High
 **Complexity**: Low
 **Dependencies**: None
-**Status**: Planned
+**Status**: Complete
 
 ### Purpose
 
 Prevent ZFS operation injection and ensure all dataset operations target intended locations within the Axiom store hierarchy.
+
+### Implementation
+
+**Files Modified:**
+- `src/zfs.zig` - Added `ZfsPathValidator` struct with comprehensive path validation
+- `src/store.zig` - Integrated validation into `DatasetPaths.packageDataset()` and added validation helpers
+- `src/cli.zig` - Added `zfs-validate` CLI command for testing path validation
+
+**Features Implemented:**
+- `ZfsPathValidator` with component and path validation
+- Character allowlist enforcement (a-z, A-Z, 0-9, -, _, .)
+- Reserved name rejection (., .., zfs, zpool, snapshot, bookmark, clone, origin)
+- Snapshot reference (@) detection in dataset paths
+- Bookmark reference (#) detection
+- Path traversal (..) prevention
+- Null byte and control character rejection
+- Store hierarchy enforcement
+- Snapshot path validation (`dataset@snapshot`)
+- Component sanitization for user input
+- Human-readable error messages
+
+**CLI Command:**
+```bash
+axiom zfs-validate bash                    # Validate as component
+axiom zfs-validate ../../../etc/passwd     # Detects traversal
+axiom zfs-validate pkg@snap --type dataset # Detects snapshot in dataset
+axiom zfs-validate 'pkg name'              # Detects invalid chars
+```
 
 ### Threat Model
 
@@ -3053,7 +3081,7 @@ fn concurrentZfsWorker(zfs: *ThreadSafeZfs) void {
 |-------|------------|----------------|--------|
 | 24 | Critical | Tarball import | ✓ Complete |
 | 25 | Critical | All package operations | ✓ Complete |
-| 26 | High | ZFS operations | Planned |
+| 26 | High | ZFS operations | ✓ Complete |
 | 27 | High | Build execution | Planned |
 | 28 | High | Bundle execution | Planned |
 | 29 | Medium | Resolver DoS | Planned |

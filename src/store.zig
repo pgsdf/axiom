@@ -18,6 +18,9 @@ pub const StoreError = error{
     InvalidManifest,
     StorageError,
     ZfsError,
+    // Phase 26: Path validation errors
+    InvalidPathComponent,
+    PathValidationFailed,
 };
 
 /// Dataset path configuration
@@ -26,8 +29,72 @@ pub const DatasetPaths = struct {
     profile_root: []const u8 = "zroot/axiom/profiles",
     env_root: []const u8 = "zroot/axiom/env",
 
-    /// Get the full dataset path for a package
+    /// Get the full dataset path for a package with validation (Phase 26)
     pub fn packageDataset(
+        self: DatasetPaths,
+        allocator: std.mem.Allocator,
+        pkg: PackageId,
+    ) ![]u8 {
+        // Phase 26: Validate path components before building path
+        const validator = zfs.ZfsPathValidator.init(allocator, self.store_root);
+
+        // Validate each component
+        validator.validateComponent(pkg.name) catch |err| {
+            std.debug.print("Invalid package name '{s}': {s}\n", .{
+                pkg.name,
+                zfs.ZfsPathValidator.errorMessage(err),
+            });
+            return StoreError.InvalidPathComponent;
+        };
+
+        // Convert version to string for validation
+        var version_buf: [64]u8 = undefined;
+        const version_str = std.fmt.bufPrint(&version_buf, "{}", .{pkg.version}) catch {
+            return StoreError.InvalidPathComponent;
+        };
+
+        validator.validateComponent(version_str) catch |err| {
+            std.debug.print("Invalid version '{s}': {s}\n", .{
+                version_str,
+                zfs.ZfsPathValidator.errorMessage(err),
+            });
+            return StoreError.InvalidPathComponent;
+        };
+
+        validator.validateComponent(pkg.build_id) catch |err| {
+            std.debug.print("Invalid build_id '{s}': {s}\n", .{
+                pkg.build_id,
+                zfs.ZfsPathValidator.errorMessage(err),
+            });
+            return StoreError.InvalidPathComponent;
+        };
+
+        // Build the validated path
+        const path = try std.fmt.allocPrint(allocator, "{s}/{s}/{}/{d}/{s}", .{
+            self.store_root,
+            pkg.name,
+            pkg.version,
+            pkg.revision,
+            pkg.build_id,
+        });
+        errdefer allocator.free(path);
+
+        // Final validation of complete path
+        validator.validateDatasetPath(path) catch |err| {
+            std.debug.print("Invalid dataset path '{s}': {s}\n", .{
+                path,
+                zfs.ZfsPathValidator.errorMessage(err),
+            });
+            allocator.free(path);
+            return StoreError.PathValidationFailed;
+        };
+
+        return path;
+    }
+
+    /// Get the full dataset path for a package without validation (internal use only)
+    /// WARNING: Use packageDataset() for user-provided data
+    pub fn packageDatasetUnchecked(
         self: DatasetPaths,
         allocator: std.mem.Allocator,
         pkg: PackageId,
@@ -54,6 +121,38 @@ pub const DatasetPaths = struct {
             pkg.revision,
             pkg.build_id,
         });
+    }
+
+    /// Validate a profile path (Phase 26)
+    pub fn validateProfilePath(
+        self: DatasetPaths,
+        allocator: std.mem.Allocator,
+        profile_name: []const u8,
+    ) !void {
+        const validator = zfs.ZfsPathValidator.init(allocator, self.profile_root);
+        validator.validateComponent(profile_name) catch |err| {
+            std.debug.print("Invalid profile name '{s}': {s}\n", .{
+                profile_name,
+                zfs.ZfsPathValidator.errorMessage(err),
+            });
+            return StoreError.InvalidPathComponent;
+        };
+    }
+
+    /// Validate an environment path (Phase 26)
+    pub fn validateEnvPath(
+        self: DatasetPaths,
+        allocator: std.mem.Allocator,
+        env_name: []const u8,
+    ) !void {
+        const validator = zfs.ZfsPathValidator.init(allocator, self.env_root);
+        validator.validateComponent(env_name) catch |err| {
+            std.debug.print("Invalid environment name '{s}': {s}\n", .{
+                env_name,
+                zfs.ZfsPathValidator.errorMessage(err),
+            });
+            return StoreError.InvalidPathComponent;
+        };
     }
 };
 

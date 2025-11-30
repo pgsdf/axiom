@@ -660,6 +660,302 @@ fn parseZfsSize(size_str: []const u8) u64 {
     return whole + frac;
 }
 
+// ============================================================================
+// Phase 26: ZFS Dataset Path Validation
+// ============================================================================
+
+/// Errors for path validation
+pub const PathValidationError = error{
+    /// Path contains invalid characters
+    InvalidCharacter,
+    /// Path component is empty
+    EmptyComponent,
+    /// Path component exceeds maximum length
+    ComponentTooLong,
+    /// Full path exceeds maximum length
+    PathTooLong,
+    /// Path is outside the allowed store hierarchy
+    OutsideStoreRoot,
+    /// Path component is a reserved name
+    ReservedName,
+    /// Path contains snapshot reference (@) where not allowed
+    SnapshotInPath,
+    /// Path contains bookmark reference (#) where not allowed
+    BookmarkInPath,
+    /// Path contains null bytes
+    NullByte,
+    /// Path contains control characters
+    ControlCharacter,
+    /// Path attempts directory traversal
+    PathTraversal,
+};
+
+/// ZFS dataset path validator
+/// Ensures all dataset operations target intended locations within the Axiom store hierarchy
+pub const ZfsPathValidator = struct {
+    allocator: std.mem.Allocator,
+    store_root: []const u8,
+
+    /// Maximum length for a single path component (ZFS limit is 256)
+    pub const MAX_COMPONENT_LENGTH: usize = 255;
+
+    /// Maximum length for full dataset path (ZFS limit is ~1024)
+    pub const MAX_PATH_LENGTH: usize = 1024;
+
+    /// Valid characters for ZFS dataset name components
+    /// Alphanumeric plus: - _ . : (colon only for special cases)
+    /// Note: We intentionally exclude '@' and '#' as those are snapshot/bookmark delimiters
+    pub const VALID_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.";
+
+    /// Extended valid chars that include colon (for pool names)
+    pub const VALID_CHARS_WITH_COLON = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:";
+
+    /// Reserved names that cannot be used as dataset components
+    pub const RESERVED_NAMES = [_][]const u8{
+        ".",
+        "..",
+        "zfs",
+        "zpool",
+        "snapshot",
+        "bookmark",
+        "clone",
+        "origin",
+    };
+
+    /// Initialize validator with store root
+    pub fn init(allocator: std.mem.Allocator, store_root: []const u8) ZfsPathValidator {
+        return .{
+            .allocator = allocator,
+            .store_root = store_root,
+        };
+    }
+
+    /// Validate a single path component (e.g., package name, version string)
+    pub fn validateComponent(self: *const ZfsPathValidator, component: []const u8) PathValidationError!void {
+        _ = self;
+
+        // Check for empty component
+        if (component.len == 0) {
+            return PathValidationError.EmptyComponent;
+        }
+
+        // Check length
+        if (component.len > MAX_COMPONENT_LENGTH) {
+            return PathValidationError.ComponentTooLong;
+        }
+
+        // Check for null bytes
+        if (std.mem.indexOfScalar(u8, component, 0) != null) {
+            return PathValidationError.NullByte;
+        }
+
+        // Check each character against allowlist
+        for (component) |char| {
+            // Check for control characters (ASCII < 32 or DEL)
+            if (char < 32 or char == 127) {
+                return PathValidationError.ControlCharacter;
+            }
+
+            // Check against valid characters
+            if (std.mem.indexOfScalar(u8, VALID_CHARS, char) == null) {
+                // Special case: '@' in component means embedded snapshot reference
+                if (char == '@') {
+                    return PathValidationError.SnapshotInPath;
+                }
+                // Special case: '#' in component means embedded bookmark reference
+                if (char == '#') {
+                    return PathValidationError.BookmarkInPath;
+                }
+                return PathValidationError.InvalidCharacter;
+            }
+        }
+
+        // Check for reserved names
+        for (RESERVED_NAMES) |reserved| {
+            if (std.mem.eql(u8, component, reserved)) {
+                return PathValidationError.ReservedName;
+            }
+        }
+
+        // Check for hidden files/directories (start with .)
+        if (component[0] == '.') {
+            return PathValidationError.ReservedName;
+        }
+    }
+
+    /// Validate a full dataset path ensuring it's within the store hierarchy
+    pub fn validateDatasetPath(self: *const ZfsPathValidator, path: []const u8) PathValidationError!void {
+        // Check for null bytes
+        if (std.mem.indexOfScalar(u8, path, 0) != null) {
+            return PathValidationError.NullByte;
+        }
+
+        // Check total path length
+        if (path.len > MAX_PATH_LENGTH) {
+            return PathValidationError.PathTooLong;
+        }
+
+        // Ensure path starts with store root
+        if (!std.mem.startsWith(u8, path, self.store_root)) {
+            return PathValidationError.OutsideStoreRoot;
+        }
+
+        // Check for snapshot reference in dataset path (not allowed here)
+        if (std.mem.indexOfScalar(u8, path, '@') != null) {
+            return PathValidationError.SnapshotInPath;
+        }
+
+        // Check for bookmark reference in dataset path
+        if (std.mem.indexOfScalar(u8, path, '#') != null) {
+            return PathValidationError.BookmarkInPath;
+        }
+
+        // Validate each component after the store root
+        const relative = path[self.store_root.len..];
+        var iter = std.mem.splitScalar(u8, relative, '/');
+        while (iter.next()) |component| {
+            if (component.len == 0) continue; // Skip empty components from leading/trailing slashes
+
+            // Check for path traversal
+            if (std.mem.eql(u8, component, "..")) {
+                return PathValidationError.PathTraversal;
+            }
+
+            try self.validateComponent(component);
+        }
+    }
+
+    /// Validate a snapshot name (the part after @)
+    pub fn validateSnapshotName(self: *const ZfsPathValidator, snap_name: []const u8) PathValidationError!void {
+        // Snapshot names have same restrictions as components
+        try self.validateComponent(snap_name);
+    }
+
+    /// Validate a full snapshot path (dataset@snapshot)
+    pub fn validateSnapshotPath(self: *const ZfsPathValidator, full_path: []const u8) PathValidationError!void {
+        // Check for null bytes
+        if (std.mem.indexOfScalar(u8, full_path, 0) != null) {
+            return PathValidationError.NullByte;
+        }
+
+        // Find the @ delimiter
+        const at_pos = std.mem.indexOfScalar(u8, full_path, '@') orelse {
+            return PathValidationError.InvalidCharacter; // Not a valid snapshot path
+        };
+
+        // Validate dataset portion (without @)
+        const dataset_part = full_path[0..at_pos];
+
+        // Temporarily check if dataset starts with store root
+        if (!std.mem.startsWith(u8, dataset_part, self.store_root)) {
+            return PathValidationError.OutsideStoreRoot;
+        }
+
+        // Check for additional @ characters (invalid)
+        if (std.mem.indexOfScalar(u8, full_path[at_pos + 1 ..], '@') != null) {
+            return PathValidationError.InvalidCharacter;
+        }
+
+        // Validate snapshot name
+        const snap_name = full_path[at_pos + 1 ..];
+        try self.validateSnapshotName(snap_name);
+
+        // Validate each dataset component
+        const relative = dataset_part[self.store_root.len..];
+        var iter = std.mem.splitScalar(u8, relative, '/');
+        while (iter.next()) |component| {
+            if (component.len == 0) continue;
+            if (std.mem.eql(u8, component, "..")) {
+                return PathValidationError.PathTraversal;
+            }
+            try self.validateComponent(component);
+        }
+    }
+
+    /// Build and validate a package dataset path from components
+    /// Returns error if any component is invalid
+    pub fn buildPackagePath(
+        self: *const ZfsPathValidator,
+        name: []const u8,
+        version: []const u8,
+        revision: u32,
+        build_id: []const u8,
+    ) ![]u8 {
+        // Validate each component first
+        try self.validateComponent(name);
+        try self.validateComponent(version);
+        try self.validateComponent(build_id);
+
+        // Build the path
+        const path = try std.fmt.allocPrint(
+            self.allocator,
+            "{s}/{s}/{s}/{d}/{s}",
+            .{ self.store_root, name, version, revision, build_id },
+        );
+        errdefer self.allocator.free(path);
+
+        // Final validation of complete path
+        try self.validateDatasetPath(path);
+
+        return path;
+    }
+
+    /// Sanitize a string for use as a dataset component
+    /// Replaces invalid characters with underscores
+    /// Returns error if the result would still be invalid (e.g., reserved name)
+    pub fn sanitizeComponent(self: *const ZfsPathValidator, input: []const u8) ![]u8 {
+        if (input.len == 0) {
+            return PathValidationError.EmptyComponent;
+        }
+
+        const max_len = @min(input.len, MAX_COMPONENT_LENGTH);
+        const result = try self.allocator.alloc(u8, max_len);
+        errdefer self.allocator.free(result);
+
+        for (input[0..max_len], 0..) |char, i| {
+            if (std.mem.indexOfScalar(u8, VALID_CHARS, char) != null) {
+                result[i] = char;
+            } else {
+                result[i] = '_'; // Replace invalid chars with underscore
+            }
+        }
+
+        // Check if result is a reserved name
+        for (RESERVED_NAMES) |reserved| {
+            if (std.mem.eql(u8, result, reserved)) {
+                // Prefix with underscore to avoid reserved name
+                const prefixed = try std.fmt.allocPrint(self.allocator, "_{s}", .{result});
+                self.allocator.free(result);
+                return prefixed;
+            }
+        }
+
+        // Check for leading dot
+        if (result[0] == '.') {
+            result[0] = '_';
+        }
+
+        return result;
+    }
+
+    /// Get a human-readable error message for validation errors
+    pub fn errorMessage(err: PathValidationError) []const u8 {
+        return switch (err) {
+            PathValidationError.InvalidCharacter => "path contains invalid characters (allowed: a-z, A-Z, 0-9, -, _, .)",
+            PathValidationError.EmptyComponent => "path component cannot be empty",
+            PathValidationError.ComponentTooLong => "path component exceeds maximum length (255 characters)",
+            PathValidationError.PathTooLong => "full path exceeds maximum length (1024 characters)",
+            PathValidationError.OutsideStoreRoot => "path is outside the allowed store hierarchy",
+            PathValidationError.ReservedName => "path component uses a reserved name",
+            PathValidationError.SnapshotInPath => "snapshot reference (@) not allowed in this context",
+            PathValidationError.BookmarkInPath => "bookmark reference (#) not allowed in this context",
+            PathValidationError.NullByte => "path contains null bytes",
+            PathValidationError.ControlCharacter => "path contains control characters",
+            PathValidationError.PathTraversal => "path traversal (..) not allowed",
+        };
+    }
+};
+
 // Tests
 test "ZfsHandle init and deinit" {
     var zfs = try ZfsHandle.init();
@@ -696,6 +992,123 @@ test "dataset operations" {
 
     // Clean up
     try zfs.destroyDataset(allocator, test_dataset, false);
+}
+
+test "ZfsPathValidator validates components" {
+    const allocator = std.testing.allocator;
+    const validator = ZfsPathValidator.init(allocator, "zroot/axiom/store/pkg");
+
+    // Valid components
+    try validator.validateComponent("bash");
+    try validator.validateComponent("openssl-1.1.1");
+    try validator.validateComponent("my_package");
+    try validator.validateComponent("pkg.name");
+    try validator.validateComponent("abc123");
+
+    // Invalid: empty
+    try std.testing.expectError(PathValidationError.EmptyComponent, validator.validateComponent(""));
+
+    // Invalid: reserved names
+    try std.testing.expectError(PathValidationError.ReservedName, validator.validateComponent(".."));
+    try std.testing.expectError(PathValidationError.ReservedName, validator.validateComponent("."));
+    try std.testing.expectError(PathValidationError.ReservedName, validator.validateComponent("zfs"));
+    try std.testing.expectError(PathValidationError.ReservedName, validator.validateComponent("zpool"));
+
+    // Invalid: hidden files (start with .)
+    try std.testing.expectError(PathValidationError.ReservedName, validator.validateComponent(".hidden"));
+
+    // Invalid: snapshot reference in component
+    try std.testing.expectError(PathValidationError.SnapshotInPath, validator.validateComponent("pkg@snap"));
+
+    // Invalid: bookmark reference
+    try std.testing.expectError(PathValidationError.BookmarkInPath, validator.validateComponent("pkg#mark"));
+
+    // Invalid: special characters
+    try std.testing.expectError(PathValidationError.InvalidCharacter, validator.validateComponent("pkg name"));
+    try std.testing.expectError(PathValidationError.InvalidCharacter, validator.validateComponent("pkg/name"));
+    try std.testing.expectError(PathValidationError.InvalidCharacter, validator.validateComponent("pkg$name"));
+    try std.testing.expectError(PathValidationError.InvalidCharacter, validator.validateComponent("pkg;rm -rf"));
+}
+
+test "ZfsPathValidator validates dataset paths" {
+    const allocator = std.testing.allocator;
+    const validator = ZfsPathValidator.init(allocator, "zroot/axiom/store/pkg");
+
+    // Valid paths
+    try validator.validateDatasetPath("zroot/axiom/store/pkg/bash/5.2.0/1/abc123");
+    try validator.validateDatasetPath("zroot/axiom/store/pkg/openssl/1.1.1/0/def456");
+
+    // Invalid: outside store root
+    try std.testing.expectError(PathValidationError.OutsideStoreRoot, validator.validateDatasetPath("zroot/other/bash"));
+    try std.testing.expectError(PathValidationError.OutsideStoreRoot, validator.validateDatasetPath("/etc/passwd"));
+
+    // Invalid: path traversal
+    try std.testing.expectError(PathValidationError.PathTraversal, validator.validateDatasetPath("zroot/axiom/store/pkg/../../../etc/passwd"));
+
+    // Invalid: snapshot in dataset path
+    try std.testing.expectError(PathValidationError.SnapshotInPath, validator.validateDatasetPath("zroot/axiom/store/pkg/bash@snap"));
+}
+
+test "ZfsPathValidator validates snapshot paths" {
+    const allocator = std.testing.allocator;
+    const validator = ZfsPathValidator.init(allocator, "zroot/axiom/store/pkg");
+
+    // Valid snapshot paths
+    try validator.validateSnapshotPath("zroot/axiom/store/pkg/bash/5.2.0/1/abc123@installed");
+    try validator.validateSnapshotPath("zroot/axiom/store/pkg/openssl/1.1.1/0/def456@v1");
+
+    // Invalid: no snapshot name
+    try std.testing.expectError(PathValidationError.InvalidCharacter, validator.validateSnapshotPath("zroot/axiom/store/pkg/bash"));
+
+    // Invalid: outside store root
+    try std.testing.expectError(PathValidationError.OutsideStoreRoot, validator.validateSnapshotPath("zroot/other/bash@snap"));
+
+    // Invalid: multiple @ characters
+    try std.testing.expectError(PathValidationError.InvalidCharacter, validator.validateSnapshotPath("zroot/axiom/store/pkg/bash@snap@other"));
+}
+
+test "ZfsPathValidator builds package paths" {
+    const allocator = std.testing.allocator;
+    var validator = ZfsPathValidator.init(allocator, "zroot/axiom/store/pkg");
+
+    // Valid package path
+    const path = try validator.buildPackagePath("bash", "5.2.0", 1, "abc123");
+    defer allocator.free(path);
+    try std.testing.expectEqualStrings("zroot/axiom/store/pkg/bash/5.2.0/1/abc123", path);
+
+    // Invalid: package name with special chars
+    try std.testing.expectError(PathValidationError.InvalidCharacter, validator.buildPackagePath("ba$h", "5.2.0", 1, "abc123"));
+
+    // Invalid: version with snapshot reference
+    try std.testing.expectError(PathValidationError.SnapshotInPath, validator.buildPackagePath("bash", "5.2.0@evil", 1, "abc123"));
+
+    // Invalid: build_id with path traversal attempt
+    try std.testing.expectError(PathValidationError.PathTraversal, validator.buildPackagePath("bash", "5.2.0", 1, ".."));
+}
+
+test "ZfsPathValidator sanitizes components" {
+    const allocator = std.testing.allocator;
+    var validator = ZfsPathValidator.init(allocator, "zroot/axiom/store/pkg");
+
+    // Sanitize special characters
+    const sanitized1 = try validator.sanitizeComponent("pkg@name");
+    defer allocator.free(sanitized1);
+    try std.testing.expectEqualStrings("pkg_name", sanitized1);
+
+    // Sanitize spaces
+    const sanitized2 = try validator.sanitizeComponent("my package");
+    defer allocator.free(sanitized2);
+    try std.testing.expectEqualStrings("my_package", sanitized2);
+
+    // Sanitize reserved name
+    const sanitized3 = try validator.sanitizeComponent("..");
+    defer allocator.free(sanitized3);
+    try std.testing.expectEqualStrings("_..", sanitized3);
+
+    // Sanitize leading dot
+    const sanitized4 = try validator.sanitizeComponent(".hidden");
+    defer allocator.free(sanitized4);
+    try std.testing.expectEqualStrings("_hidden", sanitized4);
 }
 
 test "snapshot and clone" {
