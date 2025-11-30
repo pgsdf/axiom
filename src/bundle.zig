@@ -600,11 +600,10 @@ pub const BundleBuilder = struct {
             \\
         , .{ packages[0].name, entry_point });
 
-        const file = try std.fs.cwd().createFile(output_path, .{});
+        const file = try std.fs.cwd().createFile(output_path, .{ .mode = 0o755 });
         defer file.close();
 
         try file.writeAll(script.items);
-        try std.fs.cwd().chmod(output_path, 0o755);
     }
 
     fn createCompressedImage(
