@@ -4,12 +4,17 @@ const types = @import("types.zig");
 const store = @import("store.zig");
 const manifest = @import("manifest.zig");
 const secure_tar = @import("secure_tar.zig");
+const signature = @import("signature.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageId = types.PackageId;
 const PackageStore = store.PackageStore;
 const Version = types.Version;
 const SecureTarExtractor = secure_tar.SecureTarExtractor;
+const Verifier = signature.Verifier;
+const TrustStore = signature.TrustStore;
+const VerificationStatus = signature.VerificationStatus;
+const VerificationMode = signature.VerificationMode;
 
 /// Import errors
 pub const ImportError = error{
@@ -25,6 +30,12 @@ pub const ImportError = error{
     DeviceNodeRejected,
     FileTooLarge,
     InvalidArchive,
+    // Signature verification errors (Phase 25)
+    SignatureMissing,
+    SignatureInvalid,
+    KeyUntrusted,
+    HashMismatch,
+    VerificationFailed,
 };
 
 /// Source types for package import
@@ -99,6 +110,14 @@ pub const SecurityOptions = struct {
     max_file_size: u64 = 1024 * 1024 * 1024, // 1GB
     /// Maximum total extraction size (bytes)
     max_total_size: u64 = 10 * 1024 * 1024 * 1024, // 10GB
+
+    // Phase 25: Signature verification options
+    /// Verification mode (strict, warn, disabled)
+    verification_mode: VerificationMode = .strict,
+    /// Allow import of unsigned packages (requires explicit flag)
+    allow_unsigned: bool = false,
+    /// Trust store path for key lookup
+    trust_store_path: ?[]const u8 = null,
 };
 
 /// Package importer
@@ -152,6 +171,11 @@ pub const Importer = struct {
                 return ImportError.UnsupportedFormat;
             },
         };
+
+        // Phase 25: Verify package signature before trusting content
+        if (options.security.verification_mode != .disabled) {
+            try self.verifyPackageSignature(pkg_dir, options.security);
+        }
 
         // Detect or load metadata
         var metadata: DetectedMetadata = undefined;
@@ -261,11 +285,95 @@ pub const Importer = struct {
     fn verifySource(self: *Importer, source: ImportSource) !void {
         _ = self;
         const path = source.getPath();
-        
+
         std.fs.cwd().access(path, .{}) catch {
             std.debug.print("Error: Source not found: {s}\n", .{path});
             return ImportError.SourceNotFound;
         };
+    }
+
+    // ========================================================================
+    // Phase 25: Signature Verification
+    // ========================================================================
+
+    /// Verify package signature using type-safe VerificationStatus
+    fn verifyPackageSignature(self: *Importer, pkg_path: []const u8, security: SecurityOptions) !void {
+        std.debug.print("Verifying package signature...\n", .{});
+
+        // Initialize trust store
+        const trust_store_path = security.trust_store_path orelse "/var/axiom/trust/keys.toml";
+        var trust_store = TrustStore.init(self.allocator, trust_store_path);
+        defer trust_store.deinit();
+
+        // Try to load existing trust store
+        trust_store.load() catch {
+            // Trust store doesn't exist yet - that's OK for new installations
+            std.debug.print("  Note: Trust store not found at {s}\n", .{trust_store_path});
+        };
+
+        // Create verifier with configured mode
+        var verifier = Verifier.init(self.allocator, &trust_store, security.verification_mode);
+
+        // Perform type-safe verification
+        var status = verifier.verifyPackageTypeSafe(pkg_path);
+        defer status.deinit(self.allocator);
+
+        // Handle verification result based on mode
+        switch (status) {
+            .verified => |v| {
+                std.debug.print("  ✓ Package verified\n", .{});
+                std.debug.print("    Signer: {s}\n", .{v.signer_name orelse "unknown"});
+                std.debug.print("    Key ID: {s}\n", .{v.signer_key_id});
+                std.debug.print("    Trust Level: {s}\n", .{v.trust_level.description()});
+                std.debug.print("    Files verified: {d}\n", .{v.files_verified});
+                // Verification passed - continue with import
+            },
+            .signature_missing => {
+                if (security.verification_mode == .strict and !security.allow_unsigned) {
+                    std.debug.print("  ✗ SECURITY ERROR: No signature found\n", .{});
+                    std.debug.print("    Use --allow-unsigned to import unsigned packages\n", .{});
+                    return ImportError.SignatureMissing;
+                } else {
+                    std.debug.print("  ⚠ WARNING: Package is not signed\n", .{});
+                    // Continue with import in warn mode or if allow_unsigned
+                }
+            },
+            .signature_invalid => |info| {
+                if (security.verification_mode == .strict) {
+                    std.debug.print("  ✗ SECURITY ERROR: Invalid signature\n", .{});
+                    std.debug.print("    Reason: {s}\n", .{info.reason});
+                    return ImportError.SignatureInvalid;
+                } else {
+                    std.debug.print("  ⚠ WARNING: Invalid signature - {s}\n", .{info.reason});
+                }
+            },
+            .key_untrusted => |info| {
+                if (security.verification_mode == .strict) {
+                    std.debug.print("  ✗ SECURITY ERROR: Signing key is not trusted\n", .{});
+                    std.debug.print("    Key ID: {s}\n", .{info.key_id});
+                    if (info.signer_name) |name| {
+                        std.debug.print("    Signer: {s}\n", .{name});
+                    }
+                    if (info.key_exists) {
+                        std.debug.print("    Note: Key exists but is not marked as trusted\n", .{});
+                        std.debug.print("    Run: axiom key-trust {s}\n", .{info.key_id});
+                    } else {
+                        std.debug.print("    Note: Key not found in trust store\n", .{});
+                        std.debug.print("    Run: axiom key-add <key-file> to add the key\n", .{});
+                    }
+                    return ImportError.KeyUntrusted;
+                } else {
+                    std.debug.print("  ⚠ WARNING: Signing key {s} is not trusted\n", .{info.key_id});
+                }
+            },
+            .hash_mismatch => |info| {
+                std.debug.print("  ✗ SECURITY ERROR: Package content has been modified!\n", .{});
+                std.debug.print("    File: {s}\n", .{info.file_path});
+                std.debug.print("    Total files with mismatched hashes: {d}\n", .{info.total_failed});
+                // Hash mismatch is always an error, even in warn mode
+                return ImportError.HashMismatch;
+            },
+        }
     }
 
     /// Extract tarball to temporary directory using secure extraction
