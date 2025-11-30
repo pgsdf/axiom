@@ -410,8 +410,15 @@ See [ROADMAP.md](ROADMAP.md) for detailed planning of future phases:
 | 21 | Desktop Integration | Medium | ✓ Complete |
 | 22 | Ports Migration Tool | High | ✓ Complete |
 | 23 | Kernel Module Compatibility | Medium | ✓ Complete |
+| 24 | Secure Tar Extraction | Critical | Planned |
+| 25 | Mandatory Signature Verification | Critical | Planned |
+| 26 | ZFS Dataset Path Validation | High | Planned |
+| 27 | Build Sandboxing | High | Planned |
+| 28 | Secure Bundle Verification | High | Planned |
+| 29 | Resolver Resource Limits | Medium | Planned |
+| 30 | Thread-Safe libzfs | Medium | Planned |
 
-**All Phases Complete!** Axiom includes:
+**Core Phases Complete!** Axiom includes:
 - Core package management (Phases 1-8)
 - Package import and build system (Phases 9-10)
 - Shell completions (Phase 11)
@@ -422,6 +429,15 @@ See [ROADMAP.md](ROADMAP.md) for detailed planning of future phases:
 - AppImage-inspired bundles, launcher, runtimes, and desktop integration (Phases 18-21)
 - FreeBSD ports migration tool for ecosystem bootstrapping (Phase 22)
 - Kernel module compatibility checking for kernel-bound packages (Phase 23)
+
+**Security Hardening Planned (Phases 24-30):**
+- Secure tar extraction with path traversal prevention
+- Mandatory signature verification with type-safe status
+- ZFS dataset path validation
+- Build sandboxing with FreeBSD jails
+- Secure bundle verification
+- Resolver resource limits to prevent DoS
+- Thread-safe libzfs operations
 
 ## Quick Start
 
