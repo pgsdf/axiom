@@ -2805,6 +2805,7 @@ pub const CLI = struct {
     }
 
     fn portsBuild(self: *CLI, args: []const []const u8) !void {
+        _ = self;
         if (args.len < 1) {
             std.debug.print("Usage: axiom ports-build <origin>\n", .{});
             std.debug.print("\nBuild a port using Axiom's builder from generated manifests.\n", .{});
