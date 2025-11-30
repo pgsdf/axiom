@@ -21,6 +21,7 @@ This document outlines the planned enhancements for Axiom beyond the core 8 phas
 | 19 | Portable Images (.pgsdimg) | High | Medium | Phase 18 | ✓ Complete |
 | 20 | Runtime Layers | Medium | Medium | Phase 18 | ✓ Complete |
 | 21 | Desktop Integration | Medium | Low | Phase 18 | ✓ Complete |
+| 22 | Ports Migration Tool | High | High | Phase 9, 10 | ✓ Complete |
 
 ---
 
@@ -1553,6 +1554,215 @@ axiom desktop uninstall hello@1.0.0
 # List installed desktop entries
 axiom desktop list
 ```
+
+---
+
+## Phase 22: Ports Migration Tool
+
+**Priority**: High
+**Complexity**: High
+**Dependencies**: Phase 9 (Import), Phase 10 (Build System)
+**Status**: Complete
+
+### Purpose
+
+Provide a migration path from FreeBSD ports to Axiom packages, enabling rapid ecosystem bootstrapping and comparative testing against the existing pkg/ports infrastructure.
+
+### Rationale
+
+Axiom needs a large package ecosystem to be a viable daily driver. Rather than hand-crafting every manifest, a ports migration tool:
+
+1. **Accelerates adoption** - Mechanical conversion of existing ports metadata
+2. **Provides migration story** - Existing FreeBSD users can transition gradually
+3. **Exposes design gaps** - Translation failures reveal missing Axiom primitives
+4. **Enables comparison** - Build same software with both systems, compare results
+
+### Implementation
+
+#### Source File: `src/ports.zig`
+
+**Key Types:**
+- `PortsMigrator` - Main migration coordinator
+- `PortMetadata` - Extracted port information from Makefiles
+- `PortDependency` - Dependency with origin and version info
+- `PortOption` - OPTIONS framework support
+- `ConfigureStyle` - Build system detection (gnu_configure, cmake, meson, cargo, etc.)
+- `MigrateOptions` - Configuration for migration behavior
+- `MigrationResult` - Per-port migration outcome
+
+**Key Functions:**
+- `extractMetadata()` - Parse port Makefile using `make -V`
+- `generateManifest()` - Convert PortMetadata to Axiom Manifest
+- `generateDepsYaml()` - Convert dependencies to deps.yaml format
+- `generateBuildYaml()` - Generate build recipe from USES
+- `migrate()` - Full migration workflow
+- `scanCategory()` - List all ports in a category
+
+### Migration Phases
+
+#### Phase 1: Metadata Only
+Extract and convert without building:
+
+```bash
+axiom ports-gen editors/vim
+# Creates:
+#   ./generated/axiom-ports/editors/vim/manifest.yaml
+#   ./generated/axiom-ports/editors/vim/deps.yaml
+#   ./generated/axiom-ports/editors/vim/build.yaml
+```
+
+#### Phase 2: Happy-Path Builds
+Build clean ports with Axiom builder:
+
+```bash
+axiom ports-gen editors/vim --build
+# Generates manifests, then builds with Axiom builder
+```
+
+#### Phase 3: Full Import
+Complete migration into the store:
+
+```bash
+axiom ports-import editors/vim
+# Equivalent to: ports-gen --build --import
+```
+
+### Makefile Variable Extraction
+
+Uses `make -V <varname>` to extract port metadata:
+
+| Port Variable | Axiom Field |
+|---------------|-------------|
+| PORTNAME | manifest.name |
+| PORTVERSION | manifest.version |
+| PORTREVISION | manifest.revision |
+| COMMENT | manifest.description |
+| WWW | manifest.homepage |
+| LICENSE | manifest.license |
+| MAINTAINER | manifest.maintainer |
+| CATEGORIES | (metadata comment) |
+| RUN_DEPENDS | deps.yaml runtime |
+| LIB_DEPENDS | deps.yaml runtime |
+| BUILD_DEPENDS | deps.yaml build |
+| USES | build.yaml phases |
+| CONFLICTS | manifest.conflicts |
+
+### Build System Detection
+
+Detects configure style from USES:
+
+| USES Pattern | ConfigureStyle | Generated Phases |
+|--------------|----------------|------------------|
+| autoreconf, gmake, libtool | gnu_configure | ./configure && make |
+| cmake | cmake | cmake -B build && cmake --build |
+| meson | meson | meson setup && meson compile |
+| cargo | cargo | cargo build --release |
+| go: | go | go build |
+| python | python | python setup.py |
+
+### CLI Commands
+
+```bash
+# Scan ports tree, list categories
+axiom ports
+
+# Scan specific category
+axiom ports-scan devel
+
+# Generate manifests only
+axiom ports-gen editors/vim
+axiom ports-gen devel/git --out ./my-ports
+
+# Generate and build
+axiom ports-gen shells/bash --build
+
+# Full migration
+axiom ports-import www/nginx
+
+# Options
+axiom ports-gen editors/vim --ports-tree /usr/ports
+axiom ports-gen editors/vim --dry-run
+```
+
+### Known Limitations
+
+The migration tool cannot handle:
+
+1. **Complex bsd.port.mk conditionals** - Ports with heavy Makefile logic
+2. **LOCALBASE assumptions** - Ports hardcoding /usr/local
+3. **OPTIONS/FLAVORS combinatorics** - Only default options migrated
+4. **rc.d scripts** - Service integration not yet supported
+5. **sysusers/sysgroups** - User/group creation not handled
+
+These limitations are intentional - they represent design questions for Axiom itself, not bugs in the migration tool.
+
+### Example Output
+
+```yaml
+# manifest.yaml - Generated from FreeBSD port
+name: vim
+version: "9.0.2136"
+revision: 0
+description: Improved version of the vi editor
+license: VIM
+homepage: https://www.vim.org/
+maintainer: adamw@FreeBSD.org
+
+provides:
+  - vim
+
+conflicts:
+  - vim-console
+  - vim-tiny
+```
+
+```yaml
+# deps.yaml - Generated from FreeBSD port
+# Original categories: editors
+
+runtime:
+  - name: ncurses
+    # origin: devel/ncurses
+  - name: libiconv
+    # origin: converters/libiconv
+
+build:
+  - name: pkgconf
+    # origin: devel/pkgconf
+```
+
+```yaml
+# build.yaml - Generated from FreeBSD port
+name: vim
+version: "9.0.2136"
+description: Improved version of the vi editor
+
+source:
+  url: https://github.com/vim/vim/archive/v9.0.2136.tar.gz
+  sha256: ...
+
+# FreeBSD USES: ncurses pkgconf iconv
+
+phases:
+  configure: |
+    ./configure --prefix=$PREFIX
+  build: |
+    make -j$JOBS
+  install: |
+    make install DESTDIR=$DESTDIR
+
+post_process:
+  strip: true
+  compress_man: true
+```
+
+### Future Enhancements
+
+1. **OPTIONS mapping** - Convert port options to Axiom variants
+2. **FLAVORS support** - Generate multiple packages for flavored ports
+3. **Batch migration** - Migrate entire categories with dependency ordering
+4. **Conflict resolution** - Handle ports that provide same virtual packages
+5. **rc.d integration** - Generate service management metadata
 
 ---
 

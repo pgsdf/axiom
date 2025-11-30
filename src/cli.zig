@@ -18,6 +18,7 @@ const conflict = @import("conflict.zig");
 const closure_pkg = @import("closure.zig");
 const launcher_pkg = @import("launcher.zig");
 const bundle_pkg = @import("bundle.zig");
+const ports_pkg = @import("ports.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageStore = store.PackageStore;
@@ -41,6 +42,7 @@ const ClosureComputer = closure_pkg.ClosureComputer;
 const Launcher = launcher_pkg.Launcher;
 const BundleBuilder = bundle_pkg.BundleBuilder;
 const BundleFormat = bundle_pkg.BundleFormat;
+const PortsMigrator = ports_pkg.PortsMigrator;
 
 /// CLI command enumeration
 pub const Command = enum {
@@ -126,6 +128,12 @@ pub const Command = enum {
     closure_show,
     export_pkg,
     bundle_create,
+
+    // Ports migration operations
+    ports_gen,
+    ports_build,
+    ports_import,
+    ports_scan,
 
     unknown,
 };
@@ -217,6 +225,13 @@ pub fn parseCommand(cmd: []const u8) Command {
     if (std.mem.eql(u8, cmd, "export")) return .export_pkg;
     if (std.mem.eql(u8, cmd, "bundle")) return .bundle_create;
     if (std.mem.eql(u8, cmd, "build-bundle")) return .bundle_create;
+
+    // Ports migration commands
+    if (std.mem.eql(u8, cmd, "ports")) return .ports_scan;
+    if (std.mem.eql(u8, cmd, "ports-gen")) return .ports_gen;
+    if (std.mem.eql(u8, cmd, "ports-build")) return .ports_build;
+    if (std.mem.eql(u8, cmd, "ports-import")) return .ports_import;
+    if (std.mem.eql(u8, cmd, "ports-scan")) return .ports_scan;
 
     return .unknown;
 }
@@ -377,6 +392,12 @@ pub const CLI = struct {
             .export_pkg => try self.exportPackage(args[1..]),
             .bundle_create => try self.createBundle(args[1..]),
 
+            // Ports migration commands
+            .ports_gen => try self.portsGen(args[1..]),
+            .ports_build => try self.portsBuild(args[1..]),
+            .ports_import => try self.portsImport(args[1..]),
+            .ports_scan => try self.portsScan(args[1..]),
+
             .unknown => {
                 std.debug.print("Unknown command: {s}\n", .{args[0]});
                 std.debug.print("Run 'axiom help' for usage information.\n", .{});
@@ -479,6 +500,16 @@ pub const CLI = struct {
             \\    --format <f>               Output format (pgsdimg|zfs|tar|dir)
             \\  bundle <directory>         Create bundle from current directory
             \\    --output <file>            Output file path
+            \\
+            \\Ports Migration (FreeBSD):
+            \\  ports                      Scan ports tree, list categories
+            \\  ports-gen <origin>         Generate Axiom manifests from port
+            \\    --out <dir>                Output directory
+            \\    --build                    Also build after generating
+            \\    --import                   Also import to store after building
+            \\  ports-build <origin>       Build port with Axiom builder
+            \\  ports-import <origin>      Full migration: gen + build + import
+            \\  ports-scan <category>      Scan category for migratable ports
             \\
             \\General:
             \\  help                       Show this help message
@@ -2667,6 +2698,258 @@ pub const CLI = struct {
             std.debug.print("Size: {d} bytes\n", .{stat.size});
         } else {
             std.debug.print("Error: Bundle creation failed\n", .{});
+        }
+    }
+
+    // Ports migration commands
+
+    fn portsGen(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom ports-gen <origin> [options]\n", .{});
+            std.debug.print("\nGenerate Axiom manifests from a FreeBSD port.\n", .{});
+            std.debug.print("\nArguments:\n", .{});
+            std.debug.print("  <origin>         Port origin (e.g., editors/vim, devel/git)\n", .{});
+            std.debug.print("\nOptions:\n", .{});
+            std.debug.print("  --ports-tree <path>  Path to ports tree (default: /usr/ports)\n", .{});
+            std.debug.print("  --out <dir>          Output directory (default: ./generated/axiom-ports)\n", .{});
+            std.debug.print("  --build              Also build after generating\n", .{});
+            std.debug.print("  --import             Also import to store after building\n", .{});
+            std.debug.print("  --dry-run            Show what would be generated without writing\n", .{});
+            std.debug.print("\nExamples:\n", .{});
+            std.debug.print("  axiom ports-gen editors/vim\n", .{});
+            std.debug.print("  axiom ports-gen devel/git --out ./my-ports\n", .{});
+            std.debug.print("  axiom ports-gen shells/bash --build --import\n", .{});
+            return;
+        }
+
+        const origin = args[0];
+
+        // Parse options
+        var ports_tree: []const u8 = "/usr/ports";
+        var output_dir: []const u8 = "./generated/axiom-ports";
+        var build_after = false;
+        var import_after = false;
+        var dry_run = false;
+
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--ports-tree") and i + 1 < args.len) {
+                i += 1;
+                ports_tree = args[i];
+            } else if (std.mem.eql(u8, args[i], "--out") and i + 1 < args.len) {
+                i += 1;
+                output_dir = args[i];
+            } else if (std.mem.eql(u8, args[i], "--build")) {
+                build_after = true;
+            } else if (std.mem.eql(u8, args[i], "--import")) {
+                import_after = true;
+                build_after = true; // Import implies build
+            } else if (std.mem.eql(u8, args[i], "--dry-run")) {
+                dry_run = true;
+            }
+        }
+
+        std.debug.print("FreeBSD Ports Migration\n", .{});
+        std.debug.print("=======================\n\n", .{});
+        std.debug.print("Port origin: {s}\n", .{origin});
+        std.debug.print("Ports tree: {s}\n", .{ports_tree});
+        std.debug.print("Output: {s}/{s}\n", .{ output_dir, origin });
+        if (dry_run) std.debug.print("Mode: dry-run\n", .{});
+        std.debug.print("\n", .{});
+
+        // Initialize migrator
+        var migrator = PortsMigrator.init(self.allocator, .{
+            .ports_tree = ports_tree,
+            .output_dir = output_dir,
+            .build_after_generate = build_after,
+            .import_after_build = import_after,
+            .dry_run = dry_run,
+        });
+
+        // Run migration
+        const result = migrator.migrate(origin) catch |err| {
+            std.debug.print("Migration failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+
+        // Display result
+        switch (result.status) {
+            .generated => {
+                std.debug.print("Generated Axiom manifests:\n", .{});
+                if (result.manifest_path) |path| {
+                    std.debug.print("  {s}/manifest.yaml\n", .{path});
+                    std.debug.print("  {s}/deps.yaml\n", .{path});
+                    std.debug.print("  {s}/build.yaml\n", .{path});
+                }
+            },
+            .built => std.debug.print("Port built successfully\n", .{}),
+            .imported => {
+                std.debug.print("Port imported to store: {s}\n", .{result.axiom_package orelse "unknown"});
+            },
+            .failed => {
+                std.debug.print("Migration failed:\n", .{});
+                for (result.errors.items) |err| {
+                    std.debug.print("  - {s}\n", .{err});
+                }
+            },
+            else => {},
+        }
+
+        // Show warnings
+        if (result.warnings.items.len > 0) {
+            std.debug.print("\nWarnings:\n", .{});
+            for (result.warnings.items) |warning| {
+                std.debug.print("  - {s}\n", .{warning});
+            }
+        }
+    }
+
+    fn portsBuild(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom ports-build <origin>\n", .{});
+            std.debug.print("\nBuild a port using Axiom's builder from generated manifests.\n", .{});
+            std.debug.print("\nFirst run 'axiom ports-gen <origin>' to generate manifests.\n", .{});
+            return;
+        }
+
+        const origin = args[0];
+        std.debug.print("Building port: {s}\n", .{origin});
+        std.debug.print("\nNote: ports-build requires generated manifests.\n", .{});
+        std.debug.print("Use 'axiom ports-gen {s} --build' for full workflow.\n", .{origin});
+
+        // TODO: Integrate with build_pkg.Builder
+        std.debug.print("\nBuild phase not yet fully implemented.\n", .{});
+    }
+
+    fn portsImport(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom ports-import <origin>\n", .{});
+            std.debug.print("\nFull migration: generate manifests, build, and import to store.\n", .{});
+            std.debug.print("\nThis is equivalent to:\n", .{});
+            std.debug.print("  axiom ports-gen <origin> --build --import\n", .{});
+            return;
+        }
+
+        const origin = args[0];
+        std.debug.print("Full port migration: {s}\n", .{origin});
+        std.debug.print("=======================\n\n", .{});
+
+        // Run full migration
+        var migrator = PortsMigrator.init(self.allocator, .{
+            .ports_tree = "/usr/ports",
+            .output_dir = "./generated/axiom-ports",
+            .build_after_generate = true,
+            .import_after_build = true,
+            .dry_run = false,
+        });
+
+        const result = migrator.migrate(origin) catch |err| {
+            std.debug.print("Migration failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+
+        switch (result.status) {
+            .imported => {
+                std.debug.print("Success! Port imported to store.\n", .{});
+                if (result.axiom_package) |pkg| {
+                    std.debug.print("Package: {s}\n", .{pkg});
+                }
+            },
+            .generated => {
+                std.debug.print("Manifests generated. Build/import phases not yet implemented.\n", .{});
+                if (result.manifest_path) |path| {
+                    std.debug.print("Output: {s}\n", .{path});
+                }
+            },
+            else => {
+                std.debug.print("Migration incomplete: {s}\n", .{@tagName(result.status)});
+            },
+        }
+    }
+
+    fn portsScan(self: *CLI, args: []const []const u8) !void {
+        var ports_tree: []const u8 = "/usr/ports";
+
+        // Check for options first
+        var category: ?[]const u8 = null;
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--ports-tree") and i + 1 < args.len) {
+                i += 1;
+                ports_tree = args[i];
+            } else if (category == null and args[i][0] != '-') {
+                category = args[i];
+            }
+        }
+
+        std.debug.print("FreeBSD Ports Scanner\n", .{});
+        std.debug.print("=====================\n\n", .{});
+        std.debug.print("Ports tree: {s}\n\n", .{ports_tree});
+
+        if (category) |cat| {
+            // Scan specific category
+            std.debug.print("Scanning category: {s}\n\n", .{cat});
+
+            var migrator = PortsMigrator.init(self.allocator, .{
+                .ports_tree = ports_tree,
+            });
+
+            const ports = migrator.scanCategory(cat) catch |err| {
+                std.debug.print("Scan failed: {s}\n", .{@errorName(err)});
+                return;
+            };
+
+            if (ports.len == 0) {
+                std.debug.print("No ports found in {s}\n", .{cat});
+                return;
+            }
+
+            std.debug.print("Found {d} ports:\n", .{ports.len});
+            for (ports) |origin| {
+                std.debug.print("  {s}\n", .{origin});
+            }
+
+            std.debug.print("\nTo migrate a port:\n", .{});
+            std.debug.print("  axiom ports-gen {s}/<portname>\n", .{cat});
+        } else {
+            // List categories
+            std.debug.print("Available categories:\n\n", .{});
+
+            // Common categories to check
+            const categories = [_][]const u8{
+                "accessibility", "arabic",        "archivers",   "astro",
+                "audio",         "benchmarks",    "biology",     "cad",
+                "chinese",       "comms",         "converters",  "databases",
+                "deskutils",     "devel",         "dns",         "editors",
+                "emulators",     "finance",       "french",      "ftp",
+                "games",         "german",        "graphics",    "hebrew",
+                "hungarian",     "irc",           "japanese",    "java",
+                "korean",        "lang",          "mail",        "math",
+                "misc",          "multimedia",    "net",         "net-im",
+                "net-mgmt",      "net-p2p",       "news",        "palm",
+                "polish",        "ports-mgmt",    "portuguese",  "print",
+                "russian",       "science",       "security",    "shells",
+                "sysutils",      "textproc",      "ukrainian",   "vietnamese",
+                "www",           "x11",           "x11-clocks",  "x11-drivers",
+                "x11-fm",        "x11-fonts",     "x11-servers", "x11-themes",
+                "x11-toolkits",  "x11-wm",
+            };
+
+            for (categories) |cat| {
+                const cat_path = std.fs.path.join(self.allocator, &[_][]const u8{
+                    ports_tree,
+                    cat,
+                }) catch continue;
+                defer self.allocator.free(cat_path);
+
+                if (std.fs.cwd().access(cat_path, .{})) |_| {
+                    std.debug.print("  {s}\n", .{cat});
+                } else |_| {}
+            }
+
+            std.debug.print("\nTo scan a category:\n", .{});
+            std.debug.print("  axiom ports-scan <category>\n", .{});
+            std.debug.print("  axiom ports-scan devel\n", .{});
         }
     }
 };
