@@ -635,8 +635,8 @@ pub const BundleBuilder = struct {
             \\
         ;
 
-        // Create output file
-        const file = try std.fs.cwd().createFile(output_path, .{});
+        // Create output file with executable permissions
+        const file = try std.fs.cwd().createFile(output_path, .{ .mode = 0o755 });
         defer file.close();
 
         // Write header
@@ -661,11 +661,20 @@ pub const BundleBuilder = struct {
         try tar_args.append(".");
 
         var tar_child = std.process.Child.init(tar_args.items, self.allocator);
-        tar_child.stdout_behavior = .{ .pipe = file.handle };
-        _ = try tar_child.spawnAndWait();
+        tar_child.stdout_behavior = .Pipe;
+        try tar_child.spawn();
 
-        // Make executable
-        try std.fs.cwd().chmod(output_path, 0o755);
+        // Read stdout and write to file
+        if (tar_child.stdout) |stdout| {
+            var buf: [4096]u8 = undefined;
+            while (true) {
+                const bytes_read = stdout.read(&buf) catch break;
+                if (bytes_read == 0) break;
+                try file.writeAll(buf[0..bytes_read]);
+            }
+        }
+
+        _ = tar_child.wait() catch {};
     }
 
     fn getFileSize(self: *BundleBuilder, path: []const u8) !u64 {
