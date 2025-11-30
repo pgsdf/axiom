@@ -349,8 +349,20 @@ pub const BundleBuilder = struct {
         try send_args.append(dataset);
 
         var send_child = std.process.Child.init(send_args.items, self.allocator);
-        send_child.stdout_behavior = .{ .pipe = output_file.handle };
-        _ = try send_child.spawnAndWait();
+        send_child.stdout_behavior = .Pipe;
+        try send_child.spawn();
+
+        // Read stdout and write to file
+        if (send_child.stdout) |stdout| {
+            var buf: [4096]u8 = undefined;
+            while (true) {
+                const bytes_read = stdout.read(&buf) catch break;
+                if (bytes_read == 0) break;
+                try output_file.writeAll(buf[0..bytes_read]);
+            }
+        }
+
+        _ = send_child.wait() catch {};
 
         return .{
             .success = .{
