@@ -143,7 +143,7 @@ pub const SecureTarExtractor = struct {
 
     /// Extract zstd-compressed tar
     fn extractZstd(self: *SecureTarExtractor, file: std.fs.File) !void {
-        var decompress = std.compress.zstd.decompressor(file.reader());
+        var decompress = std.compress.zstd.decompressor(file.reader(), .{});
         try self.extractTar(decompress.reader());
     }
 
