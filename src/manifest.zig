@@ -11,6 +11,40 @@ pub const VirtualPackage = struct {
     constraint: ?VersionConstraint = null,
 };
 
+/// Kernel module compatibility metadata
+/// Used for packages that install .ko kernel modules
+pub const KernelCompat = struct {
+    /// True if this package installs kernel modules (.ko files)
+    kmod: bool = false,
+
+    /// Minimum compatible __FreeBSD_version (inclusive), null means no lower bound
+    freebsd_version_min: ?u32 = null,
+
+    /// Maximum compatible __FreeBSD_version (inclusive), null means no upper bound
+    freebsd_version_max: ?u32 = null,
+
+    /// List of kernel idents this package is compatible with (e.g., "PGSD-GENERIC")
+    kernel_idents: []const []const u8 = &[_][]const u8{},
+
+    /// If true, running kernel ident must match one of kernel_idents
+    require_exact_ident: bool = false,
+
+    /// Names of .ko files installed by this package
+    kld_names: []const []const u8 = &[_][]const u8{},
+
+    /// Free allocated memory
+    pub fn deinit(self: *KernelCompat, allocator: std.mem.Allocator) void {
+        for (self.kernel_idents) |ident| {
+            allocator.free(ident);
+        }
+        allocator.free(self.kernel_idents);
+        for (self.kld_names) |name| {
+            allocator.free(name);
+        }
+        allocator.free(self.kld_names);
+    }
+};
+
 /// Package manifest (manifest.yaml)
 pub const Manifest = struct {
     name: []const u8,
@@ -30,6 +64,9 @@ pub const Manifest = struct {
 
     /// Packages this one supersedes/replaces
     replaces: []VirtualPackage = &[_]VirtualPackage{},
+
+    /// Kernel module compatibility (null for userland packages)
+    kernel: ?KernelCompat = null,
 
     /// Parse manifest from YAML content
     pub fn parse(allocator: std.mem.Allocator, yaml_content: []const u8) !Manifest {
@@ -52,12 +89,22 @@ pub const Manifest = struct {
         var replaces_list = std.ArrayList(VirtualPackage).init(allocator);
         defer replaces_list.deinit();
 
+        // Kernel compatibility fields
+        var kernel_idents = std.ArrayList([]const u8).init(allocator);
+        defer kernel_idents.deinit();
+        var kld_names = std.ArrayList([]const u8).init(allocator);
+        defer kld_names.deinit();
+        var kernel_compat: ?KernelCompat = null;
+        var in_kernel_section = false;
+
         const ListContext = enum {
             none,
             tags,
             provides,
             conflicts,
             replaces,
+            kernel_idents,
+            kld_names,
         };
         var list_context: ListContext = .none;
 
@@ -80,6 +127,8 @@ pub const Manifest = struct {
                         const vpkg = try parseVirtualPackage(allocator, item);
                         try replaces_list.append(vpkg);
                     },
+                    .kernel_idents => try kernel_idents.append(try allocator.dupe(u8, item)),
+                    .kld_names => try kld_names.append(try allocator.dupe(u8, item)),
                     .none => {},
                 }
                 continue;
@@ -92,7 +141,35 @@ pub const Manifest = struct {
             const value_raw = parts.rest();
             const value = std.mem.trim(u8, value_raw, " \t");
 
-            if (std.mem.eql(u8, key, "name")) {
+            // Check if we're entering or leaving a section
+            const is_indented = line.len > 0 and (line[0] == ' ' or line[0] == '\t');
+
+            if (!is_indented and std.mem.eql(u8, key, "kernel")) {
+                // Entering kernel section
+                in_kernel_section = true;
+                kernel_compat = KernelCompat{};
+                continue;
+            } else if (!is_indented and !std.mem.eql(u8, key, "kernel")) {
+                // Top-level key, leaving kernel section
+                in_kernel_section = false;
+            }
+
+            if (in_kernel_section) {
+                // Parse kernel section fields
+                if (std.mem.eql(u8, key, "kmod")) {
+                    kernel_compat.?.kmod = std.mem.eql(u8, value, "true");
+                } else if (std.mem.eql(u8, key, "freebsd_version_min")) {
+                    kernel_compat.?.freebsd_version_min = try std.fmt.parseInt(u32, value, 10);
+                } else if (std.mem.eql(u8, key, "freebsd_version_max")) {
+                    kernel_compat.?.freebsd_version_max = try std.fmt.parseInt(u32, value, 10);
+                } else if (std.mem.eql(u8, key, "require_exact_ident")) {
+                    kernel_compat.?.require_exact_ident = std.mem.eql(u8, value, "true");
+                } else if (std.mem.eql(u8, key, "kernel_idents")) {
+                    list_context = .kernel_idents;
+                } else if (std.mem.eql(u8, key, "kld_names")) {
+                    list_context = .kld_names;
+                }
+            } else if (std.mem.eql(u8, key, "name")) {
                 manifest.name = try allocator.dupe(u8, value);
             } else if (std.mem.eql(u8, key, "version")) {
                 manifest.version = try Version.parse(value);
@@ -121,6 +198,14 @@ pub const Manifest = struct {
         manifest.provides = try provides_list.toOwnedSlice();
         manifest.conflicts = try conflicts_list.toOwnedSlice();
         manifest.replaces = try replaces_list.toOwnedSlice();
+
+        // Finalize kernel compat if present
+        if (kernel_compat) |*kc| {
+            kc.kernel_idents = try kernel_idents.toOwnedSlice();
+            kc.kld_names = try kld_names.toOwnedSlice();
+            manifest.kernel = kc.*;
+        }
+
         return manifest;
     }
 
@@ -157,6 +242,10 @@ pub const Manifest = struct {
             allocator.free(r.name);
         }
         allocator.free(self.replaces);
+        if (self.kernel) |*k| {
+            var kernel_mut = k;
+            kernel_mut.deinit(allocator);
+        }
     }
 
     /// Check if this package provides a virtual package
@@ -250,7 +339,42 @@ pub const Manifest = struct {
             }
         }
 
+        // Serialize kernel section if present
+        if (self.kernel) |k| {
+            try writer.writeAll("kernel:\n");
+            try writer.print("  kmod: {s}\n", .{if (k.kmod) "true" else "false"});
+            if (k.freebsd_version_min) |v| {
+                try writer.print("  freebsd_version_min: {d}\n", .{v});
+            }
+            if (k.freebsd_version_max) |v| {
+                try writer.print("  freebsd_version_max: {d}\n", .{v});
+            }
+            if (k.require_exact_ident) {
+                try writer.writeAll("  require_exact_ident: true\n");
+            }
+            if (k.kernel_idents.len > 0) {
+                try writer.writeAll("  kernel_idents:\n");
+                for (k.kernel_idents) |ident| {
+                    try writer.print("    - {s}\n", .{ident});
+                }
+            }
+            if (k.kld_names.len > 0) {
+                try writer.writeAll("  kld_names:\n");
+                for (k.kld_names) |name| {
+                    try writer.print("    - {s}\n", .{name});
+                }
+            }
+        }
+
         return result.toOwnedSlice();
+    }
+
+    /// Check if this package is kernel-bound (installs kernel modules)
+    pub fn isKernelBound(self: Manifest) bool {
+        if (self.kernel) |k| {
+            return k.kmod;
+        }
+        return false;
     }
 };
 

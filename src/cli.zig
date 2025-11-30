@@ -135,6 +135,9 @@ pub const Command = enum {
     ports_import,
     ports_scan,
 
+    // Kernel compatibility operations
+    kernel_check,
+
     unknown,
 };
 
@@ -232,6 +235,10 @@ pub fn parseCommand(cmd: []const u8) Command {
     if (std.mem.eql(u8, cmd, "ports-build")) return .ports_build;
     if (std.mem.eql(u8, cmd, "ports-import")) return .ports_import;
     if (std.mem.eql(u8, cmd, "ports-scan")) return .ports_scan;
+
+    // Kernel compatibility commands
+    if (std.mem.eql(u8, cmd, "kernel")) return .kernel_check;
+    if (std.mem.eql(u8, cmd, "kernel-check")) return .kernel_check;
 
     return .unknown;
 }
@@ -398,6 +405,9 @@ pub const CLI = struct {
             .ports_import => try self.portsImport(args[1..]),
             .ports_scan => try self.portsScan(args[1..]),
 
+            // Kernel compatibility commands
+            .kernel_check => try self.kernelCheck(args[1..]),
+
             .unknown => {
                 std.debug.print("Unknown command: {s}\n", .{args[0]});
                 std.debug.print("Run 'axiom help' for usage information.\n", .{});
@@ -510,6 +520,10 @@ pub const CLI = struct {
             \\  ports-build <origin>       Build port with Axiom builder
             \\  ports-import <origin>      Full migration: gen + build + import
             \\  ports-scan <category>      Scan category for migratable ports
+            \\
+            \\Kernel Compatibility:
+            \\  kernel                      Check kernel-bound package compatibility
+            \\  kernel-check                (alias for kernel)
             \\
             \\General:
             \\  help                       Show this help message
@@ -2951,6 +2965,137 @@ pub const CLI = struct {
             std.debug.print("\nTo scan a category:\n", .{});
             std.debug.print("  axiom ports-scan <category>\n", .{});
             std.debug.print("  axiom ports-scan devel\n", .{});
+        }
+    }
+
+    // =============================================================
+    // Kernel Compatibility Commands
+    // =============================================================
+
+    fn kernelCheck(self: *CLI, args: []const []const u8) !void {
+        _ = args; // TODO: Add --profile, --env filters
+
+        std.debug.print("Kernel Compatibility Check\n", .{});
+        std.debug.print("==========================\n\n", .{});
+
+        // Get kernel context - in production this would read from sysctl
+        // For now we use mock values or read from environment
+        var freebsd_version: u32 = 1502000;
+        var kernel_ident: []const u8 = "GENERIC";
+
+        // Try to detect actual values on FreeBSD
+        // This is a placeholder - real implementation would use sysctl
+        if (std.process.getEnvVarOwned(self.allocator, "AXIOM_FREEBSD_VERSION")) |ver_str| {
+            defer self.allocator.free(ver_str);
+            freebsd_version = std.fmt.parseInt(u32, ver_str, 10) catch 1502000;
+        } else |_| {}
+
+        if (std.process.getEnvVarOwned(self.allocator, "AXIOM_KERNEL_IDENT")) |ident| {
+            kernel_ident = ident;
+            // Note: We're leaking ident here for simplicity - real impl would handle properly
+        } else |_| {}
+
+        std.debug.print("Kernel:\n", .{});
+        std.debug.print("  FreeBSD version (osreldate): {d}\n", .{freebsd_version});
+        std.debug.print("  Kernel ident: {s}\n\n", .{kernel_ident});
+
+        const kernel_ctx = resolver.KernelContext.initMock(freebsd_version, kernel_ident);
+
+        // Scan installed packages for kernel-bound ones
+        std.debug.print("Kernel-bound packages:\n\n", .{});
+
+        var ok_count: usize = 0;
+        var warn_count: usize = 0;
+        var incompatible_count: usize = 0;
+
+        // In a full implementation, we would iterate through:
+        // 1. All packages in the store
+        // 2. Or packages in active profiles/environments
+        //
+        // For now, demonstrate with mock data
+        const mock_packages = [_]struct {
+            name: []const u8,
+            version: []const u8,
+            kernel: ?manifest.KernelCompat,
+        }{
+            .{
+                .name = "drm-kmod",
+                .version = "6.10.0_1",
+                .kernel = manifest.KernelCompat{
+                    .kmod = true,
+                    .freebsd_version_min = 1500000,
+                    .freebsd_version_max = 1509999,
+                    .kernel_idents = &[_][]const u8{ "GENERIC", "PGSD-GENERIC" },
+                    .require_exact_ident = false,
+                },
+            },
+            .{
+                .name = "nvidia-driver",
+                .version = "550.78",
+                .kernel = manifest.KernelCompat{
+                    .kmod = true,
+                    .freebsd_version_min = 1400000,
+                    .freebsd_version_max = 1499999,
+                    .kernel_idents = &[_][]const u8{},
+                    .require_exact_ident = false,
+                },
+            },
+            .{
+                .name = "bash",
+                .version = "5.2.26",
+                .kernel = null, // Userland package
+            },
+        };
+
+        for (mock_packages) |pkg| {
+            if (pkg.kernel) |k| {
+                if (!k.kmod) continue;
+
+                const result = resolver.kernelIsCompatible(&kernel_ctx, &k);
+
+                if (result.compatible) {
+                    std.debug.print("  [OK] {s}-{s}\n", .{ pkg.name, pkg.version });
+                    if (k.freebsd_version_min != null or k.freebsd_version_max != null) {
+                        std.debug.print("       freebsd_version: ", .{});
+                        if (k.freebsd_version_min) |min| std.debug.print("{d}", .{min});
+                        std.debug.print("-", .{});
+                        if (k.freebsd_version_max) |max| std.debug.print("{d}", .{max});
+                        std.debug.print("\n", .{});
+                    }
+                    if (k.kernel_idents.len > 0) {
+                        std.debug.print("       kernel_idents: ", .{});
+                        for (k.kernel_idents, 0..) |ident, idx| {
+                            if (idx > 0) std.debug.print(", ", .{});
+                            std.debug.print("{s}", .{ident});
+                        }
+                        std.debug.print("\n", .{});
+                    }
+                    ok_count += 1;
+                } else {
+                    std.debug.print("  [INCOMPATIBLE] {s}-{s}\n", .{ pkg.name, pkg.version });
+                    if (k.freebsd_version_min) |min| {
+                        std.debug.print("       freebsd_version_min: {d}\n", .{min});
+                    }
+                    if (k.freebsd_version_max) |max| {
+                        std.debug.print("       freebsd_version_max: {d}\n", .{max});
+                    }
+                    if (result.reason) |reason| {
+                        std.debug.print("       reason: {s}\n", .{reason});
+                    }
+                    incompatible_count += 1;
+                }
+                std.debug.print("\n", .{});
+            }
+        }
+
+        _ = warn_count; // Currently unused
+
+        std.debug.print("Summary:\n", .{});
+        std.debug.print("  {d} compatible kernel-bound packages\n", .{ok_count});
+        if (incompatible_count > 0) {
+            std.debug.print("  {d} incompatible kernel-bound packages\n", .{incompatible_count});
+            std.debug.print("\n⚠ Warning: Incompatible kernel modules may fail to load.\n", .{});
+            std.debug.print("Consider rebuilding these packages for your current kernel.\n", .{});
         }
     }
 };

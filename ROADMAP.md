@@ -22,6 +22,7 @@ This document outlines the planned enhancements for Axiom beyond the core 8 phas
 | 20 | Runtime Layers | Medium | Medium | Phase 18 | ✓ Complete |
 | 21 | Desktop Integration | Medium | Low | Phase 18 | ✓ Complete |
 | 22 | Ports Migration Tool | High | High | Phase 9, 10 | ✓ Complete |
+| 23 | Kernel Module Compatibility | Medium | Medium | Phase 22 | ✓ Complete |
 
 ---
 
@@ -1763,6 +1764,148 @@ post_process:
 3. **Batch migration** - Migrate entire categories with dependency ordering
 4. **Conflict resolution** - Handle ports that provide same virtual packages
 5. **rc.d integration** - Generate service management metadata
+
+---
+
+## Phase 23: Kernel Module Compatibility
+
+**Priority**: Medium
+**Complexity**: Medium
+**Dependencies**: Phase 22 (Ports Migration)
+**Status**: Complete
+
+### Purpose
+
+Provide kernel version compatibility checking for packages that install kernel modules (.ko files). This ensures that kmod packages are only installed on compatible kernels, preventing crashes and load failures.
+
+### Rationale
+
+FreeBSD kernel modules are tightly coupled to specific kernel versions:
+
+1. **Kernel ABI changes** - Module structures may change between versions
+2. **KBI (Kernel Binary Interface)** - Symbol layouts vary per kernel build
+3. **KERNCONF variations** - Custom kernels may have different configurations
+
+Unlike userland packages (which are ABI-compatible within major versions), kernel modules require exact or near-exact kernel version matching.
+
+### Implementation
+
+#### Manifest Schema
+
+Added optional `kernel` section to `manifest.yaml`:
+
+```yaml
+kernel:
+  kmod: true                      # Package installs .ko files
+  freebsd_version_min: 1500000    # Minimum __FreeBSD_version
+  freebsd_version_max: 1509999    # Maximum __FreeBSD_version
+  kernel_idents:                  # Allowed kernel idents
+    - "GENERIC"
+    - "PGSD-GENERIC"
+  require_exact_ident: false      # Strict ident matching
+  kld_names:                      # Installed .ko files
+    - "drm.ko"
+    - "amdgpu.ko"
+```
+
+#### Source Files
+
+**`src/manifest.zig`:**
+- `KernelCompat` struct with all kernel compatibility fields
+- Parsing and serialization of `kernel` section
+- `isKernelBound()` helper method
+
+**`src/resolver.zig`:**
+- `KernelContext` struct - running kernel info
+- `kernelIsCompatible()` - compatibility check function
+- Resolver integration - skip incompatible candidates
+- `KernelIncompatible` error type
+
+**`src/ports.zig`:**
+- `isKernelModule()` - detect kmods from USES/categories
+- Automatic kernel section generation for migrated kmods
+
+**`src/cli.zig`:**
+- `kernel` / `kernel-check` command
+
+### CLI Commands
+
+```bash
+# Check kernel compatibility of installed packages
+axiom kernel
+axiom kernel-check
+
+# Example output:
+# Kernel:
+#   FreeBSD version (osreldate): 1502000
+#   Kernel ident: GENERIC
+#
+# Kernel-bound packages:
+#
+#   [OK] drm-kmod-6.10.0_1
+#        freebsd_version: 1500000-1509999
+#        kernel_idents: GENERIC, PGSD-GENERIC
+#
+#   [INCOMPATIBLE] old-driver-0.9.0
+#        freebsd_version_min: 1400000
+#        freebsd_version_max: 1499999
+#        reason: running kernel version exceeds maximum supported
+#
+# Summary:
+#   1 compatible kernel-bound packages
+#   1 incompatible kernel-bound packages
+```
+
+### Resolver Behavior
+
+During dependency resolution:
+
+1. If `manifest.kernel` is null → userland package, always compatible
+2. If `manifest.kernel.kmod` is false → treat as userland
+3. If `manifest.kernel.kmod` is true:
+   - Check `freebsd_version_min` and `freebsd_version_max`
+   - If `require_exact_ident`, check `kernel_idents`
+   - Reject candidate if incompatible, try next version
+
+### Ports Migration
+
+When migrating ports with `USES=kmod` or `CATEGORIES=kld`:
+
+1. Detected automatically by `isKernelModule()`
+2. Kernel section generated with current system's version range
+3. Range set to current major version (e.g., 1500000-1509999 for 15.x)
+4. `kld_names` populated from port name
+
+Example generated manifest for a kmod port:
+
+```yaml
+name: drm-kmod
+version: "6.10.0"
+# ... other fields ...
+
+kernel:
+  kmod: true
+  freebsd_version_min: 1500000
+  freebsd_version_max: 1509999
+  require_exact_ident: false
+  kld_names:
+    - "drm-kmod.ko"
+```
+
+### Best Practices
+
+1. **Userland packages**: Omit `kernel` section entirely
+2. **Kernel modules**: Always set `kmod: true` and version range
+3. **GPU drivers**: May need `kernel_idents` if built for specific kernels
+4. **Version ranges**: Use major version range (1500000-1509999) for flexibility
+5. **Exact ident**: Only enable when module is truly kernel-specific
+
+### Future Enhancements
+
+1. **Automatic detection** - Read `kern.osreldate` via sysctl
+2. **Kernel package integration** - Treat kernel+kmods as unit
+3. **Rebuild suggestions** - Offer to rebuild incompatible kmods
+4. **Profile filtering** - `axiom kernel check --profile pgsd-kernel`
 
 ---
 

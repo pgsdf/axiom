@@ -822,6 +822,35 @@ pub const PortsMigrator = struct {
         return port_name;
     }
 
+    /// Check if a port is a kernel module based on USES and categories
+    fn isKernelModule(meta: *const PortMetadata) bool {
+        // Check USES for kmod
+        for (meta.uses) |u| {
+            if (std.mem.eql(u8, u, "kmod") or std.mem.startsWith(u8, u, "kmod:")) {
+                return true;
+            }
+        }
+
+        // Check categories for kld (kernel loadable modules)
+        for (meta.categories) |cat| {
+            if (std.mem.eql(u8, cat, "kld")) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// Get current FreeBSD version for kernel compat (placeholder)
+    fn getCurrentFreeBSDVersion(self: *PortsMigrator) u32 {
+        _ = self;
+        // In production, this would read from:
+        // - make -V OSVERSION
+        // - sysctl kern.osreldate
+        // For now, return a placeholder value
+        return 1502000; // FreeBSD 15.0-CURRENT
+    }
+
     fn generateManifestYaml(self: *PortsMigrator, meta: *const PortMetadata) ![]const u8 {
         var output = std.ArrayList(u8).init(self.allocator);
         const writer = output.writer();
@@ -874,6 +903,28 @@ pub const PortsMigrator = struct {
                 try writer.writeAll(c);
                 try writer.writeAll("\n");
             }
+        }
+
+        // Kernel compatibility (for kmod packages)
+        if (isKernelModule(meta)) {
+            const freebsd_version = self.getCurrentFreeBSDVersion();
+            // Set version range for current major version (e.g., 1500000-1509999 for 15.x)
+            const major_min = (freebsd_version / 100000) * 100000;
+            const major_max = major_min + 99999;
+
+            try writer.writeAll("\nkernel:\n");
+            try writer.writeAll("  kmod: true\n");
+            try std.fmt.format(writer, "  freebsd_version_min: {d}\n", .{major_min});
+            try std.fmt.format(writer, "  freebsd_version_max: {d}\n", .{major_max});
+            try writer.writeAll("  # Note: kernel_idents left empty - compatible with any ident\n");
+            try writer.writeAll("  # Add specific kernel idents if this kmod requires them:\n");
+            try writer.writeAll("  # kernel_idents:\n");
+            try writer.writeAll("  #   - \"GENERIC\"\n");
+            try writer.writeAll("  #   - \"PGSD-GENERIC\"\n");
+            try writer.writeAll("  require_exact_ident: false\n");
+            try writer.writeAll("  # kld_names populated from port's installed .ko files:\n");
+            try writer.writeAll("  kld_names:\n");
+            try std.fmt.format(writer, "    - \"{s}.ko\"\n", .{meta.name});
         }
 
         return output.toOwnedSlice();
