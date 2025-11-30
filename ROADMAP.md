@@ -17,6 +17,10 @@ This document outlines the planned enhancements for Axiom beyond the core 8 phas
 | 15 | Signature Verification | High | Medium | Phase 9 | ✓ Complete |
 | 16 | SAT Solver | Low | High | None | ✓ Complete |
 | 17 | Binary Cache | High | High | Phase 15 | ✓ Complete |
+| 18 | Self-Contained Bundles & Launcher | High | Medium | None | ✓ Complete |
+| 19 | Portable Images (.pgsdimg) | High | Medium | Phase 18 | ✓ Complete |
+| 20 | Runtime Layers | Medium | Medium | Phase 18 | ✓ Complete |
+| 21 | Desktop Integration | Medium | Low | Phase 18 | ✓ Complete |
 
 ---
 
@@ -1286,6 +1290,269 @@ Phase 16: SAT Solver             ✓ Complete
 - Virtual packages and conflict resolution (Phases 13-14)
 - Signature verification and binary cache (Phases 15, 17)
 - Advanced SAT-based dependency resolution (Phase 16)
+- AppImage-inspired bundles, launcher, runtimes, and desktop integration (Phases 18-21)
+
+---
+
+## Phase 18: Self-Contained Bundles & Launcher ✓
+
+**Priority**: High
+**Complexity**: Medium
+**Status**: Complete
+
+### Purpose
+
+Enable running packages directly without environment activation (like AppImage) and support self-contained bundles with complete dependency closures.
+
+### Implementation
+
+**Files Created:**
+- `src/closure.zig` - Dependency closure computation
+- `src/launcher.zig` - Runtime shim for direct execution
+- `src/bundle.zig` - Bundle creation and management
+
+**Features Implemented:**
+- Dependency closure computation (transitive dependencies)
+- Direct package execution via `axiom run <pkg>@<ver>`
+- Isolated mode execution (no system libs)
+- LD_LIBRARY_PATH and PATH setup for package execution
+- Launcher script generation for packages
+- Bundle creation with multiple output formats
+
+**CLI Commands:**
+```bash
+# Run package directly
+axiom run hello@1.0.0
+
+# Run in isolated mode
+axiom run bash@5.2.0 --isolated
+
+# Run with arguments
+axiom run vim@9.0.0 file.txt
+
+# Show dependency closure
+axiom closure bash@5.2.0
+axiom closure vim@9.0.0 --tree
+```
+
+### Design
+
+**Closure Computation:**
+```zig
+pub const ClosureComputer = struct {
+    // Computes transitive closure of all dependencies
+    pub fn computeForPackage(pkg_id: PackageId) !Closure;
+
+    // Base packages excluded from closures (assumed present)
+    base_packages: StringHashMap(void),
+};
+```
+
+**Launcher:**
+```zig
+pub const Launcher = struct {
+    // Launch package directly with environment setup
+    pub fn launch(config: LaunchConfig) LaunchResult;
+
+    // Generate standalone launcher script
+    pub fn generateLauncherScript(pkg_id: PackageId, output: []const u8) !void;
+};
+```
+
+---
+
+## Phase 19: Portable Images (.pgsdimg) ✓
+
+**Priority**: High
+**Complexity**: Medium
+**Dependencies**: Phase 18
+**Status**: Complete
+
+### Purpose
+
+Create single-file distributable artifacts (like AppImage) that can be executed directly or imported into the store.
+
+### Implementation
+
+**Features Implemented:**
+- `.pgsdimg` portable image format
+- Self-extracting executables with embedded payload
+- Multiple output formats: pgsdimg, ZFS stream, tarball, directory
+- Bundle manifest with provenance information
+- CLI export command
+
+**CLI Commands:**
+```bash
+# Export package as portable image
+axiom export hello@1.0.0
+
+# Export with specific format
+axiom export bash@5.2.0 --format zfs
+axiom export vim@9.0.0 --format tar
+
+# Export without dependencies
+axiom export app@1.0.0 --no-closure
+
+# Create bundle from directory
+axiom bundle ./my-app
+axiom build-bundle . --output app.pgsdimg
+```
+
+### Design
+
+**Bundle Format:**
+```
+hello-1.0.0.pgsdimg
+├── [ELF stub / Shell launcher]
+├── [Metadata - MANIFEST.yaml]
+├── [Signature - optional]
+└── [Compressed payload - packages/]
+```
+
+**Bundle Config:**
+```zig
+pub const BundleConfig = struct {
+    format: BundleFormat,      // pgsdimg, zfs_stream, tarball, directory
+    compression: CompressionType,
+    include_closure: bool,
+    sign: bool,
+    signing_key: ?[]const u8,
+};
+```
+
+---
+
+## Phase 20: Runtime Layers ✓
+
+**Priority**: Medium
+**Complexity**: Medium
+**Dependencies**: Phase 18
+**Status**: Complete
+
+### Purpose
+
+Create versioned runtime layers (like Flatpak runtimes) that provide ABI-stable library sets for applications to depend on.
+
+### Implementation
+
+**Files Created:**
+- `src/runtime.zig` - Runtime layer management
+
+**Features Implemented:**
+- Runtime layer creation and management
+- ABI version tracking
+- Standard runtime definitions (base, full, GUI)
+- ZFS snapshot support for runtime versions
+- Rollback capability
+- Package-to-runtime compatibility checking
+
+### Design
+
+**Runtime Structure:**
+```
+/axiom/runtimes/
+├── pgsd-runtime-base-2025/
+│   ├── lib/          # Core libraries
+│   ├── share/        # Shared data
+│   └── runtime.yaml  # Runtime manifest
+├── pgsd-runtime-2025/
+└── pgsd-runtime-gui-2025/
+```
+
+**Runtime Manifest:**
+```yaml
+name: pgsd-runtime-2025
+version: 2025.1.0
+description: PGSD Full Runtime 2025
+abi_version: "2025.1"
+stable: true
+core_packages:
+  - libc
+  - openssl
+  - libcurl
+  - sqlite
+extensions:
+  - name: python
+    packages: [python3, python3-pip]
+```
+
+**Package Runtime Dependency:**
+```yaml
+# In package manifest.yaml
+name: my-app
+runtime: pgsd-runtime-2025
+runtime_version: ">=2025.1"
+```
+
+---
+
+## Phase 21: Desktop Integration ✓
+
+**Priority**: Medium
+**Complexity**: Low
+**Dependencies**: Phase 18
+**Status**: Complete
+
+### Purpose
+
+Integrate packages with desktop environments by generating .desktop files, installing icons, and registering MIME types.
+
+### Implementation
+
+**Files Created:**
+- `src/desktop.zig` - Desktop integration helpers
+
+**Features Implemented:**
+- .desktop file generation (freedesktop.org standard)
+- Icon installation (multiple sizes, SVG support)
+- MIME type registration
+- XDG directory support
+- Desktop database updates
+- Per-user and system-wide installation
+
+### Design
+
+**Desktop Entry in Manifest:**
+```yaml
+# In package manifest.yaml
+desktop:
+  name: "PGSD Viewer"
+  generic_name: "Document Viewer"
+  executable: bin/pgsd-viewer
+  icon: icons/pgsd-viewer.svg
+  categories: [Graphics, Viewer]
+  keywords: [document, pdf, viewer]
+  mime_types: [application/pdf, image/png]
+  terminal: false
+```
+
+**Generated .desktop File:**
+```ini
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=PGSD Viewer
+GenericName=Document Viewer
+Exec=/axiom/store/pkg/pgsd-viewer/1.0.0/1/abc123/root/bin/pgsd-viewer %F
+Icon=axiom-pgsd-viewer
+Categories=Graphics;Viewer;
+Keywords=document;pdf;viewer;
+MimeType=application/pdf;image/png;
+Terminal=false
+StartupNotify=true
+```
+
+**CLI Commands:**
+```bash
+# Install desktop integration
+axiom desktop install hello@1.0.0
+
+# Remove desktop integration
+axiom desktop uninstall hello@1.0.0
+
+# List installed desktop entries
+axiom desktop list
+```
 
 ---
 

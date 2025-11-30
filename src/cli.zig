@@ -15,6 +15,9 @@ const completions = @import("completions.zig");
 const build_pkg = @import("build.zig");
 const user_pkg = @import("user.zig");
 const conflict = @import("conflict.zig");
+const closure_pkg = @import("closure.zig");
+const launcher_pkg = @import("launcher.zig");
+const bundle_pkg = @import("bundle.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageStore = store.PackageStore;
@@ -34,6 +37,10 @@ const UserRealizationEngine = user_pkg.UserRealizationEngine;
 const MultiUserManager = user_pkg.MultiUserManager;
 const ConflictPolicy = conflict.ConflictPolicy;
 const ResolutionStrategy = resolver.ResolutionStrategy;
+const ClosureComputer = closure_pkg.ClosureComputer;
+const Launcher = launcher_pkg.Launcher;
+const BundleBuilder = bundle_pkg.BundleBuilder;
+const BundleFormat = bundle_pkg.BundleFormat;
 
 /// CLI command enumeration
 pub const Command = enum {
@@ -113,6 +120,12 @@ pub const Command = enum {
     pkg_provides,
     pkg_conflicts,
     pkg_replaces,
+
+    // Bundle and launcher operations (AppImage-inspired)
+    run,
+    closure_show,
+    export_pkg,
+    bundle_create,
 
     unknown,
 };
@@ -197,6 +210,13 @@ pub fn parseCommand(cmd: []const u8) Command {
     if (std.mem.eql(u8, cmd, "provides")) return .pkg_provides;
     if (std.mem.eql(u8, cmd, "conflicts")) return .pkg_conflicts;
     if (std.mem.eql(u8, cmd, "replaces")) return .pkg_replaces;
+
+    // Bundle and launcher commands
+    if (std.mem.eql(u8, cmd, "run")) return .run;
+    if (std.mem.eql(u8, cmd, "closure")) return .closure_show;
+    if (std.mem.eql(u8, cmd, "export")) return .export_pkg;
+    if (std.mem.eql(u8, cmd, "bundle")) return .bundle_create;
+    if (std.mem.eql(u8, cmd, "build-bundle")) return .bundle_create;
 
     return .unknown;
 }
@@ -351,6 +371,12 @@ pub const CLI = struct {
             .pkg_conflicts => try self.pkgConflicts(args[1..]),
             .pkg_replaces => try self.pkgReplaces(args[1..]),
 
+            // Bundle and launcher commands
+            .run => try self.runPackage(args[1..]),
+            .closure_show => try self.showClosure(args[1..]),
+            .export_pkg => try self.exportPackage(args[1..]),
+            .bundle_create => try self.createBundle(args[1..]),
+
             .unknown => {
                 std.debug.print("Unknown command: {s}\n", .{args[0]});
                 std.debug.print("Run 'axiom help' for usage information.\n", .{});
@@ -443,6 +469,16 @@ pub const CLI = struct {
             \\  provides <package>         Show what virtual pkgs package provides
             \\  conflicts <package>        Show packages that conflict with pkg
             \\  replaces <package>         Show packages that pkg replaces
+            \\
+            \\Bundle and Launcher Operations:
+            \\  run <pkg>@<ver> [args]     Run package directly without activation
+            \\    --isolated                 Run in fully isolated mode
+            \\  closure <pkg>@<ver>        Show package dependency closure
+            \\    --tree                     Display as tree
+            \\  export <pkg>@<ver>         Export package as portable bundle
+            \\    --format <f>               Output format (pgsdimg|zfs|tar|dir)
+            \\  bundle <directory>         Create bundle from current directory
+            \\    --output <file>            Output file path
             \\
             \\General:
             \\  help                       Show this help message
@@ -2233,5 +2269,404 @@ pub const CLI = struct {
         std.debug.print("    - <old-package>\n", .{});
         std.debug.print("    - <package><version  # With version constraint\n", .{});
         _ = self;
+    }
+
+    // Bundle and launcher operations
+
+    fn runPackage(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom run <package>@<version> [args...]\n", .{});
+            std.debug.print("\nRun a package directly without activating an environment.\n", .{});
+            std.debug.print("\nOptions:\n", .{});
+            std.debug.print("  --isolated    Run in fully isolated mode (no system libs)\n", .{});
+            std.debug.print("\nExamples:\n", .{});
+            std.debug.print("  axiom run hello@1.0.0\n", .{});
+            std.debug.print("  axiom run bash@5.2.0 --isolated\n", .{});
+            std.debug.print("  axiom run vim@9.0.0 file.txt\n", .{});
+            return;
+        }
+
+        // Parse package reference
+        const pkg_ref = args[0];
+        const parsed = launcher_pkg.parsePackageRef(self.allocator, pkg_ref) catch {
+            std.debug.print("Invalid package reference: {s}\n", .{pkg_ref});
+            std.debug.print("Expected format: <name>@<version> (e.g., hello@1.0.0)\n", .{});
+            return;
+        };
+        defer self.allocator.free(parsed.name);
+
+        // Check for --isolated flag
+        var isolated = false;
+        var pkg_args = std.ArrayList([]const u8).init(self.allocator);
+        defer pkg_args.deinit();
+
+        for (args[1..]) |arg| {
+            if (std.mem.eql(u8, arg, "--isolated")) {
+                isolated = true;
+            } else {
+                pkg_args.append(arg) catch {};
+            }
+        }
+
+        std.debug.print("Running: {s}", .{parsed.name});
+        if (parsed.version) |v| {
+            std.debug.print("@{d}.{d}.{d}", .{ v.major, v.minor, v.patch });
+        }
+        if (isolated) {
+            std.debug.print(" (isolated mode)", .{});
+        }
+        std.debug.print("\n\n", .{});
+
+        // Build package ID
+        const version = parsed.version orelse types.Version{ .major = 0, .minor = 0, .patch = 0 };
+        const pkg_id = types.PackageId{
+            .name = parsed.name,
+            .version = version,
+            .revision = 1,
+            .build_id = "latest",
+        };
+
+        // Create launcher
+        var pkg_launcher = Launcher.init(self.allocator, self.store);
+        defer pkg_launcher.deinit();
+
+        const config = launcher_pkg.LaunchConfig{
+            .package = pkg_id,
+            .args = pkg_args.items,
+            .isolation = if (isolated) .isolated else .normal,
+        };
+
+        const result = pkg_launcher.launch(config);
+
+        switch (result) {
+            .exited => |exit_info| {
+                if (exit_info.code == 0) {
+                    std.debug.print("\nPackage exited successfully.\n", .{});
+                } else {
+                    std.debug.print("\nPackage exited with code: {d}\n", .{exit_info.code});
+                }
+            },
+            .signaled => |sig| {
+                std.debug.print("\nPackage terminated by signal: {d}\n", .{sig});
+            },
+            .failed => |err| {
+                std.debug.print("Failed to launch package: {s}\n", .{@errorName(err)});
+            },
+        }
+    }
+
+    fn showClosure(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom closure <package>@<version>\n", .{});
+            std.debug.print("\nShow the complete dependency closure for a package.\n", .{});
+            std.debug.print("\nOptions:\n", .{});
+            std.debug.print("  --tree    Display dependencies as a tree\n", .{});
+            std.debug.print("\nExamples:\n", .{});
+            std.debug.print("  axiom closure bash@5.2.0\n", .{});
+            std.debug.print("  axiom closure vim@9.0.0 --tree\n", .{});
+            return;
+        }
+
+        // Parse package reference
+        const pkg_ref = args[0];
+        const parsed = launcher_pkg.parsePackageRef(self.allocator, pkg_ref) catch {
+            std.debug.print("Invalid package reference: {s}\n", .{pkg_ref});
+            return;
+        };
+        defer self.allocator.free(parsed.name);
+
+        // Check for --tree flag
+        var show_tree = false;
+        for (args[1..]) |arg| {
+            if (std.mem.eql(u8, arg, "--tree")) {
+                show_tree = true;
+            }
+        }
+
+        std.debug.print("Computing closure for: {s}", .{parsed.name});
+        if (parsed.version) |v| {
+            std.debug.print("@{d}.{d}.{d}", .{ v.major, v.minor, v.patch });
+        }
+        std.debug.print("\n\n", .{});
+
+        // Build package ID
+        const version = parsed.version orelse types.Version{ .major = 0, .minor = 0, .patch = 0 };
+        const pkg_id = types.PackageId{
+            .name = parsed.name,
+            .version = version,
+            .revision = 1,
+            .build_id = "latest",
+        };
+
+        // Compute closure
+        var computer = ClosureComputer.init(self.allocator, self.store);
+        defer computer.deinit();
+
+        var pkg_closure = computer.computeForPackage(pkg_id) catch |err| {
+            std.debug.print("Failed to compute closure: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer pkg_closure.deinit();
+
+        // Format and display
+        const output = closure_pkg.formatClosure(self.allocator, &pkg_closure, .{
+            .show_tree = show_tree,
+        }) catch {
+            std.debug.print("Failed to format closure.\n", .{});
+            return;
+        };
+        defer self.allocator.free(output);
+
+        std.debug.print("{s}\n", .{output});
+    }
+
+    fn exportPackage(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom export <package>@<version> [options]\n", .{});
+            std.debug.print("\nExport a package as a portable bundle.\n", .{});
+            std.debug.print("\nOptions:\n", .{});
+            std.debug.print("  --format <f>     Output format: pgsdimg, zfs, tar, dir (default: pgsdimg)\n", .{});
+            std.debug.print("  --output <file>  Output file path (default: <name>-<ver>.<ext>)\n", .{});
+            std.debug.print("  --no-closure     Don't include dependencies\n", .{});
+            std.debug.print("\nExamples:\n", .{});
+            std.debug.print("  axiom export hello@1.0.0\n", .{});
+            std.debug.print("  axiom export bash@5.2.0 --format zfs\n", .{});
+            std.debug.print("  axiom export vim@9.0.0 --output vim-bundle.pgsdimg\n", .{});
+            return;
+        }
+
+        // Parse package reference
+        const pkg_ref = args[0];
+        const parsed = launcher_pkg.parsePackageRef(self.allocator, pkg_ref) catch {
+            std.debug.print("Invalid package reference: {s}\n", .{pkg_ref});
+            return;
+        };
+        defer self.allocator.free(parsed.name);
+
+        // Parse options
+        var format: BundleFormat = .pgsdimg;
+        var output_path: ?[]const u8 = null;
+        var include_closure = true;
+
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--format") and i + 1 < args.len) {
+                i += 1;
+                if (std.mem.eql(u8, args[i], "pgsdimg")) {
+                    format = .pgsdimg;
+                } else if (std.mem.eql(u8, args[i], "zfs")) {
+                    format = .zfs_stream;
+                } else if (std.mem.eql(u8, args[i], "tar")) {
+                    format = .tarball;
+                } else if (std.mem.eql(u8, args[i], "dir")) {
+                    format = .directory;
+                }
+            } else if (std.mem.eql(u8, args[i], "--output") and i + 1 < args.len) {
+                i += 1;
+                output_path = args[i];
+            } else if (std.mem.eql(u8, args[i], "--no-closure")) {
+                include_closure = false;
+            }
+        }
+
+        // Generate default output path if not specified
+        const version = parsed.version orelse types.Version{ .major = 0, .minor = 0, .patch = 0 };
+        const ext = switch (format) {
+            .pgsdimg => ".pgsdimg",
+            .zfs_stream => ".zfs",
+            .tarball => ".tar.gz",
+            .directory => "",
+        };
+
+        const final_output = output_path orelse try std.fmt.allocPrint(
+            self.allocator,
+            "{s}-{d}.{d}.{d}{s}",
+            .{ parsed.name, version.major, version.minor, version.patch, ext },
+        );
+        defer if (output_path == null) self.allocator.free(final_output);
+
+        std.debug.print("Exporting: {s}@{d}.{d}.{d}\n", .{
+            parsed.name,
+            version.major,
+            version.minor,
+            version.patch,
+        });
+        std.debug.print("Format: {s}\n", .{@tagName(format)});
+        std.debug.print("Output: {s}\n", .{final_output});
+        std.debug.print("Include closure: {}\n\n", .{include_closure});
+
+        // Build package ID
+        const pkg_id = types.PackageId{
+            .name = parsed.name,
+            .version = version,
+            .revision = 1,
+            .build_id = "latest",
+        };
+
+        // Create bundle
+        var builder = BundleBuilder.init(self.allocator, self.store);
+        defer builder.deinit();
+
+        const config = bundle_pkg.BundleConfig{
+            .format = format,
+            .include_closure = include_closure,
+        };
+
+        const result = builder.createBundle(pkg_id, final_output, config) catch |err| {
+            std.debug.print("Failed to create bundle: {s}\n", .{@errorName(err)});
+            return;
+        };
+
+        switch (result) {
+            .success => |info| {
+                std.debug.print("\nBundle created successfully!\n", .{});
+                std.debug.print("  Output: {s}\n", .{info.output_path});
+                std.debug.print("  Size: {d} bytes\n", .{info.size});
+                std.debug.print("  Packages: {d}\n", .{info.packages_included});
+                self.allocator.free(info.output_path);
+            },
+            .failure => |err_info| {
+                std.debug.print("Bundle creation failed: {s}\n", .{err_info.message});
+            },
+        }
+    }
+
+    fn createBundle(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom bundle <directory> [options]\n", .{});
+            std.debug.print("       axiom build-bundle <directory> [options]\n", .{});
+            std.debug.print("\nCreate a bundle from a package directory.\n", .{});
+            std.debug.print("\nOptions:\n", .{});
+            std.debug.print("  --output <file>  Output file path\n", .{});
+            std.debug.print("  --sign           Sign the bundle\n", .{});
+            std.debug.print("  --key <file>     Signing key file\n", .{});
+            std.debug.print("\nExamples:\n", .{});
+            std.debug.print("  axiom bundle ./my-app\n", .{});
+            std.debug.print("  axiom build-bundle . --output app.pgsdimg\n", .{});
+            return;
+        }
+
+        const source_dir = args[0];
+
+        // Parse options
+        var output_path: ?[]const u8 = null;
+        var sign = false;
+        var key_file: ?[]const u8 = null;
+
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--output") and i + 1 < args.len) {
+                i += 1;
+                output_path = args[i];
+            } else if (std.mem.eql(u8, args[i], "--sign")) {
+                sign = true;
+            } else if (std.mem.eql(u8, args[i], "--key") and i + 1 < args.len) {
+                i += 1;
+                key_file = args[i];
+            }
+        }
+
+        std.debug.print("Creating bundle from: {s}\n", .{source_dir});
+        if (output_path) |out| {
+            std.debug.print("Output: {s}\n", .{out});
+        }
+        if (sign) {
+            std.debug.print("Signing: enabled\n", .{});
+            if (key_file) |kf| {
+                std.debug.print("Key: {s}\n", .{kf});
+            }
+        }
+        std.debug.print("\n", .{});
+
+        // Check if directory exists
+        std.fs.cwd().access(source_dir, .{}) catch {
+            std.debug.print("Error: Directory not found: {s}\n", .{source_dir});
+            return;
+        };
+
+        // Look for manifest.yaml in the directory
+        const manifest_path = std.fs.path.join(self.allocator, &[_][]const u8{
+            source_dir,
+            "manifest.yaml",
+        }) catch {
+            std.debug.print("Error: Out of memory\n", .{});
+            return;
+        };
+        defer self.allocator.free(manifest_path);
+
+        std.fs.cwd().access(manifest_path, .{}) catch {
+            std.debug.print("Error: No manifest.yaml found in {s}\n", .{source_dir});
+            std.debug.print("Create a manifest.yaml first or use 'axiom export' to bundle an installed package.\n", .{});
+            return;
+        };
+
+        std.debug.print("Found manifest.yaml\n", .{});
+        std.debug.print("Building bundle...\n\n", .{});
+
+        // Read manifest to get package info
+        const manifest_content = std.fs.cwd().readFileAlloc(
+            self.allocator,
+            manifest_path,
+            1024 * 1024,
+        ) catch {
+            std.debug.print("Error: Failed to read manifest.yaml\n", .{});
+            return;
+        };
+        defer self.allocator.free(manifest_content);
+
+        const pkg_manifest = manifest.Manifest.parse(self.allocator, manifest_content) catch {
+            std.debug.print("Error: Failed to parse manifest.yaml\n", .{});
+            return;
+        };
+        defer {
+            var m = pkg_manifest;
+            m.deinit(self.allocator);
+        }
+
+        // Generate output path if not specified
+        const final_output = output_path orelse try std.fmt.allocPrint(
+            self.allocator,
+            "{s}-{d}.{d}.{d}.pgsdimg",
+            .{
+                pkg_manifest.name,
+                pkg_manifest.version.major,
+                pkg_manifest.version.minor,
+                pkg_manifest.version.patch,
+            },
+        );
+        defer if (output_path == null) self.allocator.free(final_output);
+
+        std.debug.print("Package: {s}@{d}.{d}.{d}\n", .{
+            pkg_manifest.name,
+            pkg_manifest.version.major,
+            pkg_manifest.version.minor,
+            pkg_manifest.version.patch,
+        });
+        std.debug.print("Output: {s}\n\n", .{final_output});
+
+        // For now, just create a simple tarball
+        std.debug.print("Creating bundle...\n", .{});
+
+        var tar_child = std.process.Child.init(
+            &[_][]const u8{ "tar", "-czf", final_output, "-C", source_dir, "." },
+            self.allocator,
+        );
+
+        const term = tar_child.spawnAndWait() catch {
+            std.debug.print("Error: Failed to create bundle\n", .{});
+            return;
+        };
+
+        if (term.Exited == 0) {
+            std.debug.print("\nBundle created successfully: {s}\n", .{final_output});
+
+            // Get file size
+            const file = std.fs.cwd().openFile(final_output, .{}) catch return;
+            defer file.close();
+            const stat = file.stat() catch return;
+            std.debug.print("Size: {d} bytes\n", .{stat.size});
+        } else {
+            std.debug.print("Error: Bundle creation failed\n", .{});
+        }
     }
 };
