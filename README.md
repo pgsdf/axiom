@@ -404,6 +404,10 @@ See [ROADMAP.md](ROADMAP.md) for detailed planning of future phases:
 | 15 | Signature Verification | High | ✓ Complete |
 | 16 | SAT Solver | Low | ✓ Complete |
 | 17 | Binary Cache | High | ✓ Complete |
+| 18 | Self-Contained Bundles & Launcher | High | ✓ Complete |
+| 19 | Portable Images (.pgsdimg) | High | ✓ Complete |
+| 20 | Runtime Layers | Medium | ✓ Complete |
+| 21 | Desktop Integration | Medium | ✓ Complete |
 
 **All Phases Complete!** Axiom includes:
 - Core package management (Phases 1-8)
@@ -413,6 +417,7 @@ See [ROADMAP.md](ROADMAP.md) for detailed planning of future phases:
 - Virtual packages and conflict resolution (Phases 13-14)
 - Signature verification and binary cache (Phases 15, 17)
 - Advanced SAT-based dependency resolution (Phase 16)
+- AppImage-inspired bundles, launcher, runtimes, and desktop integration (Phases 18-21)
 
 ## Quick Start
 
