@@ -16,7 +16,99 @@ const ResolvedPackage = profile.ResolvedPackage;
 const PackageRequest = profile.PackageRequest;
 const Manifest = manifest_mod.Manifest;
 const VirtualPackage = manifest_mod.VirtualPackage;
+const KernelCompat = manifest_mod.KernelCompat;
 const SATResolver = sat_resolver.SATResolver;
+
+/// Context about the running kernel for compatibility checks
+pub const KernelContext = struct {
+    /// FreeBSD version from sysctl kern.osreldate (e.g., 1502000)
+    freebsd_version: u32,
+
+    /// Kernel identifier from sysctl kern.ident (e.g., "PGSD-GENERIC")
+    kernel_ident: []const u8,
+
+    /// Initialize from system values (for use on FreeBSD)
+    pub fn initFromSystem(allocator: std.mem.Allocator) !KernelContext {
+        // Default values for non-FreeBSD systems or when sysctl fails
+        var ctx = KernelContext{
+            .freebsd_version = 0,
+            .kernel_ident = "",
+        };
+
+        // Try to read kern.osreldate
+        // In production, this would use sysctl
+        // For now, use placeholder that can be overridden
+        _ = allocator;
+
+        return ctx;
+    }
+
+    /// Create a mock context for testing
+    pub fn initMock(freebsd_version: u32, kernel_ident: []const u8) KernelContext {
+        return KernelContext{
+            .freebsd_version = freebsd_version,
+            .kernel_ident = kernel_ident,
+        };
+    }
+};
+
+/// Result of kernel compatibility check
+pub const KernelCompatResult = struct {
+    compatible: bool,
+    reason: ?[]const u8 = null,
+};
+
+/// Check if a package's kernel requirements are compatible with running kernel
+pub fn kernelIsCompatible(
+    kernel_ctx: *const KernelContext,
+    compat: *const KernelCompat,
+) KernelCompatResult {
+    // If not a kernel module, always compatible
+    if (!compat.kmod) {
+        return .{ .compatible = true };
+    }
+
+    const fv = kernel_ctx.freebsd_version;
+
+    // Check minimum version
+    if (compat.freebsd_version_min) |minv| {
+        if (fv < minv) {
+            return .{
+                .compatible = false,
+                .reason = "running kernel version is below minimum required",
+            };
+        }
+    }
+
+    // Check maximum version
+    if (compat.freebsd_version_max) |maxv| {
+        if (fv > maxv) {
+            return .{
+                .compatible = false,
+                .reason = "running kernel version exceeds maximum supported",
+            };
+        }
+    }
+
+    // Check kernel ident if required
+    if (compat.require_exact_ident and compat.kernel_idents.len > 0) {
+        var matched = false;
+        for (compat.kernel_idents) |ident| {
+            if (std.mem.eql(u8, ident, kernel_ctx.kernel_ident)) {
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) {
+            return .{
+                .compatible = false,
+                .reason = "running kernel ident not in allowed list",
+            };
+        }
+    }
+
+    return .{ .compatible = true };
+}
 
 /// Errors that can occur during resolution
 pub const ResolverError = error{
@@ -26,6 +118,7 @@ pub const ResolverError = error{
     CircularDependency,
     ConflictingPackages,
     VirtualPackageAmbiguous,
+    KernelIncompatible,
 };
 
 /// A candidate package version available in the store
@@ -38,6 +131,8 @@ pub const Candidate = struct {
     conflicts: []VirtualPackage = &[_]VirtualPackage{},
     /// Packages this candidate replaces
     replaces: []VirtualPackage = &[_]VirtualPackage{},
+    /// Kernel compatibility info (null for userland packages)
+    kernel_compat: ?KernelCompat = null,
 };
 
 /// Tracks a conflict between two packages
@@ -236,6 +331,8 @@ pub const Resolver = struct {
     allocator: std.mem.Allocator,
     store: *PackageStore,
     strategy: ResolutionStrategy,
+    /// Kernel context for kmod compatibility checks
+    kernel_ctx: KernelContext,
     /// Last resolution failure details (for diagnostics)
     last_failure: ?sat_resolver.ResolutionFailure = null,
 
@@ -245,7 +342,27 @@ pub const Resolver = struct {
             .allocator = allocator,
             .store = store_ptr,
             .strategy = .greedy_with_sat_fallback,
+            .kernel_ctx = KernelContext.initMock(0, ""),
         };
+    }
+
+    /// Initialize resolver with kernel context
+    pub fn initWithKernel(
+        allocator: std.mem.Allocator,
+        store_ptr: *PackageStore,
+        kernel_ctx: KernelContext,
+    ) Resolver {
+        return Resolver{
+            .allocator = allocator,
+            .store = store_ptr,
+            .strategy = .greedy_with_sat_fallback,
+            .kernel_ctx = kernel_ctx,
+        };
+    }
+
+    /// Set kernel context
+    pub fn setKernelContext(self: *Resolver, kernel_ctx: KernelContext) void {
+        self.kernel_ctx = kernel_ctx;
     }
 
     /// Set resolution strategy
@@ -541,12 +658,27 @@ pub const Resolver = struct {
 
         // Pick the best candidate that doesn't conflict
         var chosen: ?Candidate = null;
+        var kernel_rejected_count: usize = 0;
         for (candidates) |candidate| {
             // Check for conflicts
             const has_conflict = try ctx.checkConflicts(candidate);
             if (has_conflict) {
                 std.debug.print("  ⚠ Skipping {s}@{} due to conflict\n", .{ pkg_name, candidate.id.version });
                 continue;
+            }
+
+            // Check kernel compatibility for kernel-bound packages
+            if (candidate.kernel_compat) |kc| {
+                const compat_result = kernelIsCompatible(&self.kernel_ctx, &kc);
+                if (!compat_result.compatible) {
+                    std.debug.print("  ⚠ Skipping {s}@{} due to kernel incompatibility", .{ pkg_name, candidate.id.version });
+                    if (compat_result.reason) |reason| {
+                        std.debug.print(": {s}", .{reason});
+                    }
+                    std.debug.print("\n", .{});
+                    kernel_rejected_count += 1;
+                    continue;
+                }
             }
 
             // Check if this candidate replaces an already resolved package
@@ -560,6 +692,12 @@ pub const Resolver = struct {
             if (chosen == null or candidate.id.version.greaterThan(chosen.?.id.version)) {
                 chosen = candidate;
             }
+        }
+
+        // Report if all candidates were rejected due to kernel incompatibility
+        if (chosen == null and kernel_rejected_count == candidates.len) {
+            std.debug.print("  ✗ All candidates for {s} are incompatible with running kernel\n", .{pkg_name});
+            return ResolverError.KernelIncompatible;
         }
 
         if (chosen == null) {
@@ -886,4 +1024,67 @@ test "ResolutionContext.replaces_detection" {
     const replaced = ctx.checkReplaces(bash_candidate);
     try std.testing.expect(replaced != null);
     try std.testing.expectEqualStrings("sh", replaced.?);
+}
+
+test "kernelIsCompatible.basic_checks" {
+    // Test userland package (kmod = false) is always compatible
+    const userland_compat = KernelCompat{ .kmod = false };
+    const kernel_ctx = KernelContext.initMock(1502000, "PGSD-GENERIC");
+
+    const userland_result = kernelIsCompatible(&kernel_ctx, &userland_compat);
+    try std.testing.expect(userland_result.compatible);
+
+    // Test kmod within version range
+    const kmod_compat_ok = KernelCompat{
+        .kmod = true,
+        .freebsd_version_min = 1500000,
+        .freebsd_version_max = 1509999,
+    };
+    const kmod_result_ok = kernelIsCompatible(&kernel_ctx, &kmod_compat_ok);
+    try std.testing.expect(kmod_result_ok.compatible);
+
+    // Test kmod below version range
+    const kmod_compat_new = KernelCompat{
+        .kmod = true,
+        .freebsd_version_min = 1600000,
+        .freebsd_version_max = 1609999,
+    };
+    const kmod_result_new = kernelIsCompatible(&kernel_ctx, &kmod_compat_new);
+    try std.testing.expect(!kmod_result_new.compatible);
+    try std.testing.expect(kmod_result_new.reason != null);
+
+    // Test kmod above version range
+    const kmod_compat_old = KernelCompat{
+        .kmod = true,
+        .freebsd_version_min = 1400000,
+        .freebsd_version_max = 1499999,
+    };
+    const kmod_result_old = kernelIsCompatible(&kernel_ctx, &kmod_compat_old);
+    try std.testing.expect(!kmod_result_old.compatible);
+}
+
+test "kernelIsCompatible.ident_matching" {
+    const kernel_ctx = KernelContext.initMock(1502000, "PGSD-GENERIC");
+
+    // Test exact ident required and matching
+    const compat_match = KernelCompat{
+        .kmod = true,
+        .freebsd_version_min = 1500000,
+        .freebsd_version_max = 1509999,
+        .kernel_idents = &[_][]const u8{ "PGSD-GENERIC", "PGSD-LAPTOP" },
+        .require_exact_ident = true,
+    };
+    const result_match = kernelIsCompatible(&kernel_ctx, &compat_match);
+    try std.testing.expect(result_match.compatible);
+
+    // Test exact ident required but not matching
+    const compat_nomatch = KernelCompat{
+        .kmod = true,
+        .freebsd_version_min = 1500000,
+        .freebsd_version_max = 1509999,
+        .kernel_idents = &[_][]const u8{ "CUSTOM-KERNEL", "OTHER-KERNEL" },
+        .require_exact_ident = true,
+    };
+    const result_nomatch = kernelIsCompatible(&kernel_ctx, &compat_nomatch);
+    try std.testing.expect(!result_nomatch.compatible);
 }

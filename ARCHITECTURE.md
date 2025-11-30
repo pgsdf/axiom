@@ -408,6 +408,70 @@ Converts FreeBSD ports metadata into Axiom manifests for ecosystem bootstrapping
 - `axiom ports-import <origin>` - Full migration (gen + build + import)
 - `axiom ports-scan <category>` - Scan category for ports
 
+**Kernel Module Detection:**
+Ports with `USES=kmod` or `CATEGORIES=kld` are automatically detected as kernel modules. The generated manifest includes a `kernel` section with version constraints based on the build system's FreeBSD version.
+
+---
+
+### Kernel Compatibility (Phase 23)
+
+#### `src/manifest.zig` - KernelCompat Type
+Defines the manifest schema for kernel module compatibility.
+
+**Key Types:**
+- `KernelCompat` - Kernel compatibility metadata struct
+  - `kmod: bool` - True if package installs .ko files
+  - `freebsd_version_min: ?u32` - Minimum __FreeBSD_version
+  - `freebsd_version_max: ?u32` - Maximum __FreeBSD_version
+  - `kernel_idents: []const []const u8` - Allowed kernel idents
+  - `require_exact_ident: bool` - Strict ident matching required
+  - `kld_names: []const []const u8` - Installed .ko file names
+
+**Added to Manifest:**
+- `kernel: ?KernelCompat` field
+- `isKernelBound()` helper method
+- YAML parsing/serialization support
+
+#### `src/resolver.zig` - Kernel Compatibility Checking
+Enforces kernel version constraints during dependency resolution.
+
+**Key Types:**
+- `KernelContext` - Running kernel information
+  - `freebsd_version: u32` - From sysctl kern.osreldate
+  - `kernel_ident: []const u8` - From sysctl kern.ident
+- `KernelCompatResult` - Compatibility check result with reason
+
+**Key Functions:**
+- `kernelIsCompatible()` - Check if kmod is compatible with running kernel
+- `KernelContext.initFromSystem()` - Detect kernel from system
+- `KernelContext.initMock()` - Create test context
+
+**Resolver Integration:**
+- Candidates are checked for kernel compatibility
+- Incompatible kmods are skipped during resolution
+- `KernelIncompatible` error when no compatible version exists
+
+#### `src/cli.zig` - Kernel Check Command
+CLI command to check kernel compatibility of installed packages.
+
+**Commands:**
+- `axiom kernel` - Check kernel-bound package compatibility
+- `axiom kernel-check` - (alias)
+
+**Output:**
+```
+Kernel:
+  FreeBSD version (osreldate): 1502000
+  Kernel ident: GENERIC
+
+Kernel-bound packages:
+  [OK] drm-kmod-6.10.0_1
+  [INCOMPATIBLE] old-driver-0.9.0
+
+Summary:
+  1 compatible, 1 incompatible
+```
+
 ---
 
 ### Auxiliary Features

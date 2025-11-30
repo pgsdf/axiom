@@ -1316,6 +1316,97 @@ To migrate a port:
 
 ---
 
+## Kernel Compatibility
+
+Check compatibility of kernel-bound packages (kernel modules) with the running kernel.
+
+### `axiom kernel`
+
+Check kernel compatibility of installed packages.
+
+```bash
+axiom kernel
+axiom kernel-check  # alias
+```
+
+**Example output:**
+```
+Kernel Compatibility Check
+==========================
+
+Kernel:
+  FreeBSD version (osreldate): 1502000
+  Kernel ident: GENERIC
+
+Kernel-bound packages:
+
+  [OK] drm-kmod-6.10.0_1
+       freebsd_version: 1500000-1509999
+       kernel_idents: GENERIC, PGSD-GENERIC
+
+  [OK] pgsd-securefs-1.0.0
+       freebsd_version: 1500000-1509999
+       kernel_idents: (none)
+
+  [INCOMPATIBLE] old-nvidia-driver-470.223
+       freebsd_version_min: 1400000
+       freebsd_version_max: 1499999
+       reason: running kernel version exceeds maximum supported
+
+Summary:
+  2 compatible kernel-bound packages
+  1 incompatible kernel-bound packages
+
+⚠ Warning: Incompatible kernel modules may fail to load.
+Consider rebuilding these packages for your current kernel.
+```
+
+**Environment Variables:**
+
+For testing or non-FreeBSD systems, override detection:
+```bash
+export AXIOM_FREEBSD_VERSION=1502000
+export AXIOM_KERNEL_IDENT=PGSD-GENERIC
+axiom kernel
+```
+
+**Notes:**
+- Userland packages (no `kernel` section in manifest) are not shown
+- Only packages with `kernel.kmod: true` are checked
+- Compatible packages match both version range and ident (if required)
+
+### Kernel Compatibility in Manifests
+
+Kernel modules require a `kernel` section in their manifest:
+
+```yaml
+name: drm-kmod
+version: "6.10.0"
+revision: 1
+
+kernel:
+  kmod: true                      # This is a kernel module
+  freebsd_version_min: 1500000    # Minimum __FreeBSD_version
+  freebsd_version_max: 1509999    # Maximum __FreeBSD_version
+  kernel_idents:                  # Optional: allowed kernel idents
+    - "GENERIC"
+    - "PGSD-GENERIC"
+  require_exact_ident: false      # If true, must match kernel_idents
+  kld_names:                      # Installed .ko files
+    - "drm.ko"
+    - "amdgpu.ko"
+```
+
+**Automatic Detection in Ports Migration:**
+
+When migrating ports with `USES=kmod`:
+```bash
+axiom ports-gen graphics/drm-kmod
+# Automatically generates kernel section
+```
+
+---
+
 ## Complete Workflow Example
 
 ### 1. Create a Development Environment
