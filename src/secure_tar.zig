@@ -174,7 +174,7 @@ pub const SecureTarExtractor = struct {
     }
 
     /// Process a single tar entry with security validation
-    fn processEntry(self: *SecureTarExtractor, tar_iter: anytype, entry: std.tar.Header) !void {
+    fn processEntry(self: *SecureTarExtractor, tar_iter: anytype, entry: anytype) !void {
         // Get the file name
         const name = entry.name;
 
@@ -198,7 +198,7 @@ pub const SecureTarExtractor = struct {
     fn extractRegularFile(
         self: *SecureTarExtractor,
         tar_iter: anytype,
-        entry: std.tar.Header,
+        entry: anytype,
         full_path: []const u8,
     ) !void {
         // Check file size
@@ -273,7 +273,7 @@ pub const SecureTarExtractor = struct {
     /// Extract a symbolic link with validation
     fn extractSymlink(
         self: *SecureTarExtractor,
-        entry: std.tar.Header,
+        entry: anytype,
         full_path: []const u8,
         validated_path: []const u8,
     ) !void {
