@@ -1204,6 +1204,118 @@ axiom desktop-remove firefox
 
 ---
 
+### Ports Migration (FreeBSD)
+
+Migrate packages from the FreeBSD ports tree to Axiom manifests.
+
+#### `axiom ports`
+
+List available port categories or scan the ports tree.
+
+```bash
+axiom ports
+```
+
+**Example output:**
+```
+FreeBSD Ports Scanner
+=====================
+
+Ports tree: /usr/ports
+
+Available categories:
+
+  devel
+  editors
+  lang
+  net
+  security
+  shells
+  sysutils
+  www
+  ...
+
+To scan a category:
+  axiom ports-scan <category>
+  axiom ports-scan devel
+```
+
+#### `axiom ports-gen <origin> [options]`
+
+Generate Axiom manifests from a FreeBSD port.
+
+```bash
+axiom ports-gen editors/vim
+axiom ports-gen devel/git --out ./my-ports
+axiom ports-gen shells/bash --build --import
+```
+
+**Options:**
+- `--ports-tree <path>` - Path to ports tree (default: /usr/ports)
+- `--out <dir>` - Output directory (default: ./generated/axiom-ports)
+- `--build` - Also build after generating manifests
+- `--import` - Also import to store after building
+- `--dry-run` - Show what would be generated without writing
+
+**Creates:**
+```
+./generated/axiom-ports/<category>/<portname>/
+├── manifest.yaml    # Package metadata
+├── deps.yaml        # Dependencies
+└── build.yaml       # Build recipe
+```
+
+#### `axiom ports-build <origin>`
+
+Build a port using Axiom's builder from previously generated manifests.
+
+```bash
+axiom ports-build editors/vim
+```
+
+**Note:** Requires running `axiom ports-gen` first to create manifests.
+
+#### `axiom ports-import <origin>`
+
+Full migration: generate manifests, build, and import to store.
+
+```bash
+axiom ports-import editors/vim
+```
+
+This is equivalent to `axiom ports-gen <origin> --build --import`.
+
+#### `axiom ports-scan <category>`
+
+Scan a ports category for migratable ports.
+
+```bash
+axiom ports-scan devel
+axiom ports-scan shells --ports-tree /usr/ports
+```
+
+**Example output:**
+```
+FreeBSD Ports Scanner
+=====================
+
+Ports tree: /usr/ports
+
+Scanning category: shells
+
+Found 42 ports:
+  shells/bash
+  shells/fish
+  shells/zsh
+  shells/tcsh
+  ...
+
+To migrate a port:
+  axiom ports-gen shells/<portname>
+```
+
+---
+
 ## Complete Workflow Example
 
 ### 1. Create a Development Environment

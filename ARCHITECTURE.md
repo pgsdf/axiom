@@ -366,6 +366,50 @@ Freedesktop.org compliant desktop integration.
 
 ---
 
+### Ports Migration (Phase 22)
+
+#### `src/ports.zig` - FreeBSD Ports Migration Tool
+Converts FreeBSD ports metadata into Axiom manifests for ecosystem bootstrapping.
+
+**Key Types:**
+- `PortsMigrator` - Main migration coordinator
+- `PortMetadata` - Extracted port information (name, version, deps, USES)
+- `PortDependency` - Dependency with origin and version constraint
+- `PortOption` - OPTIONS framework support
+- `ConfigureStyle` - Build system detection (gnu_configure, cmake, meson, cargo, go, python)
+- `MigrateOptions` - Configuration for migration behavior
+- `MigrationResult` - Per-port outcome with warnings/errors
+
+**Key Functions:**
+- `extractMetadata()` - Parse port Makefile using `make -V`
+- `generateManifest()` - Convert PortMetadata to Axiom manifest
+- `generateDepsYaml()` - Generate deps.yaml from port dependencies
+- `generateBuildYaml()` - Generate build recipe based on USES
+- `migrate()` - Full migration workflow (extract → generate → optional build/import)
+- `scanCategory()` - List all ports in a category
+
+**Makefile Variable Mapping:**
+| Port Variable | Axiom Field |
+|---------------|-------------|
+| PORTNAME | manifest.name |
+| PORTVERSION | manifest.version |
+| PORTREVISION | manifest.revision |
+| COMMENT | manifest.description |
+| WWW | manifest.homepage |
+| LICENSE | manifest.license |
+| RUN_DEPENDS | deps.yaml runtime |
+| BUILD_DEPENDS | deps.yaml build |
+| USES | build.yaml phases |
+
+**CLI Commands:**
+- `axiom ports` - List categories in ports tree
+- `axiom ports-gen <origin>` - Generate Axiom manifests from port
+- `axiom ports-build <origin>` - Build port with Axiom builder
+- `axiom ports-import <origin>` - Full migration (gen + build + import)
+- `axiom ports-scan <category>` - Scan category for ports
+
+---
+
 ### Auxiliary Features
 
 #### `src/gc.zig` - Garbage Collection
@@ -519,6 +563,7 @@ Main CLI implementation with all user commands.
 - **Bundles**: run, closure, export, bundle
 - **Runtime**: runtime, runtime-create, runtime-use
 - **Desktop**: desktop-install, desktop-remove
+- **Ports**: ports, ports-gen, ports-build, ports-import, ports-scan
 - **Multi-user**: user-*, system-*
 - **Maintenance**: gc, completions, help, version
 

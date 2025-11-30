@@ -408,6 +408,7 @@ See [ROADMAP.md](ROADMAP.md) for detailed planning of future phases:
 | 19 | Portable Images (.pgsdimg) | High | ✓ Complete |
 | 20 | Runtime Layers | Medium | ✓ Complete |
 | 21 | Desktop Integration | Medium | ✓ Complete |
+| 22 | Ports Migration Tool | High | ✓ Complete |
 
 **All Phases Complete!** Axiom includes:
 - Core package management (Phases 1-8)
@@ -418,6 +419,7 @@ See [ROADMAP.md](ROADMAP.md) for detailed planning of future phases:
 - Signature verification and binary cache (Phases 15, 17)
 - Advanced SAT-based dependency resolution (Phase 16)
 - AppImage-inspired bundles, launcher, runtimes, and desktop integration (Phases 18-21)
+- FreeBSD ports migration tool for ecosystem bootstrapping (Phase 22)
 
 ## Quick Start
 
