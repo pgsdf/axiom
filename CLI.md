@@ -999,6 +999,211 @@ zroot/axiom/
 
 ---
 
+### Direct Execution (AppImage-style)
+
+Run packages directly without creating full environments.
+
+#### `axiom run <package> [args...]`
+
+Execute a package directly with automatic environment setup.
+
+```bash
+axiom run bash
+axiom run python --version
+axiom run node script.js
+```
+
+**Options:**
+- `--isolated` - Run with minimal environment (package closure only)
+- `--system-first` - Prefer system libraries over package libraries
+
+**Example:**
+```bash
+# Run bash from the package store
+sudo axiom run bash
+
+# Run python in isolated mode
+sudo axiom run python --isolated -- script.py
+
+# Run with arguments
+sudo axiom run ffmpeg -- -i input.mp4 output.webm
+```
+
+**How it works:**
+1. Computes the package's dependency closure
+2. Sets up LD_LIBRARY_PATH and PATH
+3. Executes the package's main binary
+4. Cleans up on exit
+
+#### `axiom closure <package>`
+
+Show the dependency closure for a package (all transitive dependencies).
+
+```bash
+axiom closure bash
+```
+
+**Example output:**
+```
+Dependency closure for bash@5.2.0:
+==================================
+
+Direct dependencies:
+  - readline 8.2.0
+  - ncurses 6.4.0
+
+Transitive dependencies:
+  - libc 2.38.0
+
+Total: 4 packages (including bash)
+Estimated size: 45 MB
+```
+
+**Options:**
+- `--depth <n>` - Limit depth of closure computation
+- `--format json` - Output as JSON for scripting
+
+---
+
+### Package Export & Bundles
+
+Export packages in portable formats for distribution without ZFS.
+
+#### `axiom export <package> [options]`
+
+Export a package to a portable format.
+
+```bash
+axiom export bash --format tarball --output bash-5.2.0.tar.gz
+```
+
+**Options:**
+- `--format <format>` - Export format (tarball, zfs-stream, directory)
+- `--output <path>` - Output file path
+- `--include-deps` - Include all dependencies in export
+- `--sign` - Sign the export with your key
+
+**Formats:**
+- `tarball` - Standard tar.gz archive
+- `zfs-stream` - ZFS send stream (for ZFS-to-ZFS transfer)
+- `directory` - Plain directory structure
+
+#### `axiom bundle <package> [options]`
+
+Create a self-contained, portable bundle (.pgsdimg).
+
+```bash
+axiom bundle bash --output bash-bundle.pgsdimg
+```
+
+**Options:**
+- `--format <format>` - Bundle format:
+  - `pgsdimg` - Self-extracting executable (default)
+  - `zfs-stream` - ZFS send stream with manifest
+  - `tarball` - Compressed tar archive
+  - `directory` - Directory structure
+- `--output <path>` - Output path
+- `--compression <type>` - Compression (none, gzip, zstd, lz4, xz)
+- `--sign` - Sign the bundle
+
+**Example output:**
+```
+Creating bundle: bash-bundle.pgsdimg
+  Package: bash 5.2.0
+  Dependencies: 3
+  Total size: 12 MB
+
+Bundle created successfully!
+  Output: bash-bundle.pgsdimg
+  Size: 4.2 MB (compressed)
+  Packages: 4
+```
+
+**Using a .pgsdimg bundle:**
+
+The generated `.pgsdimg` is a self-extracting shell script:
+
+```bash
+# Make executable (usually already is)
+chmod +x bash-bundle.pgsdimg
+
+# Run directly
+./bash-bundle.pgsdimg
+
+# Extract to directory
+./bash-bundle.pgsdimg --extract /path/to/dir
+
+# Show bundle info
+./bash-bundle.pgsdimg --info
+```
+
+---
+
+### Runtime Layers
+
+Manage runtime layers (shared base environments similar to Flatpak runtimes).
+
+#### `axiom runtime`
+
+List available runtime layers.
+
+```bash
+axiom runtime
+```
+
+**Example output:**
+```
+Available runtimes:
+  base-2025    - Minimal base runtime (libc, libm, libpthread)
+  full-2025    - Full runtime with common libraries
+  gui-2025     - GUI runtime with X11/Wayland support
+```
+
+#### `axiom runtime-create <name> [packages...]`
+
+Create a new runtime layer.
+
+```bash
+axiom runtime-create my-runtime libc readline ncurses
+```
+
+#### `axiom runtime-use <runtime> <package>`
+
+Run a package using a specific runtime layer.
+
+```bash
+axiom runtime-use base-2025 myapp
+```
+
+---
+
+### Desktop Integration
+
+Integrate packages with the desktop environment (freedesktop.org compliance).
+
+#### `axiom desktop-install <package>`
+
+Install desktop integration for a package (creates .desktop file, icons, MIME types).
+
+```bash
+axiom desktop-install firefox
+```
+
+**Creates:**
+- `~/.local/share/applications/<package>.desktop`
+- Icons in `~/.local/share/icons/`
+- MIME type associations
+
+#### `axiom desktop-remove <package>`
+
+Remove desktop integration for a package.
+
+```bash
+axiom desktop-remove firefox
+```
+
+---
+
 ## Complete Workflow Example
 
 ### 1. Create a Development Environment
