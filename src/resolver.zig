@@ -30,17 +30,15 @@ pub const KernelContext = struct {
     /// Initialize from system values (for use on FreeBSD)
     pub fn initFromSystem(allocator: std.mem.Allocator) !KernelContext {
         // Default values for non-FreeBSD systems or when sysctl fails
-        var ctx = KernelContext{
-            .freebsd_version = 0,
-            .kernel_ident = "",
-        };
-
         // Try to read kern.osreldate
         // In production, this would use sysctl
         // For now, use placeholder that can be overridden
         _ = allocator;
 
-        return ctx;
+        return KernelContext{
+            .freebsd_version = 0,
+            .kernel_ident = "",
+        };
     }
 
     /// Create a mock context for testing

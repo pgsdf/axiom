@@ -3005,7 +3005,6 @@ pub const CLI = struct {
         std.debug.print("Kernel-bound packages:\n\n", .{});
 
         var ok_count: usize = 0;
-        var warn_count: usize = 0;
         var incompatible_count: usize = 0;
 
         // In a full implementation, we would iterate through:
@@ -3087,8 +3086,6 @@ pub const CLI = struct {
                 std.debug.print("\n", .{});
             }
         }
-
-        _ = warn_count; // Currently unused
 
         std.debug.print("Summary:\n", .{});
         std.debug.print("  {d} compatible kernel-bound packages\n", .{ok_count});
