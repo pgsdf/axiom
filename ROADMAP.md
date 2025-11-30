@@ -23,6 +23,13 @@ This document outlines the planned enhancements for Axiom beyond the core 8 phas
 | 21 | Desktop Integration | Medium | Low | Phase 18 | ✓ Complete |
 | 22 | Ports Migration Tool | High | High | Phase 9, 10 | ✓ Complete |
 | 23 | Kernel Module Compatibility | Medium | Medium | Phase 22 | ✓ Complete |
+| 24 | Secure Tar Extraction | Critical | Medium | Phase 9 | Planned |
+| 25 | Mandatory Signature Verification | Critical | Medium | Phase 15 | Planned |
+| 26 | ZFS Dataset Path Validation | High | Low | None | Planned |
+| 27 | Build Sandboxing | High | High | Phase 10 | Planned |
+| 28 | Secure Bundle Verification | High | Medium | Phase 18 | Planned |
+| 29 | Resolver Resource Limits | Medium | Low | Phase 16 | Planned |
+| 30 | Thread-Safe libzfs | Medium | Medium | None | Planned |
 
 ---
 
@@ -1906,6 +1913,1125 @@ kernel:
 2. **Kernel package integration** - Treat kernel+kmods as unit
 3. **Rebuild suggestions** - Offer to rebuild incompatible kmods
 4. **Profile filtering** - `axiom kernel check --profile pgsd-kernel`
+
+---
+
+## Security Hardening Phases
+
+The following phases address security vulnerabilities identified through threat modeling and code review. These are prioritized based on exploitation risk and attack surface exposure.
+
+---
+
+## Phase 24: Secure Tar Extraction
+
+**Priority**: Critical
+**Complexity**: Medium
+**Dependencies**: Phase 9 (Package Import)
+**Status**: Planned
+
+### Purpose
+
+Harden tarball extraction in the import pipeline to prevent path traversal attacks, symlink escapes, and other archive-based vulnerabilities.
+
+### Threat Model
+
+**Attack Vector**: Malicious tarball containing:
+- Paths with `../` components (path traversal)
+- Absolute paths targeting system files
+- Symlinks pointing outside extraction directory
+- Hardlinks to sensitive files
+- Special files (devices, fifos)
+- Filenames with embedded NUL bytes or control characters
+
+**Impact**: Arbitrary file write, privilege escalation, system compromise
+
+### Requirements
+
+1. **Path Validation**
+   - Reject paths containing `..` components
+   - Reject absolute paths
+   - Normalize paths before extraction
+   - Validate path lengths against system limits
+
+2. **Symlink Safety**
+   - Resolve symlinks during extraction
+   - Reject symlinks pointing outside extraction root
+   - Option to convert symlinks to copies
+
+3. **File Type Restrictions**
+   - Reject device nodes (block/char)
+   - Reject FIFOs and sockets
+   - Configurable whitelist of allowed file types
+
+4. **Permission Controls**
+   - Strip setuid/setgid bits
+   - Enforce maximum permission mask
+   - Validate ownership (no root-owned files in user packages)
+
+### Implementation
+
+```zig
+pub const SecureTarExtractor = struct {
+    allocator: std.mem.Allocator,
+    extraction_root: []const u8,
+    options: ExtractOptions,
+
+    pub const ExtractOptions = struct {
+        allow_symlinks: bool = true,
+        follow_symlinks: bool = false,
+        allow_absolute_paths: bool = false,
+        allow_parent_refs: bool = false,
+        allow_devices: bool = false,
+        allow_fifos: bool = false,
+        max_path_length: usize = 1024,
+        permission_mask: u32 = 0o755,
+        strip_setuid: bool = true,
+    };
+
+    pub const ExtractionError = error{
+        PathTraversal,
+        AbsolutePath,
+        SymlinkEscape,
+        HardlinkEscape,
+        DeviceNode,
+        FifoSocket,
+        PathTooLong,
+        InvalidFilename,
+        SetuidBit,
+    };
+
+    pub fn extract(self: *SecureTarExtractor, tar_path: []const u8) !void {
+        // 1. Open tar archive
+        // 2. For each entry:
+        //    - Validate path (no ../, no absolute, no NUL)
+        //    - Check file type against whitelist
+        //    - Validate symlink targets stay within root
+        //    - Apply permission mask
+        //    - Extract to sanitized path
+    }
+
+    fn validatePath(self: *SecureTarExtractor, path: []const u8) ![]const u8 {
+        // Check for embedded NUL bytes
+        if (std.mem.indexOfScalar(u8, path, 0) != null) {
+            return error.InvalidFilename;
+        }
+
+        // Check length
+        if (path.len > self.options.max_path_length) {
+            return error.PathTooLong;
+        }
+
+        // Check for absolute paths
+        if (path[0] == '/') {
+            if (!self.options.allow_absolute_paths) {
+                return error.AbsolutePath;
+            }
+        }
+
+        // Check for parent directory references
+        var iter = std.mem.splitScalar(u8, path, '/');
+        while (iter.next()) |component| {
+            if (std.mem.eql(u8, component, "..")) {
+                if (!self.options.allow_parent_refs) {
+                    return error.PathTraversal;
+                }
+            }
+        }
+
+        // Normalize and resolve the path
+        return self.normalizePath(path);
+    }
+
+    fn validateSymlink(self: *SecureTarExtractor, link_path: []const u8, target: []const u8) !void {
+        // Resolve symlink target relative to link location
+        // Verify resolved path stays within extraction_root
+        const resolved = try self.resolveSymlinkTarget(link_path, target);
+        if (!std.mem.startsWith(u8, resolved, self.extraction_root)) {
+            return error.SymlinkEscape;
+        }
+    }
+};
+```
+
+### CLI Integration
+
+```bash
+# Import with security options
+axiom import package.tar.gz --secure  # Default: all hardening enabled
+
+# Explicit options
+axiom import package.tar.gz --no-symlinks --strict-paths
+
+# Audit existing package
+axiom audit package@1.0.0 --tar-safety
+```
+
+### Testing
+
+- Test cases for each attack vector
+- Fuzzing with malformed tarballs
+- Integration tests with real-world packages
+- Regression tests for CVE patterns
+
+---
+
+## Phase 25: Mandatory Signature Verification
+
+**Priority**: Critical
+**Complexity**: Medium
+**Dependencies**: Phase 15 (Signature Verification)
+**Status**: Planned
+
+### Purpose
+
+Enforce cryptographic verification of all packages before installation, with proper type-safe verification status handling.
+
+### Threat Model
+
+**Attack Vector**:
+- Installing unsigned packages via cache poisoning
+- MITM attacks on package downloads
+- Compromised mirror serving malicious packages
+- Logic bugs where verification is skipped
+
+**Impact**: Arbitrary code execution, supply chain compromise
+
+### Requirements
+
+1. **Verification Enforcement**
+   - Default to strict verification mode
+   - Explicit user action required to bypass
+   - No silent fallback to unverified
+
+2. **Type-Safe Verification**
+   - Verification result as enum, not boolean
+   - Cannot accidentally use unverified content
+   - Compiler-enforced verification checks
+
+3. **Trust Chain**
+   - Verify repository index signatures
+   - Verify individual package signatures
+   - Cross-reference content hashes
+
+4. **User Experience**
+   - Clear messaging about verification status
+   - Easy key management
+   - Audit trail of verification decisions
+
+### Implementation
+
+```zig
+/// Verification status - deliberately not a boolean to prevent
+/// accidental use of unverified content
+pub const VerificationStatus = union(enum) {
+    verified: VerifiedContent,
+    signature_missing: SignatureMissingInfo,
+    signature_invalid: SignatureInvalidInfo,
+    key_untrusted: KeyInfo,
+    hash_mismatch: HashMismatchInfo,
+
+    /// Only callable on verified status - compiler enforced
+    pub fn getVerifiedContent(self: VerificationStatus) ?VerifiedContent {
+        return switch (self) {
+            .verified => |v| v,
+            else => null,
+        };
+    }
+
+    pub fn isVerified(self: VerificationStatus) bool {
+        return self == .verified;
+    }
+
+    pub fn requireVerified(self: VerificationStatus) !VerifiedContent {
+        return self.getVerifiedContent() orelse error.NotVerified;
+    }
+};
+
+pub const VerifiedContent = struct {
+    content_hash: [32]u8,
+    signer_key_id: []const u8,
+    signature_time: i64,
+    trust_level: TrustLevel,
+};
+
+pub const TrustLevel = enum {
+    official,      // PGSD release key
+    community,     // Trusted community maintainer
+    third_party,   // User-added key
+    unknown,       // Key not in trust store
+};
+
+pub const SignatureVerifier = struct {
+    trust_store: *TrustStore,
+    mode: VerificationMode,
+    audit_log: ?*AuditLog,
+
+    pub const VerificationMode = enum {
+        strict,      // Fail on any verification failure
+        warn,        // Warn but allow (requires --allow-unverified)
+        audit_only,  // Log but don't block (for migration)
+    };
+
+    pub fn verifyPackage(self: *SignatureVerifier, pkg_path: []const u8) VerificationStatus {
+        // 1. Read signature file
+        const sig_path = try std.fmt.allocPrint(self.allocator, "{s}/manifest.sig", .{pkg_path});
+        const sig_data = std.fs.cwd().readFile(sig_path) catch {
+            return .{ .signature_missing = .{ .path = pkg_path } };
+        };
+
+        // 2. Parse signature
+        const signature = parseSignature(sig_data) catch |err| {
+            return .{ .signature_invalid = .{ .parse_error = err } };
+        };
+
+        // 3. Find key in trust store
+        const key = self.trust_store.getKey(signature.key_id) orelse {
+            return .{ .key_untrusted = .{ .key_id = signature.key_id } };
+        };
+
+        // 4. Verify signature
+        if (!ed25519.verify(signature.value, manifest_data, key.public)) {
+            return .{ .signature_invalid = .{ .reason = "cryptographic verification failed" } };
+        }
+
+        // 5. Verify content hashes
+        for (signature.files) |file_hash| {
+            const actual_hash = try hashFile(file_hash.path);
+            if (!std.mem.eql(u8, &actual_hash, &file_hash.sha256)) {
+                return .{ .hash_mismatch = .{
+                    .path = file_hash.path,
+                    .expected = file_hash.sha256,
+                    .actual = actual_hash,
+                } };
+            }
+        }
+
+        // 6. Log successful verification
+        if (self.audit_log) |log| {
+            log.recordVerification(pkg_path, signature.key_id, .success);
+        }
+
+        return .{ .verified = .{
+            .content_hash = signature.content_hash,
+            .signer_key_id = signature.key_id,
+            .signature_time = signature.timestamp,
+            .trust_level = key.trust_level,
+        } };
+    }
+};
+
+/// Import wrapper that enforces verification
+pub fn importPackage(
+    importer: *Importer,
+    source: ImportSource,
+    options: ImportOptions,
+) !PackageId {
+    // Verify before any extraction
+    const verify_status = importer.verifier.verifyPackage(source);
+
+    switch (verify_status) {
+        .verified => |verified| {
+            // Safe to proceed
+            return importer.doImport(source, options, verified);
+        },
+        .signature_missing => |info| {
+            if (options.allow_unsigned) {
+                log.warn("Installing unsigned package: {s}", .{info.path});
+                return importer.doImportUnverified(source, options);
+            }
+            return error.SignatureMissing;
+        },
+        else => |err_info| {
+            log.err("Verification failed: {}", .{err_info});
+            return error.VerificationFailed;
+        },
+    }
+}
+```
+
+### CLI Integration
+
+```bash
+# Default: strict verification
+axiom install package@1.0.0
+
+# Explicit unsigned (requires confirmation)
+axiom install package.tar.gz --allow-unsigned
+# Warning: Installing unsigned package. This package has not been verified.
+# Type 'yes' to continue:
+
+# Check verification status
+axiom verify package@1.0.0
+# Package: package@1.0.0
+# Status: VERIFIED
+# Signer: PGSD Release Key <release@pgsdf.org>
+# Key ID: A1B2C3D4E5F6
+# Signed: 2024-01-15T10:30:00Z
+# Trust Level: Official
+```
+
+---
+
+## Phase 26: ZFS Dataset Path Validation
+
+**Priority**: High
+**Complexity**: Low
+**Dependencies**: None
+**Status**: Planned
+
+### Purpose
+
+Prevent ZFS operation injection and ensure all dataset operations target intended locations within the Axiom store hierarchy.
+
+### Threat Model
+
+**Attack Vector**:
+- Package names containing ZFS special characters
+- Path injection via crafted version strings
+- Dataset names escaping store hierarchy
+- Snapshot name manipulation
+
+**Impact**: Data destruction, unauthorized access to other datasets
+
+### Requirements
+
+1. **Path Canonicalization**
+   - Validate all path components
+   - Reject special characters in dataset names
+   - Use allowlist for valid characters
+
+2. **Hierarchy Enforcement**
+   - All operations must target store subtree
+   - Verify parent dataset ownership
+   - Prevent cross-pool operations
+
+3. **Command Injection Prevention**
+   - Never interpolate user input into shell commands
+   - Use libzfs APIs directly
+   - Validate arguments before ZFS calls
+
+### Implementation
+
+```zig
+pub const ZfsPathValidator = struct {
+    store_root: []const u8,  // e.g., "zroot/axiom"
+
+    /// Valid characters for dataset name components
+    const valid_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.";
+
+    pub const ValidationError = error{
+        InvalidCharacter,
+        EmptyComponent,
+        ComponentTooLong,
+        PathTooLong,
+        OutsideStoreRoot,
+        ReservedName,
+        SnapshotInPath,
+    };
+
+    pub fn validateDatasetPath(self: *ZfsPathValidator, path: []const u8) ![]const u8 {
+        // 1. Check path is within store root
+        if (!std.mem.startsWith(u8, path, self.store_root)) {
+            return error.OutsideStoreRoot;
+        }
+
+        // 2. Validate each component
+        const relative = path[self.store_root.len..];
+        var iter = std.mem.splitScalar(u8, relative, '/');
+        while (iter.next()) |component| {
+            if (component.len == 0) continue;
+            try self.validateComponent(component);
+        }
+
+        // 3. Check for embedded snapshot references
+        if (std.mem.indexOfScalar(u8, path, '@') != null) {
+            return error.SnapshotInPath;
+        }
+
+        return path;
+    }
+
+    pub fn validateComponent(self: *ZfsPathValidator, component: []const u8) !void {
+        _ = self;
+        if (component.len == 0) {
+            return error.EmptyComponent;
+        }
+
+        if (component.len > 255) {
+            return error.ComponentTooLong;
+        }
+
+        // Check each character against allowlist
+        for (component) |c| {
+            if (std.mem.indexOfScalar(u8, valid_chars, c) == null) {
+                return error.InvalidCharacter;
+            }
+        }
+
+        // Check for reserved names
+        const reserved = [_][]const u8{ ".", "..", "zfs", "zpool" };
+        for (reserved) |r| {
+            if (std.mem.eql(u8, component, r)) {
+                return error.ReservedName;
+            }
+        }
+    }
+
+    pub fn validateSnapshotName(self: *ZfsPathValidator, dataset: []const u8, snap: []const u8) !void {
+        try self.validateDatasetPath(dataset);
+        try self.validateComponent(snap);
+    }
+
+    /// Build a safe dataset path from package ID
+    pub fn buildPackagePath(
+        self: *ZfsPathValidator,
+        name: []const u8,
+        version: []const u8,
+        revision: u32,
+        build_id: []const u8,
+    ) ![]const u8 {
+        // Validate each component
+        try self.validateComponent(name);
+        try self.validateComponent(version);
+        try self.validateComponent(build_id);
+
+        // Build path safely
+        return std.fmt.allocPrint(
+            self.allocator,
+            "{s}/store/pkg/{s}/{s}/{d}/{s}",
+            .{ self.store_root, name, version, revision, build_id },
+        );
+    }
+};
+```
+
+### Integration Points
+
+- `src/zfs.zig` - Wrap all ZFS operations with path validation
+- `src/store.zig` - Use validator for package path construction
+- `src/gc.zig` - Validate before dataset destruction
+
+---
+
+## Phase 27: Build Sandboxing
+
+**Priority**: High
+**Complexity**: High
+**Dependencies**: Phase 10 (Build System)
+**Status**: Planned
+
+### Purpose
+
+Isolate package builds to prevent build scripts from accessing or modifying the host system beyond their designated build environment.
+
+### Threat Model
+
+**Attack Vector**:
+- Malicious build.yaml executing arbitrary commands
+- Build scripts accessing network
+- Build scripts reading sensitive host files
+- Build scripts modifying system state
+
+**Impact**: System compromise, data exfiltration, supply chain attacks
+
+### Requirements
+
+1. **Filesystem Isolation**
+   - Read-only access to dependencies
+   - Write access only to build output
+   - No access to host filesystem
+   - Isolated /tmp and /var
+
+2. **Network Isolation**
+   - No network access by default
+   - Explicit allowlist for source fetching
+   - Proxy support for controlled access
+
+3. **Process Isolation**
+   - Separate UID/GID namespace
+   - Limited capabilities
+   - Resource limits (CPU, memory, disk)
+
+4. **Syscall Filtering**
+   - Capsicum capability mode
+   - Seccomp-like restrictions
+   - Audit logging of violations
+
+### Implementation
+
+```zig
+pub const BuildSandbox = struct {
+    allocator: std.mem.Allocator,
+    config: SandboxConfig,
+    jail_id: ?i32 = null,
+
+    pub const SandboxConfig = struct {
+        // Filesystem mounts
+        build_root: []const u8,          // /build (rw)
+        output_root: []const u8,         // /output (rw)
+        deps_root: []const u8,           // /deps (ro)
+        source_root: []const u8,         // /src (ro)
+
+        // Resource limits
+        max_cpu_seconds: u64 = 3600,     // 1 hour
+        max_memory_mb: u64 = 4096,       // 4GB
+        max_disk_mb: u64 = 10240,        // 10GB
+        max_processes: u32 = 100,
+        max_open_files: u32 = 1024,
+
+        // Network policy
+        network_access: NetworkPolicy = .none,
+
+        // Security options
+        allow_setuid: bool = false,
+        allow_raw_sockets: bool = false,
+        allow_mlock: bool = false,
+    };
+
+    pub const NetworkPolicy = union(enum) {
+        none,
+        fetch_only: []const []const u8,  // Allowlisted URLs for source fetch
+        full,                             // Unrestricted (requires explicit flag)
+    };
+
+    pub fn create(self: *BuildSandbox) !void {
+        // 1. Create jail with restricted permissions
+        self.jail_id = try self.createJail();
+
+        // 2. Set up filesystem namespace
+        try self.mountFilesystems();
+
+        // 3. Configure network restrictions
+        try self.configureNetwork();
+
+        // 4. Apply resource limits
+        try self.applyResourceLimits();
+    }
+
+    fn createJail(self: *BuildSandbox) !i32 {
+        // Use FreeBSD jail(2) for isolation
+        var params = [_]jailparam{
+            .{ .name = "name", .value = "axiom-build" },
+            .{ .name = "path", .value = self.config.build_root },
+            .{ .name = "securelevel", .value = "3" },
+            .{ .name = "allow.raw_sockets", .value = if (self.config.allow_raw_sockets) "1" else "0" },
+            .{ .name = "allow.set_hostname", .value = "0" },
+            .{ .name = "allow.mount", .value = "0" },
+        };
+        return jail_set(&params, params.len, JAIL_CREATE);
+    }
+
+    fn mountFilesystems(self: *BuildSandbox) !void {
+        // Mount dependencies read-only using nullfs
+        try self.nullfsMount(self.config.deps_root, "/deps", .read_only);
+        try self.nullfsMount(self.config.source_root, "/src", .read_only);
+
+        // Mount output directory read-write
+        try self.nullfsMount(self.config.output_root, "/output", .read_write);
+
+        // Create tmpfs for /tmp
+        try self.tmpfsMount("/tmp", 1024 * 1024 * 1024); // 1GB tmpfs
+    }
+
+    pub fn execute(self: *BuildSandbox, command: []const u8, env: []const []const u8) !ExecResult {
+        // Fork and enter jail
+        const pid = try std.os.fork();
+        if (pid == 0) {
+            // Child: enter jail and exec
+            try jail_attach(self.jail_id.?);
+
+            // Drop privileges
+            try self.dropPrivileges();
+
+            // Enter Capsicum capability mode (no new file opens)
+            if (self.config.network_access == .none) {
+                try cap_enter();
+            }
+
+            // Execute command
+            try std.os.execve(command, env);
+        }
+
+        // Parent: wait and collect result
+        return self.waitForChild(pid);
+    }
+
+    pub fn destroy(self: *BuildSandbox) void {
+        if (self.jail_id) |id| {
+            jail_remove(id);
+        }
+        self.unmountFilesystems();
+    }
+};
+```
+
+### Build Recipe Security
+
+```yaml
+# build.yaml security section
+name: untrusted-package
+version: "1.0.0"
+
+security:
+  sandbox: strict              # strict | permissive | none
+  network: fetch-only          # none | fetch-only | full
+  allowed_fetch_urls:
+    - https://github.com/*
+    - https://crates.io/*
+  max_build_time: 1h
+  max_disk_usage: 5G
+
+phases:
+  fetch:
+    command: "curl -O ${SOURCE_URL}"
+    network: fetch-only        # Phase-specific override
+  build:
+    command: "make"
+    network: none              # No network during build
+```
+
+### CLI Integration
+
+```bash
+# Build with strict sandboxing (default)
+axiom build package.yaml
+
+# Build with permissive sandbox (for debugging)
+axiom build package.yaml --sandbox=permissive
+
+# Build without sandbox (requires explicit flag)
+axiom build package.yaml --no-sandbox --i-understand-the-risks
+```
+
+---
+
+## Phase 28: Secure Bundle Verification
+
+**Priority**: High
+**Complexity**: Medium
+**Dependencies**: Phase 18 (Bundles)
+**Status**: Planned
+
+### Purpose
+
+Ensure bundle integrity and authenticity before extraction and execution, preventing execution of tampered or malicious bundles.
+
+### Threat Model
+
+**Attack Vector**:
+- Tampered bundle downloaded from unofficial source
+- MITM attack substituting malicious bundle
+- Bundle with embedded malware
+- Bundle exploiting extraction vulnerabilities
+
+**Impact**: Arbitrary code execution, malware installation
+
+### Requirements
+
+1. **Pre-Execution Verification**
+   - Verify signature before extraction
+   - Verify content hash before execution
+   - Cache verification status
+
+2. **Bundle Format Security**
+   - Signed manifest at known offset
+   - Content hash covers entire payload
+   - No execution without verification
+
+3. **Launcher Hardening**
+   - Verify bundle before mounting
+   - Secure temporary extraction
+   - Clean up on failure
+
+### Implementation
+
+```zig
+pub const SecureBundleLauncher = struct {
+    verifier: *SignatureVerifier,
+    temp_dir: []const u8,
+
+    pub fn launch(self: *SecureBundleLauncher, bundle_path: []const u8) !LaunchResult {
+        // 1. Verify bundle signature BEFORE any extraction
+        const bundle_file = try std.fs.cwd().openFile(bundle_path, .{});
+        defer bundle_file.close();
+
+        // 2. Read and verify manifest from known offset
+        const manifest_offset = try self.readManifestOffset(bundle_file);
+        const manifest = try self.readAndVerifyManifest(bundle_file, manifest_offset);
+
+        // 3. Verify payload hash matches manifest
+        const payload_hash = try self.hashPayload(bundle_file, manifest.payload_offset, manifest.payload_size);
+        if (!std.mem.eql(u8, &payload_hash, &manifest.payload_hash)) {
+            return error.PayloadHashMismatch;
+        }
+
+        // 4. Only now safe to extract
+        const extract_dir = try self.secureExtract(bundle_file, manifest);
+        defer self.cleanup(extract_dir);
+
+        // 5. Launch with verification token
+        return self.launchVerified(extract_dir, manifest);
+    }
+
+    fn readAndVerifyManifest(
+        self: *SecureBundleLauncher,
+        file: std.fs.File,
+        offset: u64,
+    ) !BundleManifest {
+        try file.seekTo(offset);
+        const manifest_data = try file.readAlloc(self.allocator, 64 * 1024);
+
+        // Verify manifest signature
+        const sig_offset = std.mem.indexOf(u8, manifest_data, "---SIGNATURE---") orelse
+            return error.SignatureNotFound;
+
+        const manifest_bytes = manifest_data[0..sig_offset];
+        const sig_bytes = manifest_data[sig_offset + 15 ..];
+
+        const verify_result = self.verifier.verifyData(manifest_bytes, sig_bytes);
+        switch (verify_result) {
+            .verified => {},
+            else => return error.ManifestVerificationFailed,
+        }
+
+        return try BundleManifest.parse(manifest_bytes);
+    }
+
+    fn secureExtract(
+        self: *SecureBundleLauncher,
+        file: std.fs.File,
+        manifest: BundleManifest,
+    ) ![]const u8 {
+        // Create extraction directory with secure permissions
+        const extract_dir = try std.fmt.allocPrint(
+            self.allocator,
+            "{s}/axiom-bundle-{x}",
+            .{ self.temp_dir, std.crypto.random.int(u64) },
+        );
+
+        try std.fs.cwd().makePath(extract_dir);
+        try std.fs.cwd().chmod(extract_dir, 0o700);
+
+        // Extract using secure tar extractor
+        var extractor = SecureTarExtractor{
+            .allocator = self.allocator,
+            .extraction_root = extract_dir,
+            .options = .{
+                .allow_symlinks = false,  // Bundles shouldn't need symlinks
+                .strip_setuid = true,
+            },
+        };
+
+        try file.seekTo(manifest.payload_offset);
+        try extractor.extractFromReader(file.reader());
+
+        return extract_dir;
+    }
+};
+```
+
+---
+
+## Phase 29: Resolver Resource Limits
+
+**Priority**: Medium
+**Complexity**: Low
+**Dependencies**: Phase 16 (SAT Solver)
+**Status**: Planned
+
+### Purpose
+
+Prevent denial-of-service through resource exhaustion during dependency resolution, particularly when using the SAT solver.
+
+### Threat Model
+
+**Attack Vector**:
+- Malicious manifest with exponentially complex dependencies
+- Circular dependencies causing infinite loops
+- Memory exhaustion via large clause sets
+- CPU exhaustion via complex SAT instances
+
+**Impact**: System hang, denial of service, memory exhaustion
+
+### Requirements
+
+1. **Time Limits**
+   - Maximum resolution time
+   - Per-phase timeouts
+   - Graceful degradation
+
+2. **Memory Limits**
+   - Maximum clause count
+   - Maximum variable count
+   - Arena allocator with cap
+
+3. **Complexity Limits**
+   - Maximum dependency depth
+   - Maximum candidates per package
+   - Cycle detection and limits
+
+### Implementation
+
+```zig
+pub const ResourceLimitedResolver = struct {
+    inner_resolver: *Resolver,
+    limits: ResourceLimits,
+    stats: ResourceStats,
+
+    pub const ResourceLimits = struct {
+        max_resolution_time_ms: u64 = 30_000,  // 30 seconds
+        max_memory_bytes: usize = 256 * 1024 * 1024,  // 256MB
+        max_dependency_depth: u32 = 100,
+        max_candidates_per_package: u32 = 1000,
+        max_sat_variables: u32 = 100_000,
+        max_sat_clauses: u32 = 1_000_000,
+    };
+
+    pub const ResourceStats = struct {
+        start_time: i64,
+        memory_used: usize,
+        depth_reached: u32,
+        candidates_examined: u32,
+        sat_variables: u32,
+        sat_clauses: u32,
+    };
+
+    pub fn resolve(self: *ResourceLimitedResolver, requests: []PackageRequest) ![]PackageId {
+        self.stats = .{
+            .start_time = std.time.milliTimestamp(),
+            .memory_used = 0,
+            .depth_reached = 0,
+            .candidates_examined = 0,
+            .sat_variables = 0,
+            .sat_clauses = 0,
+        };
+
+        // Create arena with memory limit
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+
+        // Wrap allocator with limit checking
+        const limited_alloc = self.createLimitedAllocator(&arena);
+
+        // Run resolution with resource checks
+        return self.inner_resolver.resolveWithCallbacks(
+            limited_alloc,
+            requests,
+            .{
+                .on_candidate = self.checkCandidateLimits,
+                .on_depth = self.checkDepthLimit,
+                .on_sat_var = self.checkSatVarLimit,
+                .on_sat_clause = self.checkSatClauseLimit,
+            },
+        );
+    }
+
+    fn checkTimeLimit(self: *ResourceLimitedResolver) !void {
+        const elapsed = std.time.milliTimestamp() - self.stats.start_time;
+        if (elapsed > self.limits.max_resolution_time_ms) {
+            return error.ResolutionTimeout;
+        }
+    }
+
+    fn checkMemoryLimit(self: *ResourceLimitedResolver, size: usize) !void {
+        self.stats.memory_used += size;
+        if (self.stats.memory_used > self.limits.max_memory_bytes) {
+            return error.MemoryLimitExceeded;
+        }
+    }
+};
+```
+
+### CLI Integration
+
+```bash
+# Resolve with custom limits
+axiom resolve my-profile --timeout 60s --max-memory 512M
+
+# Show resource usage
+axiom resolve my-profile --stats
+# Resolution completed in 1.2s
+# Memory used: 45MB
+# Candidates examined: 1234
+# Maximum depth: 12
+```
+
+---
+
+## Phase 30: Thread-Safe libzfs
+
+**Priority**: Medium
+**Complexity**: Medium
+**Dependencies**: None
+**Status**: Planned
+
+### Purpose
+
+Ensure thread-safe operation of ZFS operations throughout Axiom to prevent race conditions and data corruption in concurrent scenarios.
+
+### Threat Model
+
+**Attack Vector**:
+- Race conditions in concurrent ZFS operations
+- Use-after-free in libzfs handles
+- Inconsistent state from interleaved operations
+- Double-free or handle leaks
+
+**Impact**: Data corruption, crashes, undefined behavior
+
+### Requirements
+
+1. **Handle Safety**
+   - Single handle per thread OR global lock
+   - RAII-style handle management
+   - Safe handle sharing
+
+2. **Operation Atomicity**
+   - Compound operations protected
+   - Consistent error handling
+   - Transaction semantics where possible
+
+3. **Progress Isolation**
+   - Per-operation progress tracking
+   - Thread-local error context
+   - Safe cancellation
+
+### Implementation
+
+```zig
+pub const ThreadSafeZfs = struct {
+    /// Global lock for libzfs operations
+    /// libzfs is not thread-safe, so we serialize all access
+    global_lock: std.Thread.Mutex = .{},
+
+    /// Per-thread handles to avoid handle sharing issues
+    thread_handles: std.Thread.LocalStorage(*libzfs_handle_t),
+
+    pub fn getHandle(self: *ThreadSafeZfs) !*libzfs_handle_t {
+        // Check for existing thread-local handle
+        if (self.thread_handles.get()) |handle| {
+            return handle;
+        }
+
+        // Create new handle for this thread
+        self.global_lock.lock();
+        defer self.global_lock.unlock();
+
+        const handle = libzfs_init() orelse return error.ZfsInitFailed;
+        self.thread_handles.set(handle);
+        return handle;
+    }
+
+    /// Execute a ZFS operation with proper locking
+    pub fn withLock(self: *ThreadSafeZfs, comptime func: anytype, args: anytype) !@TypeOf(func).ReturnType {
+        self.global_lock.lock();
+        defer self.global_lock.unlock();
+
+        const handle = try self.getHandle();
+        return @call(.auto, func, .{handle} ++ args);
+    }
+
+    /// Scoped ZFS operation with automatic cleanup
+    pub fn scopedOperation(self: *ThreadSafeZfs) ScopedOperation {
+        return .{
+            .zfs = self,
+            .lock_held = false,
+        };
+    }
+
+    pub const ScopedOperation = struct {
+        zfs: *ThreadSafeZfs,
+        lock_held: bool,
+
+        pub fn begin(self: *ScopedOperation) !*libzfs_handle_t {
+            self.zfs.global_lock.lock();
+            self.lock_held = true;
+            return self.zfs.getHandle();
+        }
+
+        pub fn end(self: *ScopedOperation) void {
+            if (self.lock_held) {
+                self.zfs.global_lock.unlock();
+                self.lock_held = false;
+            }
+        }
+
+        pub fn deinit(self: *ScopedOperation) void {
+            self.end();
+        }
+    };
+};
+
+// Example usage in store operations
+pub fn createPackageDataset(store: *PackageStore, pkg_id: PackageId) !void {
+    var op = store.zfs.scopedOperation();
+    defer op.deinit();
+
+    const handle = try op.begin();
+
+    // All ZFS operations are now serialized
+    const dataset_name = try store.paths.packageDataset(store.allocator, pkg_id);
+    const dataset = zfs_create(handle, dataset_name, ZFS_TYPE_FILESYSTEM, null);
+    if (dataset == null) {
+        return error.DatasetCreateFailed;
+    }
+    defer zfs_close(dataset);
+
+    // Create snapshot
+    const snapshot_name = try std.fmt.allocPrint(store.allocator, "{s}@installed", .{dataset_name});
+    if (zfs_snapshot(handle, snapshot_name, 0, null) != 0) {
+        return error.SnapshotCreateFailed;
+    }
+}
+```
+
+### Testing
+
+```zig
+test "concurrent ZFS operations" {
+    var zfs = ThreadSafeZfs{};
+
+    // Spawn multiple threads performing ZFS operations
+    var threads: [10]std.Thread = undefined;
+    for (&threads) |*t| {
+        t.* = try std.Thread.spawn(.{}, concurrentZfsWorker, .{&zfs});
+    }
+
+    for (threads) |t| {
+        t.join();
+    }
+}
+
+fn concurrentZfsWorker(zfs: *ThreadSafeZfs) void {
+    for (0..100) |i| {
+        _ = zfs.withLock(listDatasets, .{}) catch continue;
+    }
+}
+```
+
+---
+
+## Security Hardening Roadmap Summary
+
+| Phase | Risk Level | Attack Surface | Status |
+|-------|------------|----------------|--------|
+| 24 | Critical | Tarball import | Planned |
+| 25 | Critical | All package operations | Planned |
+| 26 | High | ZFS operations | Planned |
+| 27 | High | Build execution | Planned |
+| 28 | High | Bundle execution | Planned |
+| 29 | Medium | Resolver DoS | Planned |
+| 30 | Medium | Concurrent operations | Planned |
+
+### Recommended Implementation Order
+
+1. **Phase 25** - Mandatory signature verification (blocks supply chain attacks)
+2. **Phase 24** - Secure tar extraction (blocks immediate code execution)
+3. **Phase 26** - ZFS path validation (low complexity, high impact)
+4. **Phase 28** - Bundle verification (extends existing signature work)
+5. **Phase 27** - Build sandboxing (complex but high value)
+6. **Phase 29** - Resolver limits (protects against DoS)
+7. **Phase 30** - Thread-safe libzfs (stability improvement)
 
 ---
 
