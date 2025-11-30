@@ -12,6 +12,259 @@ pub const SignatureError = error{
     InvalidSignatureFormat,
     SigningFailed,
     VerificationFailed,
+    NotVerified,
+};
+
+// ============================================================================
+// Phase 25: Type-Safe Verification Status
+// ============================================================================
+
+/// Trust level for signing keys - determines how much trust we place in signatures
+pub const TrustLevel = enum {
+    /// Official PGSD release key - highest trust
+    official,
+    /// Trusted community maintainer key
+    community,
+    /// User-added third-party key
+    third_party,
+    /// Key not in trust store or unknown origin
+    unknown,
+
+    /// Get human-readable description of trust level
+    pub fn description(self: TrustLevel) []const u8 {
+        return switch (self) {
+            .official => "Official PGSD Release Key",
+            .community => "Trusted Community Maintainer",
+            .third_party => "User-Added Third Party Key",
+            .unknown => "Unknown/Untrusted Key",
+        };
+    }
+};
+
+/// Detailed information about a successfully verified package
+pub const VerifiedContent = struct {
+    /// SHA-256 hash of the signed content
+    content_hash: [32]u8,
+    /// Key ID that signed this package
+    signer_key_id: []const u8,
+    /// Name of the signer (if available)
+    signer_name: ?[]const u8,
+    /// Timestamp when signature was created
+    signature_time: i64,
+    /// Trust level of the signing key
+    trust_level: TrustLevel,
+    /// Number of files verified
+    files_verified: usize,
+
+    pub fn deinit(self: *VerifiedContent, allocator: std.mem.Allocator) void {
+        allocator.free(self.signer_key_id);
+        if (self.signer_name) |n| allocator.free(n);
+    }
+};
+
+/// Information about missing signature
+pub const SignatureMissingInfo = struct {
+    /// Path that was checked for signature
+    package_path: []const u8,
+
+    pub fn deinit(self: *SignatureMissingInfo, allocator: std.mem.Allocator) void {
+        allocator.free(self.package_path);
+    }
+};
+
+/// Information about invalid signature
+pub const SignatureInvalidInfo = struct {
+    /// Key ID that attempted to verify (if known)
+    key_id: ?[]const u8,
+    /// Reason for invalidity
+    reason: []const u8,
+    /// Whether this was a parse error or crypto verification failure
+    is_parse_error: bool,
+
+    pub fn deinit(self: *SignatureInvalidInfo, allocator: std.mem.Allocator) void {
+        if (self.key_id) |k| allocator.free(k);
+        allocator.free(self.reason);
+    }
+};
+
+/// Information about untrusted key
+pub const KeyUntrustedInfo = struct {
+    /// The key ID that is not trusted
+    key_id: []const u8,
+    /// Signer name if available
+    signer_name: ?[]const u8,
+    /// Whether key exists but is explicitly not trusted
+    key_exists: bool,
+
+    pub fn deinit(self: *KeyUntrustedInfo, allocator: std.mem.Allocator) void {
+        allocator.free(self.key_id);
+        if (self.signer_name) |n| allocator.free(n);
+    }
+};
+
+/// Information about hash mismatch
+pub const HashMismatchInfo = struct {
+    /// Path of the file with mismatched hash
+    file_path: []const u8,
+    /// Expected hash from signature
+    expected_hash: [32]u8,
+    /// Actual hash computed from file
+    actual_hash: [32]u8,
+    /// Total files that failed verification
+    total_failed: usize,
+
+    pub fn deinit(self: *HashMismatchInfo, allocator: std.mem.Allocator) void {
+        allocator.free(self.file_path);
+    }
+};
+
+/// Type-safe verification status - prevents accidental use of unverified content
+/// This is deliberately NOT a boolean to force explicit handling of each case
+pub const VerificationStatus = union(enum) {
+    /// Package signature verified successfully
+    verified: VerifiedContent,
+    /// No signature file found
+    signature_missing: SignatureMissingInfo,
+    /// Signature exists but is cryptographically invalid
+    signature_invalid: SignatureInvalidInfo,
+    /// Signing key is not in trust store or not trusted
+    key_untrusted: KeyUntrustedInfo,
+    /// File content doesn't match signed hashes
+    hash_mismatch: HashMismatchInfo,
+
+    /// Get verified content ONLY if verification succeeded
+    /// Returns null for all failure cases - compiler enforces checking
+    pub fn getVerifiedContent(self: VerificationStatus) ?VerifiedContent {
+        return switch (self) {
+            .verified => |v| v,
+            else => null,
+        };
+    }
+
+    /// Check if verification succeeded
+    pub fn isVerified(self: VerificationStatus) bool {
+        return switch (self) {
+            .verified => true,
+            else => false,
+        };
+    }
+
+    /// Require verification to have succeeded, or return error
+    /// Use this when strict verification is required
+    pub fn requireVerified(self: VerificationStatus) !VerifiedContent {
+        return self.getVerifiedContent() orelse SignatureError.NotVerified;
+    }
+
+    /// Get human-readable status message
+    pub fn getMessage(self: VerificationStatus) []const u8 {
+        return switch (self) {
+            .verified => "Package signature verified",
+            .signature_missing => "No signature file found",
+            .signature_invalid => "Signature is invalid",
+            .key_untrusted => "Signing key is not trusted",
+            .hash_mismatch => "File content has been modified",
+        };
+    }
+
+    /// Get detailed error message for logging/display
+    pub fn getDetailedMessage(self: VerificationStatus, allocator: std.mem.Allocator) ![]u8 {
+        return switch (self) {
+            .verified => |v| std.fmt.allocPrint(allocator, "Verified by {s} ({s})", .{
+                v.signer_name orelse "unknown",
+                v.trust_level.description(),
+            }),
+            .signature_missing => |info| std.fmt.allocPrint(allocator, "No signature found at {s}", .{info.package_path}),
+            .signature_invalid => |info| std.fmt.allocPrint(allocator, "Invalid signature: {s}", .{info.reason}),
+            .key_untrusted => |info| std.fmt.allocPrint(allocator, "Key {s} is not trusted", .{info.key_id}),
+            .hash_mismatch => |info| std.fmt.allocPrint(allocator, "Hash mismatch for {s} ({d} files failed)", .{ info.file_path, info.total_failed }),
+        };
+    }
+
+    /// Free any allocated memory in the status
+    pub fn deinit(self: *VerificationStatus, allocator: std.mem.Allocator) void {
+        switch (self.*) {
+            .verified => |*v| v.deinit(allocator),
+            .signature_missing => |*info| info.deinit(allocator),
+            .signature_invalid => |*info| info.deinit(allocator),
+            .key_untrusted => |*info| info.deinit(allocator),
+            .hash_mismatch => |*info| info.deinit(allocator),
+        }
+    }
+};
+
+/// Audit log entry for verification events
+pub const AuditEntry = struct {
+    timestamp: i64,
+    package_path: []const u8,
+    key_id: ?[]const u8,
+    status: VerificationStatus,
+    action_taken: AuditAction,
+
+    pub const AuditAction = enum {
+        allowed,       // Verification passed, package accepted
+        blocked,       // Verification failed, package rejected
+        warned,        // Verification failed but allowed with warning
+        bypassed,      // User explicitly bypassed verification
+    };
+};
+
+/// Audit log for tracking verification decisions
+pub const AuditLog = struct {
+    allocator: std.mem.Allocator,
+    log_path: []const u8,
+    entries: std.ArrayList(AuditEntry),
+
+    pub fn init(allocator: std.mem.Allocator, log_path: []const u8) AuditLog {
+        return AuditLog{
+            .allocator = allocator,
+            .log_path = log_path,
+            .entries = std.ArrayList(AuditEntry).init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *AuditLog) void {
+        self.entries.deinit();
+    }
+
+    /// Record a verification event
+    pub fn record(
+        self: *AuditLog,
+        package_path: []const u8,
+        key_id: ?[]const u8,
+        status: VerificationStatus,
+        action: AuditEntry.AuditAction,
+    ) !void {
+        try self.entries.append(.{
+            .timestamp = std.time.timestamp(),
+            .package_path = package_path,
+            .key_id = key_id,
+            .status = status,
+            .action_taken = action,
+        });
+    }
+
+    /// Flush entries to disk
+    pub fn flush(self: *AuditLog) !void {
+        if (self.entries.items.len == 0) return;
+
+        const file = try std.fs.cwd().createFile(self.log_path, .{ .truncate = false });
+        defer file.close();
+
+        try file.seekFromEnd(0);
+        const writer = file.writer();
+
+        for (self.entries.items) |entry| {
+            try writer.print("{d}|{s}|{s}|{s}|{s}\n", .{
+                entry.timestamp,
+                entry.package_path,
+                entry.key_id orelse "none",
+                entry.status.getMessage(),
+                @tagName(entry.action_taken),
+            });
+        }
+
+        self.entries.clearRetainingCapacity();
+    }
 };
 
 /// Ed25519 key pair (32 bytes each)
@@ -56,11 +309,21 @@ pub const PublicKey = struct {
     email: ?[]const u8 = null,
     created: i64 = 0,
     expires: ?i64 = null,
+    /// Trust level for this key (Phase 25)
+    trust_level: TrustLevel = .unknown,
 
     pub fn deinit(self: *PublicKey, allocator: std.mem.Allocator) void {
         allocator.free(self.key_id);
         if (self.owner) |o| allocator.free(o);
         if (self.email) |e| allocator.free(e);
+    }
+
+    /// Check if key has expired
+    pub fn isExpired(self: PublicKey) bool {
+        if (self.expires) |exp| {
+            return std.time.timestamp() > exp;
+        }
+        return false;
     }
 };
 
@@ -257,11 +520,44 @@ pub const TrustStore = struct {
             .key_data = key.key_data,
             .created = key.created,
             .expires = key.expires,
+            .trust_level = key.trust_level,
         };
         if (key.owner) |o| stored_key.owner = try self.allocator.dupe(u8, o);
         if (key.email) |e| stored_key.email = try self.allocator.dupe(u8, e);
 
         try self.keys.put(key_id, stored_key);
+    }
+
+    /// Add a key with a specific trust level (Phase 25)
+    pub fn addKeyWithTrust(self: *TrustStore, key: PublicKey, trust_level: TrustLevel) !void {
+        var key_with_trust = key;
+        key_with_trust.trust_level = trust_level;
+        try self.addKey(key_with_trust);
+        // Also mark as trusted if not unknown
+        if (trust_level != .unknown) {
+            try self.trustKey(key.key_id);
+        }
+    }
+
+    /// Set trust level for an existing key (Phase 25)
+    pub fn setKeyTrustLevel(self: *TrustStore, key_id: []const u8, trust_level: TrustLevel) !void {
+        if (self.keys.getPtr(key_id)) |key_ptr| {
+            key_ptr.trust_level = trust_level;
+            // Update trusted status based on trust level
+            if (trust_level != .unknown) {
+                try self.trustKey(key_id);
+            } else {
+                self.untrustKey(key_id);
+            }
+        }
+    }
+
+    /// Get trust level for a key (Phase 25)
+    pub fn getKeyTrustLevel(self: *TrustStore, key_id: []const u8) TrustLevel {
+        if (self.keys.get(key_id)) |key| {
+            return key.trust_level;
+        }
+        return .unknown;
     }
 
     /// Remove a key from the store
@@ -725,6 +1021,170 @@ pub const Verifier = struct {
             .files_failed = files_failed,
             .error_message = if (!valid) "Signature verification failed" else null,
         };
+    }
+
+    // ========================================================================
+    // Phase 25: Type-Safe Verification
+    // ========================================================================
+
+    /// Verify a package and return type-safe VerificationStatus (Phase 25)
+    /// This is the preferred method - prevents accidental use of unverified content
+    pub fn verifyPackageTypeSafe(self: *Verifier, pkg_path: []const u8) VerificationStatus {
+        std.debug.print("Verifying package (type-safe): {s}\n", .{pkg_path});
+
+        // Load signature file
+        const sig_path = std.fs.path.join(self.allocator, &[_][]const u8{ pkg_path, "manifest.sig" }) catch {
+            return .{ .signature_missing = .{
+                .package_path = self.allocator.dupe(u8, pkg_path) catch pkg_path,
+            } };
+        };
+        defer self.allocator.free(sig_path);
+
+        const sig_file = std.fs.cwd().openFile(sig_path, .{}) catch {
+            return .{ .signature_missing = .{
+                .package_path = self.allocator.dupe(u8, pkg_path) catch pkg_path,
+            } };
+        };
+        defer sig_file.close();
+
+        const sig_content = sig_file.readToEndAlloc(self.allocator, 1024 * 1024) catch {
+            return .{ .signature_invalid = .{
+                .key_id = null,
+                .reason = self.allocator.dupe(u8, "Failed to read signature file") catch "Failed to read signature file",
+                .is_parse_error = true,
+            } };
+        };
+        defer self.allocator.free(sig_content);
+
+        var signature = Signature.fromYaml(self.allocator, sig_content) catch {
+            return .{ .signature_invalid = .{
+                .key_id = null,
+                .reason = self.allocator.dupe(u8, "Failed to parse signature") catch "Failed to parse signature",
+                .is_parse_error = true,
+            } };
+        };
+        defer signature.deinit(self.allocator);
+
+        std.debug.print("  Key ID: {s}\n", .{signature.key_id});
+        if (signature.signer) |s| std.debug.print("  Signer: {s}\n", .{s});
+
+        // Get public key from trust store
+        const public_key = self.trust_store.getKey(signature.key_id) orelse {
+            return .{ .key_untrusted = .{
+                .key_id = self.allocator.dupe(u8, signature.key_id) catch signature.key_id,
+                .signer_name = if (signature.signer) |s| (self.allocator.dupe(u8, s) catch null) else null,
+                .key_exists = false,
+            } };
+        };
+
+        // Check if key is trusted
+        const is_trusted = self.trust_store.isKeyTrusted(signature.key_id);
+        if (!is_trusted) {
+            return .{ .key_untrusted = .{
+                .key_id = self.allocator.dupe(u8, signature.key_id) catch signature.key_id,
+                .signer_name = if (signature.signer) |s| (self.allocator.dupe(u8, s) catch null) else null,
+                .key_exists = true,
+            } };
+        }
+
+        // Check if key has expired
+        if (public_key.isExpired()) {
+            return .{ .key_untrusted = .{
+                .key_id = self.allocator.dupe(u8, signature.key_id) catch signature.key_id,
+                .signer_name = if (signature.signer) |s| (self.allocator.dupe(u8, s) catch null) else null,
+                .key_exists = true,
+            } };
+        }
+
+        // Verify file hashes
+        var files_verified: usize = 0;
+        var files_failed: usize = 0;
+        var first_failed_path: ?[]const u8 = null;
+        var first_expected_hash: [32]u8 = undefined;
+        var first_actual_hash: [32]u8 = undefined;
+
+        for (signature.files) |expected| {
+            const file_path = std.fs.path.join(self.allocator, &[_][]const u8{ pkg_path, expected.path }) catch continue;
+            defer self.allocator.free(file_path);
+
+            const actual_hash = self.hashFile(file_path) catch {
+                files_failed += 1;
+                if (first_failed_path == null) {
+                    first_failed_path = self.allocator.dupe(u8, expected.path) catch null;
+                    first_expected_hash = expected.hash;
+                    first_actual_hash = [_]u8{0} ** 32;
+                }
+                continue;
+            };
+
+            if (std.mem.eql(u8, &actual_hash, &expected.hash)) {
+                files_verified += 1;
+            } else {
+                files_failed += 1;
+                if (first_failed_path == null) {
+                    first_failed_path = self.allocator.dupe(u8, expected.path) catch null;
+                    first_expected_hash = expected.hash;
+                    first_actual_hash = actual_hash;
+                }
+                std.debug.print("  Hash mismatch: {s}\n", .{expected.path});
+            }
+        }
+
+        // Return hash mismatch if any files failed
+        if (files_failed > 0) {
+            return .{ .hash_mismatch = .{
+                .file_path = first_failed_path orelse (self.allocator.dupe(u8, "unknown") catch "unknown"),
+                .expected_hash = first_expected_hash,
+                .actual_hash = first_actual_hash,
+                .total_failed = files_failed,
+            } };
+        }
+
+        std.debug.print("  Files verified: {d}/{d}\n", .{ files_verified, signature.files.len });
+
+        // Build message for signature verification
+        var message = std.ArrayList(u8).init(self.allocator);
+        defer message.deinit();
+
+        for (signature.files) |f| {
+            message.appendSlice(&f.hash) catch {};
+            message.appendSlice(f.path) catch {};
+        }
+
+        // Verify cryptographic signature
+        const pub_key = std.crypto.sign.Ed25519.PublicKey.fromBytes(public_key.key_data) catch {
+            return .{ .signature_invalid = .{
+                .key_id = self.allocator.dupe(u8, signature.key_id) catch null,
+                .reason = self.allocator.dupe(u8, "Invalid public key format") catch "Invalid public key format",
+                .is_parse_error = false,
+            } };
+        };
+
+        const sig = std.crypto.sign.Ed25519.Signature.fromBytes(signature.signature);
+        sig.verify(message.items, pub_key) catch {
+            return .{ .signature_invalid = .{
+                .key_id = self.allocator.dupe(u8, signature.key_id) catch null,
+                .reason = self.allocator.dupe(u8, "Cryptographic verification failed") catch "Cryptographic verification failed",
+                .is_parse_error = false,
+            } };
+        };
+
+        std.debug.print("  Signature valid\n", .{});
+
+        // Compute content hash
+        var content_hasher = std.crypto.hash.sha2.Sha256.init(.{});
+        content_hasher.update(message.items);
+        const content_hash = content_hasher.finalResult();
+
+        // Success!
+        return .{ .verified = .{
+            .content_hash = content_hash,
+            .signer_key_id = self.allocator.dupe(u8, signature.key_id) catch signature.key_id,
+            .signer_name = if (signature.signer) |s| (self.allocator.dupe(u8, s) catch null) else null,
+            .signature_time = signature.timestamp,
+            .trust_level = public_key.trust_level,
+            .files_verified = files_verified,
+        } };
     }
 
     /// Hash a file

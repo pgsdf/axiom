@@ -647,11 +647,15 @@ pub const CLI = struct {
             std.debug.print("  --license <license>  Package license\n", .{});
             std.debug.print("  --manifest <file>    Use manifest file\n", .{});
             std.debug.print("  --dry-run            Show what would be imported\n", .{});
+            std.debug.print("\nSignature Verification (Phase 25):\n", .{});
+            std.debug.print("  --allow-unsigned     Allow import of unsigned packages\n", .{});
+            std.debug.print("  --no-verify          Disable signature verification\n", .{});
+            std.debug.print("  --verify-warn        Warn on verification failures (don't block)\n", .{});
             return;
         }
 
         const source_path = args[0];
-        
+
         // Parse options
         var options = import_pkg.ImportOptions{};
         var i: usize = 1;
@@ -677,6 +681,16 @@ pub const CLI = struct {
                 i += 2;
             } else if (std.mem.eql(u8, arg, "--dry-run")) {
                 options.dry_run = true;
+                i += 1;
+            // Phase 25: Signature verification options
+            } else if (std.mem.eql(u8, arg, "--allow-unsigned")) {
+                options.security.allow_unsigned = true;
+                i += 1;
+            } else if (std.mem.eql(u8, arg, "--no-verify")) {
+                options.security.verification_mode = .disabled;
+                i += 1;
+            } else if (std.mem.eql(u8, arg, "--verify-warn")) {
+                options.security.verification_mode = .warn;
                 i += 1;
             } else {
                 std.debug.print("Unknown option: {s}\n", .{arg});
