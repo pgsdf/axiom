@@ -411,11 +411,11 @@ See [ROADMAP.md](ROADMAP.md) for detailed planning of future phases:
 | 22 | Ports Migration Tool | High | ✓ Complete |
 | 23 | Kernel Module Compatibility | Medium | ✓ Complete |
 | 24 | Secure Tar Extraction | Critical | ✓ Complete |
-| 25 | Mandatory Signature Verification | Critical | Planned |
-| 26 | ZFS Dataset Path Validation | High | Planned |
-| 27 | Build Sandboxing | High | Planned |
-| 28 | Secure Bundle Verification | High | Planned |
-| 29 | Resolver Resource Limits | Medium | Planned |
+| 25 | Mandatory Signature Verification | Critical | ✓ Complete |
+| 26 | ZFS Dataset Path Validation | High | ✓ Complete |
+| 27 | Build Sandboxing | High | ✓ Complete |
+| 28 | Secure Bundle Verification | High | ✓ Complete |
+| 29 | Resolver Resource Limits | Medium | ✓ Complete |
 | 30 | Thread-Safe libzfs | Medium | Planned |
 
 **Core Phases Complete!** Axiom includes:
@@ -432,11 +432,11 @@ See [ROADMAP.md](ROADMAP.md) for detailed planning of future phases:
 
 **Security Hardening (Phases 24-30):**
 - ✓ Secure tar extraction with path traversal prevention (Phase 24)
-- Mandatory signature verification with type-safe status (Phase 25)
-- ZFS dataset path validation (Phase 26)
-- Build sandboxing with FreeBSD jails (Phase 27)
-- Secure bundle verification (Phase 28)
-- Resolver resource limits to prevent DoS (Phase 29)
+- ✓ Mandatory signature verification with type-safe status (Phase 25)
+- ✓ ZFS dataset path validation (Phase 26)
+- ✓ Build sandboxing with FreeBSD jails (Phase 27)
+- ✓ Secure bundle verification (Phase 28)
+- ✓ Resolver resource limits to prevent DoS (Phase 29)
 - Thread-safe libzfs operations (Phase 30)
 
 ## Quick Start
@@ -477,7 +477,7 @@ source /axiom/env/dev-env/activate
 
 BSD 2-Clause License
 
-Copyright (c) 2024, Pacific Grove Software Distribution Foundation
+Copyright (c) 2025, Pacific Grove Software Distribution Foundation
 
 ## Author
 
