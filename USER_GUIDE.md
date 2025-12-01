@@ -207,7 +207,7 @@ When you resolve a profile, Axiom creates a **lock file** (`profile.lock.yaml`) 
 
 ```yaml
 name: development
-resolved_at: 2024-01-15T10:30:00Z
+resolved_at: 2025-11-15T10:30:00Z
 packages:
   - name: bash
     version: "5.2.0"
@@ -267,7 +267,7 @@ Requested packages:
   vim *
 
 Lock file: present
-Last resolved: 2024-01-15 10:30:00
+Last resolved: 2025-11-15 10:30:00
 Resolved packages: 8
 ```
 

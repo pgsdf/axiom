@@ -404,10 +404,10 @@ axiom key
 Trusted keys:
   [1] pgsd-main (trusted)
       ID: a1b2c3d4e5f6...
-      Added: 2024-01-15
+      Added: 2025-11-15
   [2] developer-alice
       ID: f6e5d4c3b2a1...
-      Added: 2024-01-20
+      Added: 2025-11-20
 ```
 
 #### `axiom key-generate --output <name>`
