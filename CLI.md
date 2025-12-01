@@ -177,17 +177,26 @@ axiom list
 
 Create and manage environments from profiles.
 
-#### `axiom resolve <profile>`
+#### `axiom resolve <profile> [options]`
 
 Resolve profile dependencies and create lock file.
 
 ```bash
 axiom resolve development
+axiom resolve development --strict
+axiom resolve development --timeout 60000 --stats
 ```
+
+**Options:**
+- `--timeout <ms>` - Maximum resolution time in milliseconds (default: 30000)
+- `--max-memory <bytes>` - Maximum memory usage in bytes (default: 256MB)
+- `--max-depth <n>` - Maximum dependency chain depth (default: 100)
+- `--strict` - Use strict resource limits (tighter constraints)
+- `--stats` - Show resolution statistics after completion
 
 **Process:**
 1. Loads `profile.yaml`
-2. Resolves all dependencies
+2. Resolves all dependencies (within resource limits)
 3. Saves `profile.lock.yaml`
 
 **Example output:**
@@ -202,6 +211,23 @@ Resolving profile: development
 ✓ Resolved 4 packages (2 requested, 2 dependencies)
 
 ✓ Profile resolved and lock file saved
+```
+
+**With --stats:**
+```
+Resolution Statistics:
+  Time elapsed: 0.45s
+  Peak memory: 12 MB
+  Candidates examined: 234
+  Dependency depth reached: 4
+  Packages resolved: 4
+```
+
+**Resource limit errors:**
+```
+✗ Resolution failed: ResolutionTimeout
+  Resolution exceeded time limit (30000ms)
+  Consider using --timeout with a higher value
 ```
 
 #### `axiom realize <env-name> <profile> [options]`
@@ -1136,6 +1162,102 @@ chmod +x bash-bundle.pgsdimg
 # Show bundle info
 ./bash-bundle.pgsdimg --info
 ```
+
+#### `axiom bundle-verify <bundle-path> [options]`
+
+Verify a bundle's signature and integrity before execution.
+
+```bash
+axiom bundle-verify myapp.pgsdimg
+axiom bundle-verify myapp.pgsdimg --trust-store /path/to/keys
+axiom bundle-verify myapp.pgsdimg --allow-untrusted
+```
+
+**Options:**
+- `--trust-store <path>` - Path to trusted keys directory
+- `--allow-untrusted` - Allow bundles from untrusted signers (show warning)
+- `--require-signature` - Fail if bundle is unsigned (default: true)
+
+**Verification checks:**
+1. **Signature verification** - Ed25519 signature validity
+2. **Payload hash** - SHA-256 integrity check
+3. **Manifest validation** - Bundle metadata consistency
+4. **Trust chain** - Signer key in trust store
+
+**Example output (verified):**
+```
+Bundle Verification: myapp.pgsdimg
+==================================
+
+Signature:    ✓ Valid (Ed25519)
+Signer:       PGSD-Official (trusted)
+Payload hash: ✓ Matches (SHA-256)
+Manifest:     ✓ Valid
+
+Package: myapp 1.2.0
+Packages included: 4
+Total size: 12.4 MB
+
+✓ Bundle verification passed
+```
+
+**Example output (untrusted):**
+```
+Bundle Verification: myapp.pgsdimg
+==================================
+
+Signature:    ✓ Valid (Ed25519)
+Signer:       Unknown-Key-abc123 (NOT TRUSTED)
+Payload hash: ✓ Matches (SHA-256)
+
+⚠ Warning: Bundle signer is not in trust store
+  To trust this signer: axiom key-add <key-file>
+
+✗ Bundle verification failed: untrusted signer
+```
+
+#### `axiom bundle-run <bundle-path> [args...]`
+
+Verify and execute a bundle securely.
+
+```bash
+axiom bundle-run myapp.pgsdimg
+axiom bundle-run myapp.pgsdimg --allow-untrusted -- --app-arg value
+axiom bundle-run myapp.pgsdimg --extract-only /tmp/myapp
+```
+
+**Options:**
+- `--trust-store <path>` - Path to trusted keys directory
+- `--allow-untrusted` - Run bundles from untrusted signers (with warning)
+- `--require-signature` - Fail if bundle is unsigned (default: true)
+- `--extract-only <path>` - Extract but don't run
+- `--` - Separator for arguments passed to the bundle
+
+**Process:**
+1. Verify bundle signature and integrity
+2. Check trust chain
+3. Extract to temporary directory
+4. Execute main binary with provided arguments
+5. Clean up temporary files on exit
+
+**Example output:**
+```
+Verifying bundle: myapp.pgsdimg
+  ✓ Signature valid
+  ✓ Signer trusted: PGSD-Official
+  ✓ Payload integrity verified
+
+Extracting to: /tmp/axiom-bundle-xyz123
+Launching: myapp 1.2.0
+
+[Application output follows...]
+```
+
+**Security notes:**
+- Bundles are verified before any code execution
+- Untrusted bundles require explicit `--allow-untrusted` flag
+- Temporary extraction directory has restricted permissions
+- Bundle contents are validated against manifest
 
 ---
 
