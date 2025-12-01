@@ -1193,7 +1193,7 @@ pub const SecureBundleLauncher = struct {
     fn verifySignature(self: *SecureBundleLauncher, data: []const u8, signature: []const u8) !bool {
         // Load trusted public keys from trust store
         if (self.trust_store_path) |trust_path| {
-            const trust_dir = std.fs.cwd().openDir(trust_path, .{ .iterate = true }) catch {
+            var trust_dir = std.fs.cwd().openDir(trust_path, .{ .iterate = true }) catch {
                 return false;
             };
             defer trust_dir.close();
@@ -1341,7 +1341,7 @@ pub const SecureBundleLauncher = struct {
     fn launchVerified(
         self: *SecureBundleLauncher,
         extract_dir: []const u8,
-        manifest: SecureBundleManifest,
+        bundle_manifest: SecureBundleManifest,
         args: []const []const u8,
     ) !SecureLaunchResult {
         // Build path to AppRun or entry point
@@ -1358,10 +1358,10 @@ pub const SecureBundleLauncher = struct {
                 const direct_path = try std.fs.path.join(self.allocator, &[_][]const u8{
                     extract_dir,
                     "packages",
-                    manifest.name,
+                    bundle_manifest.name,
                     "root",
                     "bin",
-                    manifest.entry_point,
+                    bundle_manifest.entry_point,
                 });
                 break :blk direct_path;
             };
@@ -1383,7 +1383,7 @@ pub const SecureBundleLauncher = struct {
         defer env_map.deinit();
 
         try env_map.put("AXIOM_BUNDLE_DIR", extract_dir);
-        try env_map.put("AXIOM_BUNDLE_NAME", manifest.name);
+        try env_map.put("AXIOM_BUNDLE_NAME", bundle_manifest.name);
         try env_map.put("AXIOM_BUNDLE_VERIFIED", "true");
 
         // Spawn process
@@ -1523,17 +1523,17 @@ test "secure bundle manifest parsing" {
         \\  - libfoo@2.0.0
     ;
 
-    var manifest = try SecureBundleManifest.parse(allocator, manifest_text);
-    defer manifest.deinit(allocator);
+    var parsed_manifest = try SecureBundleManifest.parse(allocator, manifest_text);
+    defer parsed_manifest.deinit(allocator);
 
-    try std.testing.expectEqual(@as(u32, 2), manifest.format_version);
-    try std.testing.expectEqualStrings("test-app", manifest.name);
-    try std.testing.expectEqual(@as(u32, 1), manifest.version.major);
-    try std.testing.expectEqual(@as(u32, 2), manifest.version.minor);
-    try std.testing.expectEqual(@as(u32, 3), manifest.version.patch);
-    try std.testing.expectEqual(@as(u64, 4096), manifest.payload_offset);
-    try std.testing.expectEqual(@as(u64, 512), manifest.payload_size);
-    try std.testing.expectEqual(@as(usize, 2), manifest.packages.len);
+    try std.testing.expectEqual(@as(u32, 2), parsed_manifest.format_version);
+    try std.testing.expectEqualStrings("test-app", parsed_manifest.name);
+    try std.testing.expectEqual(@as(u32, 1), parsed_manifest.version.major);
+    try std.testing.expectEqual(@as(u32, 2), parsed_manifest.version.minor);
+    try std.testing.expectEqual(@as(u32, 3), parsed_manifest.version.patch);
+    try std.testing.expectEqual(@as(u64, 4096), parsed_manifest.payload_offset);
+    try std.testing.expectEqual(@as(u64, 512), parsed_manifest.payload_size);
+    try std.testing.expectEqual(@as(usize, 2), parsed_manifest.packages.len);
 }
 
 test "bundle verification status" {
