@@ -460,6 +460,11 @@ pub const CLI = struct {
             \\Environment Operations:
             \\  resolve <profile>          Resolve profile dependencies
             \\    --strategy <s>             Resolution strategy (greedy|sat|auto)
+            \\    --timeout <seconds>        Maximum resolution time (default: 30)
+            \\    --max-memory <MB>          Maximum memory usage (default: 256)
+            \\    --max-depth <n>            Maximum dependency depth (default: 100)
+            \\    --strict                   Use strict limits for untrusted inputs
+            \\    --stats                    Show resolution statistics
             \\  realize <env> <profile>    Create environment from profile
             \\    --conflict-policy <p>      Handle file conflicts (error|priority|keep-both)
             \\  activate <env>             Activate an environment
@@ -823,6 +828,11 @@ pub const CLI = struct {
             std.debug.print("Usage: axiom resolve <profile> [options]\n", .{});
             std.debug.print("\nOptions:\n", .{});
             std.debug.print("  --strategy <strategy>  Resolution strategy to use\n", .{});
+            std.debug.print("  --timeout <seconds>    Maximum resolution time (default: 30)\n", .{});
+            std.debug.print("  --max-memory <MB>      Maximum memory usage (default: 256)\n", .{});
+            std.debug.print("  --max-depth <n>        Maximum dependency depth (default: 100)\n", .{});
+            std.debug.print("  --strict               Use strict limits for untrusted inputs\n", .{});
+            std.debug.print("  --stats                Show resolution statistics\n", .{});
             std.debug.print("\nStrategies:\n", .{});
             std.debug.print("  greedy         Fast greedy algorithm (default)\n", .{});
             std.debug.print("  sat            SAT solver for complex constraints\n", .{});
@@ -834,8 +844,10 @@ pub const CLI = struct {
 
         // Parse options
         var strategy: ResolutionStrategy = .greedy_with_sat_fallback;
+        var limits = resolver.ResourceLimits{};
+        var show_stats = false;
         var i: usize = 1;
-        while (i < args.len) {
+        while (i < args.len) : (i += 1) {
             if (std.mem.eql(u8, args[i], "--strategy") and i + 1 < args.len) {
                 const strat_str = args[i + 1];
                 if (std.mem.eql(u8, strat_str, "greedy")) {
@@ -849,7 +861,32 @@ pub const CLI = struct {
                     std.debug.print("Valid options: greedy, sat, auto\n", .{});
                     return;
                 }
-                i += 2;
+                i += 1;
+            } else if (std.mem.eql(u8, args[i], "--timeout") and i + 1 < args.len) {
+                const seconds = std.fmt.parseInt(u64, args[i + 1], 10) catch {
+                    std.debug.print("Invalid timeout value: {s}\n", .{args[i + 1]});
+                    return;
+                };
+                limits.max_resolution_time_ms = seconds * 1000;
+                i += 1;
+            } else if (std.mem.eql(u8, args[i], "--max-memory") and i + 1 < args.len) {
+                const mb = std.fmt.parseInt(usize, args[i + 1], 10) catch {
+                    std.debug.print("Invalid memory value: {s}\n", .{args[i + 1]});
+                    return;
+                };
+                limits.max_memory_bytes = mb * 1024 * 1024;
+                i += 1;
+            } else if (std.mem.eql(u8, args[i], "--max-depth") and i + 1 < args.len) {
+                const depth = std.fmt.parseInt(u32, args[i + 1], 10) catch {
+                    std.debug.print("Invalid depth value: {s}\n", .{args[i + 1]});
+                    return;
+                };
+                limits.max_dependency_depth = depth;
+                i += 1;
+            } else if (std.mem.eql(u8, args[i], "--strict")) {
+                limits = resolver.ResourceLimits.strict();
+            } else if (std.mem.eql(u8, args[i], "--stats")) {
+                show_stats = true;
             } else {
                 std.debug.print("Unknown option: {s}\n", .{args[i]});
                 return;
@@ -863,12 +900,41 @@ pub const CLI = struct {
         var prof = try self.profile_mgr.loadProfile(name);
         defer prof.deinit(self.allocator);
 
-        // Set resolution strategy
+        // Set resolution strategy and limits
         self.resolver.setStrategy(strategy);
+        self.resolver.setResourceLimits(limits);
+        self.resolver.setShowStats(show_stats);
 
         // Resolve dependencies
         var lock = self.resolver.resolve(prof) catch |err| {
             std.debug.print("\n✗ Resolution failed: {}\n", .{err});
+
+            // Phase 29: Show resource limit diagnostics
+            if (self.resolver.getLastStats()) |stats| {
+                if (stats.limit_hit) |limit| {
+                    std.debug.print("\nResource limit exceeded: {s}\n", .{limit.message()});
+                    std.debug.print("  Time elapsed: {d:.2}s\n", .{stats.elapsedSeconds()});
+                    std.debug.print("  Memory used: {d} MB\n", .{stats.peak_memory_bytes / (1024 * 1024)});
+                    std.debug.print("  Candidates examined: {d}\n", .{stats.candidates_examined});
+                    std.debug.print("  Max depth: {d}\n", .{stats.max_depth_reached});
+
+                    std.debug.print("\nSuggestions:\n", .{});
+                    switch (limit) {
+                        .time => std.debug.print("  → Use --timeout <seconds> to increase time limit\n", .{}),
+                        .memory => std.debug.print("  → Use --max-memory <MB> to increase memory limit\n", .{}),
+                        .depth => std.debug.print("  → Use --max-depth <n> to increase depth limit\n", .{}),
+                        .candidates_per_package, .total_candidates => {
+                            std.debug.print("  → This may indicate a malicious or misconfigured manifest\n", .{});
+                            std.debug.print("  → Consider reviewing the package dependencies\n", .{});
+                        },
+                        .sat_variables, .sat_clauses => {
+                            std.debug.print("  → Try using --strategy greedy for simpler resolution\n", .{});
+                            std.debug.print("  → The dependency graph may be too complex\n", .{});
+                        },
+                    }
+                    return;
+                }
+            }
 
             // Show detailed diagnostics from SAT solver if available
             if (self.resolver.getLastFailure()) |failure| {

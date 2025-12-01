@@ -155,6 +155,301 @@ pub const ResolverError = error{
     ConflictingPackages,
     VirtualPackageAmbiguous,
     KernelIncompatible,
+    // Phase 29: Resource limit errors
+    ResolutionTimeout,
+    MemoryLimitExceeded,
+    DepthLimitExceeded,
+    CandidateLimitExceeded,
+    ComplexityLimitExceeded,
+};
+
+// ============================================================================
+// Phase 29: Resolver Resource Limits
+// ============================================================================
+
+/// Resource limits for dependency resolution
+/// Prevents DoS through malicious manifests with exponential complexity
+pub const ResourceLimits = struct {
+    /// Maximum resolution time in milliseconds (default: 30 seconds)
+    max_resolution_time_ms: u64 = 30_000,
+
+    /// Maximum memory usage in bytes (default: 256 MB)
+    max_memory_bytes: usize = 256 * 1024 * 1024,
+
+    /// Maximum dependency depth (default: 100)
+    max_dependency_depth: u32 = 100,
+
+    /// Maximum candidate versions per package (default: 1000)
+    max_candidates_per_package: u32 = 1000,
+
+    /// Maximum total candidates examined (default: 100,000)
+    max_total_candidates: u32 = 100_000,
+
+    /// Maximum SAT variables (default: 100,000)
+    max_sat_variables: u32 = 100_000,
+
+    /// Maximum SAT clauses (default: 1,000,000)
+    max_sat_clauses: u32 = 1_000_000,
+
+    /// Create unlimited configuration (for testing)
+    pub fn unlimited() ResourceLimits {
+        return .{
+            .max_resolution_time_ms = std.math.maxInt(u64),
+            .max_memory_bytes = std.math.maxInt(usize),
+            .max_dependency_depth = std.math.maxInt(u32),
+            .max_candidates_per_package = std.math.maxInt(u32),
+            .max_total_candidates = std.math.maxInt(u32),
+            .max_sat_variables = std.math.maxInt(u32),
+            .max_sat_clauses = std.math.maxInt(u32),
+        };
+    }
+
+    /// Create strict limits for untrusted inputs
+    pub fn strict() ResourceLimits {
+        return .{
+            .max_resolution_time_ms = 10_000, // 10 seconds
+            .max_memory_bytes = 64 * 1024 * 1024, // 64 MB
+            .max_dependency_depth = 50,
+            .max_candidates_per_package = 100,
+            .max_total_candidates = 10_000,
+            .max_sat_variables = 10_000,
+            .max_sat_clauses = 100_000,
+        };
+    }
+};
+
+/// Statistics collected during resolution
+pub const ResourceStats = struct {
+    /// Resolution start time (milliseconds since epoch)
+    start_time_ms: i64 = 0,
+
+    /// Peak memory usage in bytes
+    peak_memory_bytes: usize = 0,
+
+    /// Current estimated memory usage
+    current_memory_bytes: usize = 0,
+
+    /// Maximum dependency depth reached
+    max_depth_reached: u32 = 0,
+
+    /// Total candidates examined
+    candidates_examined: u32 = 0,
+
+    /// Candidates examined per package (for diagnostics)
+    candidates_per_package: std.StringHashMap(u32) = undefined,
+
+    /// SAT variables created
+    sat_variables: u32 = 0,
+
+    /// SAT clauses created
+    sat_clauses: u32 = 0,
+
+    /// Number of packages resolved
+    packages_resolved: u32 = 0,
+
+    /// Whether limits were hit (and which one)
+    limit_hit: ?LimitType = null,
+
+    pub const LimitType = enum {
+        time,
+        memory,
+        depth,
+        candidates_per_package,
+        total_candidates,
+        sat_variables,
+        sat_clauses,
+
+        pub fn message(self: LimitType) []const u8 {
+            return switch (self) {
+                .time => "resolution timeout exceeded",
+                .memory => "memory limit exceeded",
+                .depth => "dependency depth limit exceeded",
+                .candidates_per_package => "too many candidate versions for package",
+                .total_candidates => "total candidates limit exceeded",
+                .sat_variables => "SAT solver variable limit exceeded",
+                .sat_clauses => "SAT solver clause limit exceeded",
+            };
+        }
+    };
+
+    pub fn init(allocator: std.mem.Allocator) ResourceStats {
+        return .{
+            .start_time_ms = std.time.milliTimestamp(),
+            .candidates_per_package = std.StringHashMap(u32).init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *ResourceStats) void {
+        self.candidates_per_package.deinit();
+    }
+
+    /// Get elapsed time in milliseconds
+    pub fn elapsedMs(self: *const ResourceStats) i64 {
+        return std.time.milliTimestamp() - self.start_time_ms;
+    }
+
+    /// Get elapsed time in seconds (for display)
+    pub fn elapsedSeconds(self: *const ResourceStats) f64 {
+        return @as(f64, @floatFromInt(self.elapsedMs())) / 1000.0;
+    }
+
+    /// Record a candidate examination
+    pub fn recordCandidate(self: *ResourceStats, package_name: []const u8) !void {
+        self.candidates_examined += 1;
+        const entry = try self.candidates_per_package.getOrPut(package_name);
+        if (entry.found_existing) {
+            entry.value_ptr.* += 1;
+        } else {
+            entry.value_ptr.* = 1;
+        }
+    }
+
+    /// Record memory allocation
+    pub fn recordMemory(self: *ResourceStats, bytes: usize) void {
+        self.current_memory_bytes += bytes;
+        if (self.current_memory_bytes > self.peak_memory_bytes) {
+            self.peak_memory_bytes = self.current_memory_bytes;
+        }
+    }
+
+    /// Record memory deallocation
+    pub fn releaseMemory(self: *ResourceStats, bytes: usize) void {
+        if (bytes <= self.current_memory_bytes) {
+            self.current_memory_bytes -= bytes;
+        } else {
+            self.current_memory_bytes = 0;
+        }
+    }
+
+    /// Update depth tracking
+    pub fn recordDepth(self: *ResourceStats, depth: u32) void {
+        if (depth > self.max_depth_reached) {
+            self.max_depth_reached = depth;
+        }
+    }
+
+    /// Format stats for display
+    pub fn format(
+        self: *const ResourceStats,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        try writer.print(
+            "Resolution completed in {d:.2}s\n" ++
+                "  Memory used: {d} MB (peak: {d} MB)\n" ++
+                "  Candidates examined: {d}\n" ++
+                "  Packages resolved: {d}\n" ++
+                "  Maximum depth: {d}\n",
+            .{
+                self.elapsedSeconds(),
+                self.current_memory_bytes / (1024 * 1024),
+                self.peak_memory_bytes / (1024 * 1024),
+                self.candidates_examined,
+                self.packages_resolved,
+                self.max_depth_reached,
+            },
+        );
+        if (self.sat_variables > 0 or self.sat_clauses > 0) {
+            try writer.print(
+                "  SAT variables: {d}\n" ++
+                    "  SAT clauses: {d}\n",
+                .{ self.sat_variables, self.sat_clauses },
+            );
+        }
+        if (self.limit_hit) |limit| {
+            try writer.print("  Limit hit: {s}\n", .{limit.message()});
+        }
+    }
+};
+
+/// Resource limit checker - used during resolution
+pub const ResourceChecker = struct {
+    limits: ResourceLimits,
+    stats: *ResourceStats,
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator, limits: ResourceLimits, stats: *ResourceStats) ResourceChecker {
+        return .{
+            .limits = limits,
+            .stats = stats,
+            .allocator = allocator,
+        };
+    }
+
+    /// Check if time limit has been exceeded
+    pub fn checkTime(self: *ResourceChecker) ResolverError!void {
+        const elapsed: u64 = @intCast(@max(0, self.stats.elapsedMs()));
+        if (elapsed > self.limits.max_resolution_time_ms) {
+            self.stats.limit_hit = .time;
+            return ResolverError.ResolutionTimeout;
+        }
+    }
+
+    /// Check if memory limit has been exceeded
+    pub fn checkMemory(self: *ResourceChecker, additional_bytes: usize) ResolverError!void {
+        const total = self.stats.current_memory_bytes + additional_bytes;
+        if (total > self.limits.max_memory_bytes) {
+            self.stats.limit_hit = .memory;
+            return ResolverError.MemoryLimitExceeded;
+        }
+        self.stats.recordMemory(additional_bytes);
+    }
+
+    /// Check if depth limit has been exceeded
+    pub fn checkDepth(self: *ResourceChecker, depth: u32) ResolverError!void {
+        self.stats.recordDepth(depth);
+        if (depth > self.limits.max_dependency_depth) {
+            self.stats.limit_hit = .depth;
+            return ResolverError.DepthLimitExceeded;
+        }
+    }
+
+    /// Check and record candidate examination
+    pub fn checkCandidate(self: *ResourceChecker, package_name: []const u8) ResolverError!void {
+        try self.checkTime(); // Also check time on each candidate
+
+        self.stats.recordCandidate(package_name) catch {};
+
+        // Check total candidates
+        if (self.stats.candidates_examined > self.limits.max_total_candidates) {
+            self.stats.limit_hit = .total_candidates;
+            return ResolverError.CandidateLimitExceeded;
+        }
+
+        // Check per-package candidates
+        if (self.stats.candidates_per_package.get(package_name)) |count| {
+            if (count > self.limits.max_candidates_per_package) {
+                self.stats.limit_hit = .candidates_per_package;
+                return ResolverError.CandidateLimitExceeded;
+            }
+        }
+    }
+
+    /// Check SAT variable limit
+    pub fn checkSatVariable(self: *ResourceChecker) ResolverError!void {
+        self.stats.sat_variables += 1;
+        if (self.stats.sat_variables > self.limits.max_sat_variables) {
+            self.stats.limit_hit = .sat_variables;
+            return ResolverError.ComplexityLimitExceeded;
+        }
+    }
+
+    /// Check SAT clause limit
+    pub fn checkSatClause(self: *ResourceChecker) ResolverError!void {
+        self.stats.sat_clauses += 1;
+        if (self.stats.sat_clauses > self.limits.max_sat_clauses) {
+            self.stats.limit_hit = .sat_clauses;
+            return ResolverError.ComplexityLimitExceeded;
+        }
+    }
+
+    /// Record a package resolution
+    pub fn recordResolution(self: *ResourceChecker) void {
+        self.stats.packages_resolved += 1;
+    }
 };
 
 /// A candidate package version available in the store
@@ -371,6 +666,12 @@ pub const Resolver = struct {
     kernel_ctx: KernelContext,
     /// Last resolution failure details (for diagnostics)
     last_failure: ?sat_resolver.ResolutionFailure = null,
+    /// Phase 29: Resource limits for resolution
+    resource_limits: ResourceLimits = .{},
+    /// Phase 29: Last resolution statistics
+    last_stats: ?ResourceStats = null,
+    /// Phase 29: Whether to show stats after resolution
+    show_stats: bool = false,
 
     /// Initialize resolver with default greedy strategy
     pub fn init(allocator: std.mem.Allocator, store_ptr: *PackageStore) Resolver {
@@ -406,6 +707,32 @@ pub const Resolver = struct {
         self.strategy = strategy;
     }
 
+    /// Phase 29: Set resource limits
+    pub fn setResourceLimits(self: *Resolver, limits: ResourceLimits) void {
+        self.resource_limits = limits;
+    }
+
+    /// Phase 29: Enable/disable stats display
+    pub fn setShowStats(self: *Resolver, show: bool) void {
+        self.show_stats = show;
+    }
+
+    /// Phase 29: Get last resolution statistics
+    pub fn getLastStats(self: *Resolver) ?*const ResourceStats {
+        if (self.last_stats) |*stats| {
+            return stats;
+        }
+        return null;
+    }
+
+    /// Phase 29: Clean up last stats
+    pub fn clearLastStats(self: *Resolver) void {
+        if (self.last_stats) |*stats| {
+            stats.deinit();
+            self.last_stats = null;
+        }
+    }
+
     /// Get last resolution failure details
     pub fn getLastFailure(self: *Resolver) ?*sat_resolver.ResolutionFailure {
         if (self.last_failure) |*failure| {
@@ -429,14 +756,27 @@ pub const Resolver = struct {
     ) !ProfileLock {
         std.debug.print("Resolving profile: {s}\n", .{prof.name});
 
-        // Clear any previous failure
+        // Clear any previous failure and stats
         self.clearLastFailure();
+        self.clearLastStats();
 
-        return switch (self.strategy) {
+        // Phase 29: Initialize resource stats
+        self.last_stats = ResourceStats.init(self.allocator);
+
+        const result = switch (self.strategy) {
             .greedy => self.resolveGreedy(prof),
             .sat => self.resolveSAT(prof),
             .greedy_with_sat_fallback => self.resolveWithFallback(prof),
         };
+
+        // Phase 29: Show stats if enabled
+        if (self.show_stats) {
+            if (self.last_stats) |stats| {
+                std.debug.print("\n{}\n", .{stats});
+            }
+        }
+
+        return result;
     }
 
     /// Resolve using greedy algorithm
