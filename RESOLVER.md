@@ -350,6 +350,95 @@ A → B → C → A
 
 **Resolution**: Add package to store or fix package name
 
+## Resource Limits (Phase 29)
+
+To prevent denial-of-service attacks and runaway resolution, the resolver enforces configurable resource limits.
+
+### Available Limits
+
+| Limit | Default | Description |
+|-------|---------|-------------|
+| `max_resolution_time_ms` | 30,000 | Maximum time for resolution (30 seconds) |
+| `max_memory_bytes` | 256 MB | Maximum memory usage |
+| `max_dependency_depth` | 100 | Maximum dependency chain depth |
+| `max_candidates_per_package` | 1,000 | Maximum versions considered per package |
+| `max_total_candidates` | 100,000 | Total candidates across all packages |
+| `max_sat_variables` | 100,000 | SAT solver variable limit |
+| `max_sat_clauses` | 1,000,000 | SAT solver clause limit |
+
+### Limit Presets
+
+**Default limits**: Balanced for typical workloads
+```zig
+ResourceLimits{}  // Uses defaults above
+```
+
+**Strict limits**: Tighter constraints for untrusted inputs
+```zig
+ResourceLimits.strict()
+// 10 seconds, 64 MB, depth 50, 100 candidates/pkg
+```
+
+**Unlimited**: For benchmarking only (not recommended for production)
+```zig
+ResourceLimits.unlimited()
+```
+
+### CLI Options
+
+```bash
+# Set timeout (milliseconds)
+axiom resolve myprofile --timeout 60000
+
+# Set memory limit (bytes)
+axiom resolve myprofile --max-memory 134217728
+
+# Set maximum dependency depth
+axiom resolve myprofile --max-depth 50
+
+# Use strict preset
+axiom resolve myprofile --strict
+
+# Show resolution statistics
+axiom resolve myprofile --stats
+```
+
+### Resource Statistics
+
+When `--stats` is enabled, the resolver reports:
+
+```
+Resolution Statistics:
+  Time elapsed: 1.23s
+  Peak memory: 45 MB
+  Candidates examined: 1,234
+  Dependency depth reached: 12
+  Packages resolved: 47
+```
+
+### Error Handling
+
+When a limit is exceeded, the resolver returns a specific error:
+
+| Error | Meaning |
+|-------|---------|
+| `ResolutionTimeout` | Exceeded time limit |
+| `MemoryLimitExceeded` | Exceeded memory limit |
+| `DependencyDepthExceeded` | Dependency chain too deep |
+| `TooManyCandidates` | Too many version candidates |
+| `SatSolverLimitExceeded` | SAT solver complexity too high |
+
+### Security Considerations
+
+Resource limits protect against:
+
+1. **Malicious manifests**: Crafted to cause exponential resolution time
+2. **Dependency bombs**: Packages with thousands of transitive dependencies
+3. **Circular complexity**: Deeply nested or recursive structures
+4. **Memory exhaustion**: Large candidate sets consuming all RAM
+
+---
+
 ## Performance Considerations
 
 ### Current Complexity

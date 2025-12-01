@@ -28,6 +28,18 @@ The foundational layer providing direct bindings to FreeBSD's libzfs.
 - `mount()` / `unmount()` - Control dataset mounting
 - `send()` / `receive()` - ZFS stream operations for distribution
 
+**Thread-Safe Operations (Phase 30):**
+- `ThreadSafeZfs` - Thread-safe wrapper with global mutex
+- `ScopedOperation` - RAII-style lock management for compound operations
+- `ZfsErrorContext` - Per-thread error context storage
+- `getGlobalThreadSafeZfs()` - Singleton accessor for multi-threaded use
+
+**Path Validation (Phase 26):**
+- `ZfsPathValidator` - Validates dataset paths against injection attacks
+- `validateComponent()` - Validates individual path components
+- `validateDatasetPath()` - Ensures paths stay within store hierarchy
+- `sanitizeComponent()` - Safely converts untrusted input to valid paths
+
 **Dependencies:** libzfs, libnvpair, libzfs_core (C libraries)
 
 #### `src/types.zig` - Core Type Definitions
@@ -410,6 +422,100 @@ Converts FreeBSD ports metadata into Axiom manifests for ecosystem bootstrapping
 
 **Kernel Module Detection:**
 Ports with `USES=kmod` or `CATEGORIES=kld` are automatically detected as kernel modules. The generated manifest includes a `kernel` section with version constraints based on the build system's FreeBSD version.
+
+---
+
+### Security Hardening (Phases 24-30)
+
+Axiom implements comprehensive security hardening to protect against supply chain attacks, path traversal, and resource exhaustion.
+
+#### `src/import.zig` - Secure Tar Extraction (Phase 24)
+Prevents path traversal attacks during package import.
+
+**Key Functions:**
+- `secureExtract()` - Validates all paths before extraction
+- `validateTarPath()` - Checks for `..`, absolute paths, symlink attacks
+- `sanitizePath()` - Normalizes paths safely
+
+**Protected Against:**
+- Directory traversal (`../../../etc/passwd`)
+- Absolute path overwrites (`/etc/shadow`)
+- Symlink-based escapes
+- Null byte injection
+
+#### `src/signature.zig` - Mandatory Signature Verification (Phase 25)
+Type-safe signature verification with explicit status tracking.
+
+**Key Types:**
+- `SignatureVerifyResult` - Enum with explicit verification states
+- `VerificationStatus` - Tracks verified/unverified/failed states
+- `TrustLevel` - trusted, untrusted, unknown
+
+**States:**
+- `verified` - Valid signature from trusted key
+- `untrusted` - Valid signature from unknown key
+- `invalid` - Signature verification failed
+- `unsigned` - No signature present
+- `tampered` - Content modified after signing
+
+#### `src/build.zig` - Build Sandboxing (Phase 27)
+Isolates builds in FreeBSD jails for security.
+
+**Key Types:**
+- `BuildSandbox` - Jail-based isolation
+- `SandboxConfig` - Network, filesystem restrictions
+- `JailParams` - FreeBSD jail parameters
+
+**Features:**
+- Network isolation (optional)
+- Filesystem restrictions
+- Resource limits (CPU, memory)
+- Capability restrictions
+
+#### `src/bundle.zig` - Secure Bundle Verification (Phase 28)
+Pre-execution verification for portable bundles.
+
+**Key Types:**
+- `SecureBundleLauncher` - Verify-before-execute launcher
+- `BundleVerificationResult` - Detailed verification outcome
+- `BundleVerificationStatus` - verified, untrusted, invalid, tampered
+
+**Verification Flow:**
+1. Parse bundle manifest
+2. Verify Ed25519 signature
+3. Check payload SHA-256 hash
+4. Validate trust chain
+5. Execute only if verified
+
+#### `src/resolver.zig` - Resource Limits (Phase 29)
+Prevents denial-of-service through resource exhaustion.
+
+**Key Types:**
+- `ResourceLimits` - Configurable thresholds
+- `ResourceStats` - Runtime statistics
+- `ResourceChecker` - Validates during resolution
+
+**Limits:**
+- Time: 30 seconds default
+- Memory: 256 MB default
+- Depth: 100 levels default
+- Candidates: 1000 per package
+
+#### `src/zfs.zig` - Thread-Safe Operations (Phase 30)
+Serializes libzfs access for multi-threaded safety.
+
+**Key Types:**
+- `ThreadSafeZfs` - Global mutex wrapper
+- `ScopedOperation` - RAII lock management
+- `ZfsErrorContext` - Per-thread error storage
+
+**Pattern:**
+```zig
+var op = zfs.scopedOperation();
+defer op.deinit();
+const handle = try op.begin();
+// All ZFS calls serialized within scope
+```
 
 ---
 
