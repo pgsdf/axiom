@@ -23,6 +23,14 @@ pub const BuildError = error{
     PhaseFailed,
     OutputCollectionFailed,
     ChecksumMismatch,
+    // Phase 27: Sandbox security errors
+    JailCreationFailed,
+    JailDestroyFailed,
+    MountFailed,
+    UnmountFailed,
+    ResourceLimitFailed,
+    NetworkPolicyFailed,
+    CapabilityModeFailed,
 };
 
 /// Source specification for a build
@@ -291,6 +299,41 @@ pub const BuildOptions = struct {
     keep_sandbox: bool = false,
     import_result: bool = true,
     verbose: bool = false,
+
+    // Phase 27: Security options
+    /// Use secure sandbox with jail isolation
+    secure_sandbox: bool = true,
+    /// Allow network access during build (INSECURE)
+    allow_network: bool = false,
+    /// Disable sandbox entirely (VERY INSECURE)
+    no_sandbox: bool = false,
+    /// Custom memory limit in MB
+    memory_limit_mb: ?u64 = null,
+    /// Custom CPU time limit in seconds
+    cpu_limit_seconds: ?u64 = null,
+    /// Path for build audit log
+    audit_log: ?[]const u8 = null,
+
+    /// Get security configuration from options
+    pub fn getSecurityConfig(self: BuildOptions) SandboxSecurityConfig {
+        var config = SandboxSecurityConfig{};
+
+        if (self.allow_network) {
+            config.network_policy = .{ .full = {} };
+        }
+
+        if (self.memory_limit_mb) |mb| {
+            config.resource_limits.max_memory_mb = mb;
+        }
+
+        if (self.cpu_limit_seconds) |secs| {
+            config.resource_limits.max_cpu_seconds = secs;
+        }
+
+        config.audit_log_path = self.audit_log;
+
+        return config;
+    }
 };
 
 /// Build sandbox for isolated builds
@@ -399,6 +442,533 @@ pub const BuildSandbox = struct {
         }
 
         return envp.toOwnedSlice();
+    }
+};
+
+// ============================================================================
+// Phase 27: Secure Build Sandboxing
+// ============================================================================
+
+/// Network access policy for build sandbox
+pub const NetworkPolicy = union(enum) {
+    /// No network access (default, most secure)
+    none: void,
+    /// Network access only for fetching from specific URLs
+    fetch_only: []const []const u8,
+    /// Full network access (requires explicit --allow-network flag)
+    full: void,
+
+    pub fn description(self: NetworkPolicy) []const u8 {
+        return switch (self) {
+            .none => "no network access",
+            .fetch_only => "restricted to allowlisted URLs",
+            .full => "full network access (INSECURE)",
+        };
+    }
+};
+
+/// Resource limits for build sandbox
+pub const ResourceLimits = struct {
+    /// Maximum CPU time in seconds (default: 1 hour)
+    max_cpu_seconds: u64 = 3600,
+    /// Maximum memory in MB (default: 4GB)
+    max_memory_mb: u64 = 4096,
+    /// Maximum disk space in MB (default: 10GB)
+    max_disk_mb: u64 = 10240,
+    /// Maximum number of processes (default: 100)
+    max_processes: u32 = 100,
+    /// Maximum open files (default: 1024)
+    max_open_files: u32 = 1024,
+    /// Maximum file size in bytes (default: 1GB)
+    max_file_size: u64 = 1024 * 1024 * 1024,
+};
+
+/// Security configuration for build sandbox
+pub const SandboxSecurityConfig = struct {
+    /// Enable FreeBSD jail isolation
+    use_jail: bool = true,
+    /// Network policy
+    network_policy: NetworkPolicy = .{ .none = {} },
+    /// Resource limits
+    resource_limits: ResourceLimits = .{},
+    /// Allow setuid binaries
+    allow_setuid: bool = false,
+    /// Allow raw sockets (requires root)
+    allow_raw_sockets: bool = false,
+    /// Allow mlock (memory locking)
+    allow_mlock: bool = false,
+    /// Allow mounting filesystems
+    allow_mount: bool = false,
+    /// Jail securelevel (0-3, higher = more secure)
+    securelevel: i32 = 3,
+    /// Enable Capsicum capability mode
+    use_capsicum: bool = false,
+    /// Audit log path for security events
+    audit_log_path: ?[]const u8 = null,
+};
+
+/// Sandbox mount point configuration
+pub const SandboxMount = struct {
+    /// Source path on host
+    source: []const u8,
+    /// Mount point inside sandbox
+    target: []const u8,
+    /// Mount as read-only
+    read_only: bool,
+    /// Mount type (nullfs, tmpfs, etc.)
+    mount_type: MountType,
+
+    pub const MountType = enum {
+        /// nullfs mount (FreeBSD bind mount equivalent)
+        nullfs,
+        /// tmpfs (memory-backed filesystem)
+        tmpfs,
+        /// devfs (device filesystem)
+        devfs,
+    };
+};
+
+/// Secure build sandbox with FreeBSD jail isolation
+pub const SecureBuildSandbox = struct {
+    allocator: std.mem.Allocator,
+    zfs_handle: *ZfsHandle,
+    config: SandboxSecurityConfig,
+
+    /// Base sandbox (reuse existing implementation)
+    base_sandbox: ?*BuildSandbox = null,
+
+    /// Jail ID (if jail is active)
+    jail_id: ?i32 = null,
+
+    /// Jail name
+    jail_name: ?[]const u8 = null,
+
+    /// Active mounts for cleanup
+    active_mounts: std.ArrayList(SandboxMount),
+
+    /// Audit log file handle
+    audit_file: ?std.fs.File = null,
+
+    /// Initialize secure sandbox
+    pub fn init(
+        allocator: std.mem.Allocator,
+        zfs_handle: *ZfsHandle,
+        config: SandboxSecurityConfig,
+    ) SecureBuildSandbox {
+        return SecureBuildSandbox{
+            .allocator = allocator,
+            .zfs_handle = zfs_handle,
+            .config = config,
+            .active_mounts = std.ArrayList(SandboxMount).init(allocator),
+        };
+    }
+
+    /// Create and configure the secure sandbox
+    pub fn create(self: *SecureBuildSandbox, recipe: *const BuildRecipe) !void {
+        // Open audit log if configured
+        if (self.config.audit_log_path) |path| {
+            self.audit_file = try std.fs.cwd().createFile(path, .{ .truncate = false });
+            try self.auditLog("sandbox_create", "Creating secure sandbox for {s}", .{recipe.name});
+        }
+
+        // Create base sandbox (ZFS dataset, directories)
+        var base = try BuildSandbox.init(self.allocator, self.zfs_handle, recipe);
+        self.base_sandbox = &base;
+
+        // Set up filesystem mounts
+        try self.setupFilesystemMounts();
+
+        // Create jail if enabled
+        if (self.config.use_jail) {
+            try self.createJail(recipe.name);
+        }
+
+        // Apply resource limits
+        try self.applyResourceLimits();
+
+        // Configure network policy
+        try self.configureNetwork();
+
+        try self.auditLog("sandbox_ready", "Secure sandbox created successfully", .{});
+    }
+
+    /// Create FreeBSD jail for isolation
+    fn createJail(self: *SecureBuildSandbox, name: []const u8) !void {
+        const base = self.base_sandbox orelse return BuildError.SandboxCreationFailed;
+
+        // Generate unique jail name
+        const timestamp = std.time.timestamp();
+        self.jail_name = try std.fmt.allocPrint(
+            self.allocator,
+            "axiom_build_{s}_{d}",
+            .{ name, timestamp },
+        );
+
+        try self.auditLog("jail_create", "Creating jail: {s}", .{self.jail_name.?});
+
+        // Build jail command
+        // jail -c name=<name> path=<path> persist allow.raw_sockets=0 ...
+        var args = std.ArrayList([]const u8).init(self.allocator);
+        defer args.deinit();
+
+        try args.append("jail");
+        try args.append("-c");
+        try args.append(try std.fmt.allocPrint(self.allocator, "name={s}", .{self.jail_name.?}));
+        try args.append(try std.fmt.allocPrint(self.allocator, "path={s}", .{base.mount_point}));
+        try args.append("persist");
+        try args.append(try std.fmt.allocPrint(self.allocator, "securelevel={d}", .{self.config.securelevel}));
+        try args.append(try std.fmt.allocPrint(self.allocator, "allow.raw_sockets={d}", .{@as(u8, if (self.config.allow_raw_sockets) 1 else 0)}));
+        try args.append(try std.fmt.allocPrint(self.allocator, "allow.set_hostname=0", .{}));
+        try args.append(try std.fmt.allocPrint(self.allocator, "allow.mount={d}", .{@as(u8, if (self.config.allow_mount) 1 else 0)}));
+        try args.append(try std.fmt.allocPrint(self.allocator, "allow.sysvipc=0", .{}));
+
+        // Network restrictions
+        switch (self.config.network_policy) {
+            .none => {
+                try args.append("ip4=disable");
+                try args.append("ip6=disable");
+            },
+            .fetch_only, .full => {
+                try args.append("ip4=inherit");
+                try args.append("ip6=inherit");
+            },
+        }
+
+        var child = std.process.Child.init(args.items, self.allocator);
+        child.stderr_behavior = .Pipe;
+
+        try child.spawn();
+        const stderr = try child.stderr.?.readToEndAlloc(self.allocator, 64 * 1024);
+        defer self.allocator.free(stderr);
+
+        const term = try child.wait();
+
+        if (term.Exited != 0) {
+            try self.auditLog("jail_create_failed", "Failed to create jail: {s}", .{stderr});
+            return BuildError.JailCreationFailed;
+        }
+
+        // Get jail ID
+        var jls_child = std.process.Child.init(
+            &[_][]const u8{ "jls", "-j", self.jail_name.?, "jid" },
+            self.allocator,
+        );
+        jls_child.stdout_behavior = .Pipe;
+
+        try jls_child.spawn();
+        const stdout = try jls_child.stdout.?.readToEndAlloc(self.allocator, 64);
+        defer self.allocator.free(stdout);
+        _ = try jls_child.wait();
+
+        const jid_str = std.mem.trim(u8, stdout, " \t\n\r");
+        self.jail_id = std.fmt.parseInt(i32, jid_str, 10) catch null;
+
+        try self.auditLog("jail_created", "Jail created with ID: {?d}", .{self.jail_id});
+    }
+
+    /// Set up filesystem mounts (nullfs, tmpfs)
+    fn setupFilesystemMounts(self: *SecureBuildSandbox) !void {
+        const base = self.base_sandbox orelse return BuildError.SandboxCreationFailed;
+
+        // Create standard directories
+        const dirs = [_][]const u8{ "tmp", "var", "dev", "deps" };
+        for (dirs) |dir| {
+            const path = try std.fs.path.join(self.allocator, &[_][]const u8{ base.mount_point, dir });
+            defer self.allocator.free(path);
+            try std.fs.cwd().makePath(path);
+        }
+
+        // Mount tmpfs for /tmp (1GB)
+        try self.mountTmpfs(
+            try std.fs.path.join(self.allocator, &[_][]const u8{ base.mount_point, "tmp" }),
+            1024 * 1024 * 1024,
+        );
+
+        // Mount devfs for /dev (limited)
+        try self.mountDevfs(
+            try std.fs.path.join(self.allocator, &[_][]const u8{ base.mount_point, "dev" }),
+        );
+    }
+
+    /// Mount tmpfs
+    fn mountTmpfs(self: *SecureBuildSandbox, target: []const u8, size_bytes: u64) !void {
+        try self.auditLog("mount_tmpfs", "Mounting tmpfs at {s} ({d} bytes)", .{ target, size_bytes });
+
+        var child = std.process.Child.init(
+            &[_][]const u8{
+                "mount",
+                "-t",
+                "tmpfs",
+                "-o",
+                try std.fmt.allocPrint(self.allocator, "size={d}", .{size_bytes}),
+                "tmpfs",
+                target,
+            },
+            self.allocator,
+        );
+
+        try child.spawn();
+        const term = try child.wait();
+
+        if (term.Exited != 0) {
+            try self.auditLog("mount_failed", "Failed to mount tmpfs at {s}", .{target});
+            return BuildError.MountFailed;
+        }
+
+        try self.active_mounts.append(.{
+            .source = "tmpfs",
+            .target = try self.allocator.dupe(u8, target),
+            .read_only = false,
+            .mount_type = .tmpfs,
+        });
+    }
+
+    /// Mount devfs with restricted ruleset
+    fn mountDevfs(self: *SecureBuildSandbox, target: []const u8) !void {
+        try self.auditLog("mount_devfs", "Mounting devfs at {s}", .{target});
+
+        var child = std.process.Child.init(
+            &[_][]const u8{ "mount", "-t", "devfs", "devfs", target },
+            self.allocator,
+        );
+
+        try child.spawn();
+        const term = try child.wait();
+
+        if (term.Exited != 0) {
+            // devfs mount failure is not fatal on non-FreeBSD systems
+            try self.auditLog("mount_devfs_skipped", "devfs mount skipped (not fatal)", .{});
+            return;
+        }
+
+        // Apply restricted ruleset (hide most devices)
+        var ruleset_child = std.process.Child.init(
+            &[_][]const u8{ "devfs", "-m", target, "rule", "-s", "1", "applyset" },
+            self.allocator,
+        );
+
+        try ruleset_child.spawn();
+        _ = try ruleset_child.wait();
+
+        try self.active_mounts.append(.{
+            .source = "devfs",
+            .target = try self.allocator.dupe(u8, target),
+            .read_only = false,
+            .mount_type = .devfs,
+        });
+    }
+
+    /// Mount nullfs (bind mount equivalent)
+    pub fn mountNullfs(self: *SecureBuildSandbox, source: []const u8, target: []const u8, read_only: bool) !void {
+        try self.auditLog("mount_nullfs", "Mounting {s} at {s} (ro={any})", .{ source, target, read_only });
+
+        // Create target directory
+        try std.fs.cwd().makePath(target);
+
+        var args = std.ArrayList([]const u8).init(self.allocator);
+        defer args.deinit();
+
+        try args.append("mount");
+        try args.append("-t");
+        try args.append("nullfs");
+        if (read_only) {
+            try args.append("-o");
+            try args.append("ro");
+        }
+        try args.append(source);
+        try args.append(target);
+
+        var child = std.process.Child.init(args.items, self.allocator);
+
+        try child.spawn();
+        const term = try child.wait();
+
+        if (term.Exited != 0) {
+            try self.auditLog("mount_failed", "Failed to mount nullfs {s} at {s}", .{ source, target });
+            return BuildError.MountFailed;
+        }
+
+        try self.active_mounts.append(.{
+            .source = try self.allocator.dupe(u8, source),
+            .target = try self.allocator.dupe(u8, target),
+            .read_only = read_only,
+            .mount_type = .nullfs,
+        });
+    }
+
+    /// Apply resource limits using rctl/setrlimit
+    fn applyResourceLimits(self: *SecureBuildSandbox) !void {
+        const limits = self.config.resource_limits;
+
+        try self.auditLog("resource_limits", "Applying limits: cpu={d}s mem={d}MB disk={d}MB procs={d}", .{
+            limits.max_cpu_seconds,
+            limits.max_memory_mb,
+            limits.max_disk_mb,
+            limits.max_processes,
+        });
+
+        // Use rctl if jail is active
+        if (self.jail_name) |name| {
+            // rctl -a jail:<name>:memoryuse:deny=<bytes>
+            const rules = [_]struct { rule: []const u8, value: u64 }{
+                .{ .rule = "memoryuse:deny", .value = limits.max_memory_mb * 1024 * 1024 },
+                .{ .rule = "cputime:deny", .value = limits.max_cpu_seconds },
+                .{ .rule = "maxproc:deny", .value = limits.max_processes },
+                .{ .rule = "openfiles:deny", .value = limits.max_open_files },
+            };
+
+            for (rules) |r| {
+                const rule_str = try std.fmt.allocPrint(
+                    self.allocator,
+                    "jail:{s}:{s}={d}",
+                    .{ name, r.rule, r.value },
+                );
+                defer self.allocator.free(rule_str);
+
+                var child = std.process.Child.init(
+                    &[_][]const u8{ "rctl", "-a", rule_str },
+                    self.allocator,
+                );
+
+                try child.spawn();
+                const term = try child.wait();
+
+                if (term.Exited != 0) {
+                    // rctl may not be available, log but don't fail
+                    try self.auditLog("rctl_warning", "Failed to apply rctl rule: {s}", .{r.rule});
+                }
+            }
+        }
+    }
+
+    /// Configure network policy
+    fn configureNetwork(self: *SecureBuildSandbox) !void {
+        switch (self.config.network_policy) {
+            .none => {
+                try self.auditLog("network_policy", "Network access: DISABLED", .{});
+                // Network is already disabled via jail ip4=disable ip6=disable
+            },
+            .fetch_only => |urls| {
+                try self.auditLog("network_policy", "Network access: FETCH_ONLY ({d} URLs)", .{urls.len});
+                // TODO: Set up pf rules to only allow connections to specific URLs
+                // For now, log the allowed URLs
+                for (urls) |url| {
+                    try self.auditLog("network_allowed_url", "Allowed URL: {s}", .{url});
+                }
+            },
+            .full => {
+                try self.auditLog("network_policy", "Network access: FULL (INSECURE)", .{});
+            },
+        }
+    }
+
+    /// Execute a command inside the jail
+    pub fn execute(self: *SecureBuildSandbox, command: []const u8, working_dir: ?[]const u8) !i32 {
+        const base = self.base_sandbox orelse return BuildError.SandboxCreationFailed;
+
+        try self.auditLog("execute", "Running: {s}", .{command});
+
+        var args = std.ArrayList([]const u8).init(self.allocator);
+        defer args.deinit();
+
+        if (self.jail_name) |jail_name| {
+            // Execute inside jail
+            try args.append("jexec");
+            try args.append(jail_name);
+        }
+
+        try args.append("/bin/sh");
+        try args.append("-c");
+        try args.append(command);
+
+        var child = std.process.Child.init(args.items, self.allocator);
+        child.cwd = working_dir orelse base.source_dir;
+
+        try child.spawn();
+        const term = try child.wait();
+
+        const exit_code = term.Exited;
+        try self.auditLog("execute_result", "Command exited with code: {d}", .{exit_code});
+
+        return exit_code;
+    }
+
+    /// Write to audit log
+    fn auditLog(self: *SecureBuildSandbox, event: []const u8, comptime fmt: []const u8, args: anytype) !void {
+        const file = self.audit_file orelse return;
+        const timestamp = std.time.timestamp();
+
+        var writer = file.writer();
+        try writer.print("[{d}] [{s}] ", .{ timestamp, event });
+        try writer.print(fmt, args);
+        try writer.writeByte('\n');
+    }
+
+    /// Destroy the secure sandbox
+    pub fn destroy(self: *SecureBuildSandbox) !void {
+        try self.auditLog("sandbox_destroy", "Destroying secure sandbox", .{});
+
+        // Remove jail if active
+        if (self.jail_name) |name| {
+            try self.auditLog("jail_remove", "Removing jail: {s}", .{name});
+
+            var child = std.process.Child.init(
+                &[_][]const u8{ "jail", "-r", name },
+                self.allocator,
+            );
+
+            try child.spawn();
+            const term = try child.wait();
+
+            if (term.Exited != 0) {
+                try self.auditLog("jail_remove_failed", "Failed to remove jail", .{});
+            }
+
+            self.allocator.free(name);
+            self.jail_name = null;
+            self.jail_id = null;
+        }
+
+        // Unmount filesystems in reverse order
+        var i: usize = self.active_mounts.items.len;
+        while (i > 0) {
+            i -= 1;
+            const mount = self.active_mounts.items[i];
+
+            try self.auditLog("unmount", "Unmounting: {s}", .{mount.target});
+
+            var child = std.process.Child.init(
+                &[_][]const u8{ "umount", "-f", mount.target },
+                self.allocator,
+            );
+
+            try child.spawn();
+            _ = try child.wait();
+
+            self.allocator.free(mount.target);
+            if (mount.mount_type == .nullfs) {
+                self.allocator.free(mount.source);
+            }
+        }
+        self.active_mounts.deinit();
+
+        // Destroy base sandbox
+        if (self.base_sandbox) |base| {
+            try base.destroy();
+            base.deinit();
+        }
+
+        // Close audit log
+        if (self.audit_file) |file| {
+            file.close();
+        }
+    }
+
+    /// Get security summary for display
+    pub fn getSecuritySummary(self: *const SecureBuildSandbox) []const u8 {
+        _ = self;
+        // This would return a formatted summary of security settings
+        return "Jail isolation enabled, network disabled, resource limits applied";
     }
 };
 

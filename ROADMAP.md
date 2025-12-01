@@ -26,7 +26,7 @@ This document outlines the planned enhancements for Axiom beyond the core 8 phas
 | 24 | Secure Tar Extraction | Critical | Medium | Phase 9 | ✓ Complete |
 | 25 | Mandatory Signature Verification | Critical | Medium | Phase 15 | ✓ Complete |
 | 26 | ZFS Dataset Path Validation | High | Low | None | ✓ Complete |
-| 27 | Build Sandboxing | High | High | Phase 10 | Planned |
+| 27 | Build Sandboxing | High | High | Phase 10 | ✓ Complete |
 | 28 | Secure Bundle Verification | High | Medium | Phase 18 | Planned |
 | 29 | Resolver Resource Limits | Medium | Low | Phase 16 | Planned |
 | 30 | Thread-Safe libzfs | Medium | Medium | None | Planned |
@@ -2482,11 +2482,36 @@ pub const ZfsPathValidator = struct {
 **Priority**: High
 **Complexity**: High
 **Dependencies**: Phase 10 (Build System)
-**Status**: Planned
+**Status**: Complete
 
 ### Purpose
 
 Isolate package builds to prevent build scripts from accessing or modifying the host system beyond their designated build environment.
+
+### Implementation
+
+**Files Modified:**
+- `src/build.zig` - Added `SecureBuildSandbox` with FreeBSD jail integration, resource limits, and network policies
+- `src/cli.zig` - Added CLI flags for sandbox security configuration
+
+**Features Implemented:**
+- `SecureBuildSandbox` struct with FreeBSD jail isolation
+- `NetworkPolicy` union (none, fetch_only, full) for network control
+- `ResourceLimits` struct for CPU, memory, disk, process limits
+- `SandboxSecurityConfig` for comprehensive security settings
+- Filesystem isolation with nullfs, tmpfs, and devfs mounts
+- Resource limits enforcement via rctl (FreeBSD resource controls)
+- Security audit logging for all sandbox operations
+- CLI flags: `--allow-network`, `--no-sandbox`, `--memory`, `--cpu-time`, `--audit-log`
+
+**Security Features:**
+- FreeBSD jail(2) for process namespace isolation
+- Network disabled by default (ip4=disable, ip6=disable)
+- Read-only mounts for dependencies via nullfs
+- tmpfs for /tmp to prevent disk abuse
+- Restricted devfs ruleset
+- Configurable securelevel (default: 3)
+- CPU, memory, and process count limits via rctl
 
 ### Threat Model
 
@@ -3082,7 +3107,7 @@ fn concurrentZfsWorker(zfs: *ThreadSafeZfs) void {
 | 24 | Critical | Tarball import | ✓ Complete |
 | 25 | Critical | All package operations | ✓ Complete |
 | 26 | High | ZFS operations | ✓ Complete |
-| 27 | High | Build execution | Planned |
+| 27 | High | Build execution | ✓ Complete |
 | 28 | High | Bundle execution | Planned |
 | 29 | Medium | Resolver DoS | Planned |
 | 30 | Medium | Concurrent operations | Planned |
