@@ -1152,3 +1152,643 @@ test "snapshot and clone" {
     try zfs.destroyDataset(allocator, clone_target, false);
     try zfs.destroyDataset(allocator, test_dataset, true);
 }
+
+// ============================================================================
+// Phase 30: Thread-Safe libzfs Operations
+// ============================================================================
+
+/// Thread-safe ZFS error context
+/// Stores per-operation error information to avoid race conditions
+pub const ZfsErrorContext = struct {
+    /// Last error code
+    last_error: ?ZfsError = null,
+    /// Last error message (static buffer to avoid allocation)
+    message_buf: [256]u8 = [_]u8{0} ** 256,
+    /// Length of valid error message
+    message_len: usize = 0,
+
+    /// Set error information
+    pub fn setError(self: *ZfsErrorContext, err: ZfsError, msg: []const u8) void {
+        self.last_error = err;
+        const copy_len = @min(msg.len, self.message_buf.len - 1);
+        @memcpy(self.message_buf[0..copy_len], msg[0..copy_len]);
+        self.message_buf[copy_len] = 0;
+        self.message_len = copy_len;
+    }
+
+    /// Get error message
+    pub fn getMessage(self: *const ZfsErrorContext) []const u8 {
+        return self.message_buf[0..self.message_len];
+    }
+
+    /// Clear error state
+    pub fn clear(self: *ZfsErrorContext) void {
+        self.last_error = null;
+        self.message_len = 0;
+    }
+};
+
+/// Thread-safe wrapper for ZFS operations
+/// libzfs is NOT thread-safe, so all operations must be serialized
+pub const ThreadSafeZfs = struct {
+    /// Global mutex for all libzfs operations
+    /// Since libzfs uses global state internally, we must serialize all access
+    global_lock: std.Thread.Mutex = .{},
+
+    /// The underlying ZFS handle (lazily initialized)
+    handle: ?*c.libzfs_handle_t = null,
+
+    /// Handle initialization lock (separate from operation lock)
+    init_lock: std.Thread.Mutex = .{},
+
+    /// Reference count for handle lifecycle management
+    ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+
+    /// Whether the handle has been initialized
+    initialized: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+    /// Per-thread error context using thread ID as key
+    /// Note: In production, consider using thread-local storage
+    error_contexts: std.AutoHashMap(std.Thread.Id, ZfsErrorContext) = undefined,
+    error_lock: std.Thread.Mutex = .{},
+
+    /// Initialize the thread-safe ZFS wrapper
+    pub fn init(allocator: std.mem.Allocator) ThreadSafeZfs {
+        return .{
+            .error_contexts = std.AutoHashMap(std.Thread.Id, ZfsErrorContext).init(allocator),
+        };
+    }
+
+    /// Clean up all resources
+    pub fn deinit(self: *ThreadSafeZfs) void {
+        self.global_lock.lock();
+        defer self.global_lock.unlock();
+
+        if (self.handle) |h| {
+            c.libzfs_fini(h);
+            self.handle = null;
+        }
+
+        self.error_lock.lock();
+        defer self.error_lock.unlock();
+        self.error_contexts.deinit();
+
+        self.initialized.store(false, .release);
+    }
+
+    /// Get or create the libzfs handle (thread-safe)
+    fn getHandle(self: *ThreadSafeZfs) ZfsError!*c.libzfs_handle_t {
+        // Fast path: handle already initialized
+        if (self.initialized.load(.acquire)) {
+            return self.handle orelse ZfsError.InitFailed;
+        }
+
+        // Slow path: need to initialize
+        self.init_lock.lock();
+        defer self.init_lock.unlock();
+
+        // Double-check after acquiring lock
+        if (self.initialized.load(.acquire)) {
+            return self.handle orelse ZfsError.InitFailed;
+        }
+
+        // Initialize libzfs
+        const h = c.libzfs_init() orelse return ZfsError.InitFailed;
+        self.handle = h;
+        self.initialized.store(true, .release);
+
+        return h;
+    }
+
+    /// Acquire a reference to the ZFS handle
+    /// Must be paired with releaseRef()
+    pub fn acquireRef(self: *ThreadSafeZfs) void {
+        _ = self.ref_count.fetchAdd(1, .acquire);
+    }
+
+    /// Release a reference to the ZFS handle
+    pub fn releaseRef(self: *ThreadSafeZfs) void {
+        _ = self.ref_count.fetchSub(1, .release);
+    }
+
+    /// Get the current reference count (for debugging/monitoring)
+    pub fn getRefCount(self: *const ThreadSafeZfs) u32 {
+        return self.ref_count.load(.acquire);
+    }
+
+    /// Get error context for current thread
+    fn getErrorContext(self: *ThreadSafeZfs) *ZfsErrorContext {
+        const tid = std.Thread.getCurrentId();
+
+        self.error_lock.lock();
+        defer self.error_lock.unlock();
+
+        const result = self.error_contexts.getOrPut(tid) catch {
+            // If allocation fails, return a static error context
+            const S = struct {
+                var fallback: ZfsErrorContext = .{};
+            };
+            return &S.fallback;
+        };
+
+        if (result.found_existing) {
+            return result.value_ptr;
+        } else {
+            result.value_ptr.* = .{};
+            return result.value_ptr;
+        }
+    }
+
+    /// Execute a ZFS operation with proper locking
+    /// This is the core method that ensures thread safety
+    pub fn withLock(self: *ThreadSafeZfs, comptime func: anytype, args: anytype) ZfsError!@typeInfo(@TypeOf(func)).@"fn".return_type.? {
+        self.global_lock.lock();
+        defer self.global_lock.unlock();
+
+        const handle = try self.getHandle();
+
+        // Clear error context before operation
+        const err_ctx = self.getErrorContext();
+        err_ctx.clear();
+
+        // Call the function with the handle prepended to args
+        return @call(.auto, func, .{handle} ++ args);
+    }
+
+    /// Create a scoped operation for compound ZFS operations
+    /// Holds the lock for the duration of the scope
+    pub fn scopedOperation(self: *ThreadSafeZfs) ScopedOperation {
+        return ScopedOperation.init(self);
+    }
+
+    /// Scoped ZFS operation with RAII-style cleanup
+    /// Use this for compound operations that need multiple libzfs calls
+    pub const ScopedOperation = struct {
+        zfs: *ThreadSafeZfs,
+        lock_held: bool,
+        handle: ?*c.libzfs_handle_t,
+
+        pub fn init(zfs: *ThreadSafeZfs) ScopedOperation {
+            return .{
+                .zfs = zfs,
+                .lock_held = false,
+                .handle = null,
+            };
+        }
+
+        /// Begin the scoped operation (acquires lock)
+        pub fn begin(self: *ScopedOperation) ZfsError!*c.libzfs_handle_t {
+            if (self.lock_held) {
+                // Already holding lock, just return handle
+                return self.handle orelse ZfsError.InitFailed;
+            }
+
+            self.zfs.global_lock.lock();
+            self.lock_held = true;
+
+            const h = self.zfs.getHandle() catch |err| {
+                self.zfs.global_lock.unlock();
+                self.lock_held = false;
+                return err;
+            };
+
+            self.handle = h;
+
+            // Clear error context
+            const err_ctx = self.zfs.getErrorContext();
+            err_ctx.clear();
+
+            return h;
+        }
+
+        /// End the scoped operation (releases lock)
+        pub fn end(self: *ScopedOperation) void {
+            if (self.lock_held) {
+                self.zfs.global_lock.unlock();
+                self.lock_held = false;
+                self.handle = null;
+            }
+        }
+
+        /// RAII cleanup - automatically called when scope ends
+        pub fn deinit(self: *ScopedOperation) void {
+            self.end();
+        }
+
+        /// Get the handle (must have called begin() first)
+        pub fn getHandle(self: *const ScopedOperation) ZfsError!*c.libzfs_handle_t {
+            return self.handle orelse ZfsError.InitFailed;
+        }
+
+        /// Check if operation is active (lock held)
+        pub fn isActive(self: *const ScopedOperation) bool {
+            return self.lock_held;
+        }
+    };
+
+    // ========================================================================
+    // Thread-safe wrappers for common ZFS operations
+    // ========================================================================
+
+    /// Check if a dataset exists (thread-safe)
+    pub fn datasetExists(
+        self: *ThreadSafeZfs,
+        allocator: std.mem.Allocator,
+        path: []const u8,
+        dataset_type: DatasetType,
+    ) !bool {
+        self.global_lock.lock();
+        defer self.global_lock.unlock();
+
+        const handle = try self.getHandle();
+
+        const c_path = try allocator.dupeZ(u8, path);
+        defer allocator.free(c_path);
+
+        const exists = c.zfs_dataset_exists(handle, c_path.ptr, @intFromEnum(dataset_type));
+        return exists != 0;
+    }
+
+    /// Create a new filesystem dataset (thread-safe)
+    pub fn createDataset(
+        self: *ThreadSafeZfs,
+        allocator: std.mem.Allocator,
+        path: []const u8,
+        props: ?DatasetProperties,
+    ) !void {
+        self.global_lock.lock();
+        defer self.global_lock.unlock();
+
+        const handle = try self.getHandle();
+
+        const c_path = try allocator.dupeZ(u8, path);
+        defer allocator.free(c_path);
+
+        var nvlist: ?*c.nvlist_t = null;
+        if (props) |p| {
+            nvlist = try p.toNvlist(allocator);
+        }
+        defer if (nvlist) |list| c.nvlist_free(list);
+
+        const result = c.zfs_create(
+            handle,
+            c_path.ptr,
+            c.ZFS_TYPE_FILESYSTEM,
+            nvlist,
+        );
+
+        if (result != 0) {
+            const errno_val = c.libzfs_errno(handle);
+            const err = libzfsErrorToZig(errno_val);
+            const err_ctx = self.getErrorContext();
+            err_ctx.setError(err, "failed to create dataset");
+            return err;
+        }
+    }
+
+    /// Destroy a dataset (thread-safe)
+    pub fn destroyDataset(
+        self: *ThreadSafeZfs,
+        allocator: std.mem.Allocator,
+        path: []const u8,
+        recursive: bool,
+    ) !void {
+        self.global_lock.lock();
+        defer self.global_lock.unlock();
+
+        const handle = try self.getHandle();
+
+        const c_path = try allocator.dupeZ(u8, path);
+        defer allocator.free(c_path);
+
+        const zhp = c.zfs_open(handle, c_path.ptr, c.ZFS_TYPE_DATASET) orelse {
+            const errno_val = c.libzfs_errno(handle);
+            return libzfsErrorToZig(errno_val);
+        };
+        defer c.zfs_close(zhp);
+
+        _ = recursive;
+        const result = c.zfs_destroy(zhp, 0);
+
+        if (result != 0) {
+            const errno_val = c.libzfs_errno(handle);
+            return libzfsErrorToZig(errno_val);
+        }
+    }
+
+    /// Create a snapshot (thread-safe)
+    pub fn snapshot(
+        self: *ThreadSafeZfs,
+        allocator: std.mem.Allocator,
+        dataset: []const u8,
+        snap_name: []const u8,
+        recursive: bool,
+    ) !void {
+        self.global_lock.lock();
+        defer self.global_lock.unlock();
+
+        const handle = try self.getHandle();
+
+        const full_path = try std.fmt.allocPrint(
+            allocator,
+            "{s}@{s}",
+            .{ dataset, snap_name },
+        );
+        defer allocator.free(full_path);
+
+        const c_path = try allocator.dupeZ(u8, full_path);
+        defer allocator.free(c_path);
+
+        var nvlist: ?*c.nvlist_t = null;
+        _ = c.nvlist_alloc(&nvlist, c.NV_UNIQUE_NAME, 0);
+        defer if (nvlist) |list| c.nvlist_free(list);
+
+        const flags: c_int = if (recursive) 1 else 0;
+        const result = c.zfs_snapshot(handle, c_path.ptr, @intCast(flags), nvlist);
+
+        if (result != 0) {
+            const errno_val = c.libzfs_errno(handle);
+            return libzfsErrorToZig(errno_val);
+        }
+    }
+
+    /// Clone a snapshot (thread-safe)
+    pub fn clone(
+        self: *ThreadSafeZfs,
+        allocator: std.mem.Allocator,
+        snap_path: []const u8,
+        target: []const u8,
+        props: ?DatasetProperties,
+    ) !void {
+        self.global_lock.lock();
+        defer self.global_lock.unlock();
+
+        const handle = try self.getHandle();
+
+        const c_snap = try allocator.dupeZ(u8, snap_path);
+        defer allocator.free(c_snap);
+
+        const c_target = try allocator.dupeZ(u8, target);
+        defer allocator.free(c_target);
+
+        var nvlist: ?*c.nvlist_t = null;
+        if (props) |p| {
+            nvlist = try p.toNvlist(allocator);
+        }
+        defer if (nvlist) |list| c.nvlist_free(list);
+
+        const result = c.zfs_clone(handle, c_snap.ptr, c_target.ptr, nvlist);
+
+        if (result != 0) {
+            const errno_val = c.libzfs_errno(handle);
+            return libzfsErrorToZig(errno_val);
+        }
+    }
+
+    /// Set a property on a dataset (thread-safe)
+    pub fn setProperty(
+        self: *ThreadSafeZfs,
+        allocator: std.mem.Allocator,
+        path: []const u8,
+        property: []const u8,
+        value: []const u8,
+    ) !void {
+        self.global_lock.lock();
+        defer self.global_lock.unlock();
+
+        const handle = try self.getHandle();
+
+        const c_path = try allocator.dupeZ(u8, path);
+        defer allocator.free(c_path);
+
+        const zhp = c.zfs_open(handle, c_path.ptr, c.ZFS_TYPE_DATASET) orelse {
+            const errno_val = c.libzfs_errno(handle);
+            return libzfsErrorToZig(errno_val);
+        };
+        defer c.zfs_close(zhp);
+
+        const c_prop = try allocator.dupeZ(u8, property);
+        defer allocator.free(c_prop);
+
+        const c_value = try allocator.dupeZ(u8, value);
+        defer allocator.free(c_value);
+
+        const result = c.zfs_prop_set(zhp, c_prop.ptr, c_value.ptr);
+
+        if (result != 0) {
+            const errno_val = c.libzfs_errno(handle);
+            return libzfsErrorToZig(errno_val);
+        }
+    }
+
+    /// Mount a dataset (thread-safe)
+    pub fn mount(
+        self: *ThreadSafeZfs,
+        allocator: std.mem.Allocator,
+        path: []const u8,
+        options: ?[]const u8,
+    ) !void {
+        self.global_lock.lock();
+        defer self.global_lock.unlock();
+
+        const handle = try self.getHandle();
+
+        const c_path = try allocator.dupeZ(u8, path);
+        defer allocator.free(c_path);
+
+        const zhp = c.zfs_open(handle, c_path.ptr, c.ZFS_TYPE_FILESYSTEM) orelse {
+            const errno_val = c.libzfs_errno(handle);
+            return libzfsErrorToZig(errno_val);
+        };
+        defer c.zfs_close(zhp);
+
+        var c_options: [*c]const u8 = null;
+        if (options) |opts| {
+            const c_opts = try allocator.dupeZ(u8, opts);
+            defer allocator.free(c_opts);
+            c_options = c_opts.ptr;
+        }
+
+        const result = c.zfs_mount(zhp, c_options, 0);
+
+        if (result != 0) {
+            const errno_val = c.libzfs_errno(handle);
+            return libzfsErrorToZig(errno_val);
+        }
+    }
+
+    /// Unmount a dataset (thread-safe)
+    pub fn unmount(
+        self: *ThreadSafeZfs,
+        allocator: std.mem.Allocator,
+        path: []const u8,
+        force: bool,
+    ) !void {
+        self.global_lock.lock();
+        defer self.global_lock.unlock();
+
+        const handle = try self.getHandle();
+
+        const c_path = try allocator.dupeZ(u8, path);
+        defer allocator.free(c_path);
+
+        const zhp = c.zfs_open(handle, c_path.ptr, c.ZFS_TYPE_FILESYSTEM) orelse {
+            const errno_val = c.libzfs_errno(handle);
+            return libzfsErrorToZig(errno_val);
+        };
+        defer c.zfs_close(zhp);
+
+        const flags: c_int = if (force) c.MS_FORCE else 0;
+        const result = c.zfs_unmount(zhp, null, flags);
+
+        if (result != 0) {
+            const errno_val = c.libzfs_errno(handle);
+            return libzfsErrorToZig(errno_val);
+        }
+    }
+};
+
+/// Global thread-safe ZFS instance
+/// Use this singleton for all ZFS operations in multi-threaded contexts
+var global_thread_safe_zfs: ?*ThreadSafeZfs = null;
+var global_zfs_init_lock: std.Thread.Mutex = .{};
+
+/// Get the global thread-safe ZFS instance
+pub fn getGlobalThreadSafeZfs(allocator: std.mem.Allocator) !*ThreadSafeZfs {
+    // Fast path: already initialized
+    if (global_thread_safe_zfs) |zfs| {
+        return zfs;
+    }
+
+    // Slow path: need to initialize
+    global_zfs_init_lock.lock();
+    defer global_zfs_init_lock.unlock();
+
+    // Double-check after acquiring lock
+    if (global_thread_safe_zfs) |zfs| {
+        return zfs;
+    }
+
+    // Allocate and initialize
+    const zfs = try allocator.create(ThreadSafeZfs);
+    zfs.* = ThreadSafeZfs.init(allocator);
+    global_thread_safe_zfs = zfs;
+
+    return zfs;
+}
+
+/// Clean up the global thread-safe ZFS instance
+/// Call this during program shutdown
+pub fn deinitGlobalThreadSafeZfs(allocator: std.mem.Allocator) void {
+    global_zfs_init_lock.lock();
+    defer global_zfs_init_lock.unlock();
+
+    if (global_thread_safe_zfs) |zfs| {
+        zfs.deinit();
+        allocator.destroy(zfs);
+        global_thread_safe_zfs = null;
+    }
+}
+
+// ============================================================================
+// Thread-Safe ZFS Tests
+// ============================================================================
+
+test "ThreadSafeZfs basic initialization" {
+    const allocator = std.testing.allocator;
+
+    var zfs = ThreadSafeZfs.init(allocator);
+    defer zfs.deinit();
+
+    // Should start with no references
+    try std.testing.expectEqual(@as(u32, 0), zfs.getRefCount());
+
+    // Acquire and release reference
+    zfs.acquireRef();
+    try std.testing.expectEqual(@as(u32, 1), zfs.getRefCount());
+
+    zfs.releaseRef();
+    try std.testing.expectEqual(@as(u32, 0), zfs.getRefCount());
+}
+
+test "ScopedOperation lifecycle" {
+    const allocator = std.testing.allocator;
+
+    var zfs = ThreadSafeZfs.init(allocator);
+    defer zfs.deinit();
+
+    // Create scoped operation
+    var op = zfs.scopedOperation();
+    defer op.deinit();
+
+    // Initially not active
+    try std.testing.expect(!op.isActive());
+
+    // Begin operation (may fail if libzfs not available in test environment)
+    _ = op.begin() catch |err| {
+        // Expected in environments without libzfs
+        try std.testing.expectEqual(ZfsError.InitFailed, err);
+        return;
+    };
+
+    // Now active
+    try std.testing.expect(op.isActive());
+
+    // End operation
+    op.end();
+    try std.testing.expect(!op.isActive());
+}
+
+test "ZfsErrorContext operations" {
+    var ctx = ZfsErrorContext{};
+
+    // Initially no error
+    try std.testing.expectEqual(@as(?ZfsError, null), ctx.last_error);
+    try std.testing.expectEqual(@as(usize, 0), ctx.getMessage().len);
+
+    // Set an error
+    ctx.setError(ZfsError.DatasetNotFound, "test error message");
+    try std.testing.expectEqual(ZfsError.DatasetNotFound, ctx.last_error.?);
+    try std.testing.expectEqualStrings("test error message", ctx.getMessage());
+
+    // Clear error
+    ctx.clear();
+    try std.testing.expectEqual(@as(?ZfsError, null), ctx.last_error);
+    try std.testing.expectEqual(@as(usize, 0), ctx.getMessage().len);
+}
+
+test "concurrent reference counting" {
+    const allocator = std.testing.allocator;
+
+    var zfs = ThreadSafeZfs.init(allocator);
+    defer zfs.deinit();
+
+    const num_threads = 10;
+    const iterations = 1000;
+
+    // Worker function that increments and decrements ref count
+    const Worker = struct {
+        fn run(z: *ThreadSafeZfs) void {
+            for (0..iterations) |_| {
+                z.acquireRef();
+                // Small delay to increase contention
+                std.atomic.spinLoopHint();
+                z.releaseRef();
+            }
+        }
+    };
+
+    // Spawn threads
+    var threads: [num_threads]std.Thread = undefined;
+    for (&threads) |*t| {
+        t.* = try std.Thread.spawn(.{}, Worker.run, .{&zfs});
+    }
+
+    // Wait for all threads
+    for (threads) |t| {
+        t.join();
+    }
+
+    // Ref count should be back to 0
+    try std.testing.expectEqual(@as(u32, 0), zfs.getRefCount());
+}

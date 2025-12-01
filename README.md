@@ -416,7 +416,7 @@ See [ROADMAP.md](ROADMAP.md) for detailed planning of future phases:
 | 27 | Build Sandboxing | High | ✓ Complete |
 | 28 | Secure Bundle Verification | High | ✓ Complete |
 | 29 | Resolver Resource Limits | Medium | ✓ Complete |
-| 30 | Thread-Safe libzfs | Medium | Planned |
+| 30 | Thread-Safe libzfs | Medium | ✓ Complete |
 
 **Core Phases Complete!** Axiom includes:
 - Core package management (Phases 1-8)
@@ -437,7 +437,7 @@ See [ROADMAP.md](ROADMAP.md) for detailed planning of future phases:
 - ✓ Build sandboxing with FreeBSD jails (Phase 27)
 - ✓ Secure bundle verification (Phase 28)
 - ✓ Resolver resource limits to prevent DoS (Phase 29)
-- Thread-safe libzfs operations (Phase 30)
+- ✓ Thread-safe libzfs operations (Phase 30)
 
 ## Quick Start
 
