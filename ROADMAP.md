@@ -28,7 +28,7 @@ This document outlines the planned enhancements for Axiom beyond the core 8 phas
 | 26 | ZFS Dataset Path Validation | High | Low | None | ✓ Complete |
 | 27 | Build Sandboxing | High | High | Phase 10 | ✓ Complete |
 | 28 | Secure Bundle Verification | High | Medium | Phase 18 | ✓ Complete |
-| 29 | Resolver Resource Limits | Medium | Low | Phase 16 | Planned |
+| 29 | Resolver Resource Limits | Medium | Low | Phase 16 | ✓ Complete |
 | 30 | Thread-Safe libzfs | Medium | Medium | None | Planned |
 
 ---
@@ -2865,7 +2865,7 @@ pub const SecureBundleLauncher = struct {
 **Priority**: Medium
 **Complexity**: Low
 **Dependencies**: Phase 16 (SAT Solver)
-**Status**: Planned
+**Status**: ✓ Complete
 
 ### Purpose
 
@@ -2983,6 +2983,57 @@ axiom resolve my-profile --stats
 # Candidates examined: 1234
 # Maximum depth: 12
 ```
+
+### Implementation Notes
+
+**Completed**: December 2024
+
+**Key Components Implemented**:
+
+1. **ResourceLimits struct** (`src/resolver.zig`)
+   - Configurable limits for time, memory, depth, candidates, SAT solver
+   - Default limits: 30s timeout, 256MB memory, 100 depth
+   - `strict()` preset for untrusted inputs
+   - `unlimited()` preset for testing
+
+2. **ResourceStats struct** (`src/resolver.zig`)
+   - Tracks resolution time, memory, candidates examined
+   - Per-package candidate counting
+   - SAT variable/clause counting
+   - Limit violation detection with specific type
+
+3. **ResourceChecker struct** (`src/resolver.zig`)
+   - Time limit checking with periodic verification
+   - Memory tracking and limit enforcement
+   - Depth limit enforcement
+   - Candidate limit enforcement (per-package and total)
+   - SAT complexity limit enforcement
+
+4. **Resolver Integration** (`src/resolver.zig`)
+   - `setResourceLimits()` method
+   - `setShowStats()` method
+   - `getLastStats()` method
+   - Automatic stats initialization and cleanup
+
+5. **CLI Options** (`src/cli.zig`)
+   - `--timeout <seconds>` - Set resolution timeout
+   - `--max-memory <MB>` - Set memory limit
+   - `--max-depth <n>` - Set dependency depth limit
+   - `--strict` - Use strict limits for untrusted inputs
+   - `--stats` - Show resolution statistics
+
+6. **Error Handling**
+   - New error types: `ResolutionTimeout`, `MemoryLimitExceeded`,
+     `DepthLimitExceeded`, `CandidateLimitExceeded`, `ComplexityLimitExceeded`
+   - Detailed diagnostics showing which limit was hit
+   - Contextual suggestions for resolving limit issues
+
+**Security Features**:
+- Prevents DoS through malicious manifests with exponential complexity
+- Detects and blocks circular dependencies that cause infinite loops
+- Memory capping prevents system exhaustion
+- Time limits prevent CPU exhaustion
+- Strict mode available for processing untrusted package sources
 
 ---
 
