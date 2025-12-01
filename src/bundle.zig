@@ -871,6 +871,8 @@ pub const SecureBundleManifest = struct {
                                 .minor = ver_parts[1],
                                 .patch = ver_parts[2],
                             },
+                            .revision = 0,
+                            .build_id = "",
                         });
                     }
                 } else if (!std.mem.startsWith(u8, trimmed, " ") and !std.mem.startsWith(u8, trimmed, "\t")) {
