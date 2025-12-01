@@ -128,6 +128,8 @@ pub const Command = enum {
     closure_show,
     export_pkg,
     bundle_create,
+    bundle_verify,
+    bundle_run,
 
     // Ports migration operations
     ports_gen,
@@ -231,6 +233,10 @@ pub fn parseCommand(cmd: []const u8) Command {
     if (std.mem.eql(u8, cmd, "export")) return .export_pkg;
     if (std.mem.eql(u8, cmd, "bundle")) return .bundle_create;
     if (std.mem.eql(u8, cmd, "build-bundle")) return .bundle_create;
+    if (std.mem.eql(u8, cmd, "bundle-verify")) return .bundle_verify;
+    if (std.mem.eql(u8, cmd, "verify-bundle")) return .bundle_verify;
+    if (std.mem.eql(u8, cmd, "bundle-run")) return .bundle_run;
+    if (std.mem.eql(u8, cmd, "run-bundle")) return .bundle_run;
 
     // Ports migration commands
     if (std.mem.eql(u8, cmd, "ports")) return .ports_scan;
@@ -405,6 +411,8 @@ pub const CLI = struct {
             .closure_show => try self.showClosure(args[1..]),
             .export_pkg => try self.exportPackage(args[1..]),
             .bundle_create => try self.createBundle(args[1..]),
+            .bundle_verify => try self.bundleVerify(args[1..]),
+            .bundle_run => try self.bundleRun(args[1..]),
 
             // Ports migration commands
             .ports_gen => try self.portsGen(args[1..]),
@@ -520,6 +528,12 @@ pub const CLI = struct {
             \\    --format <f>               Output format (pgsdimg|zfs|tar|dir)
             \\  bundle <directory>         Create bundle from current directory
             \\    --output <file>            Output file path
+            \\  bundle-verify <file>       Verify bundle signature and integrity
+            \\    --trust-store <dir>        Path to trust store
+            \\    --allow-unsigned           Allow unsigned bundles
+            \\  bundle-run <file> [args]   Run bundle with verification
+            \\    --allow-untrusted          Allow untrusted signers
+            \\    --skip-verify              Skip verification (DANGEROUS)
             \\
             \\Ports Migration (FreeBSD):
             \\  ports                      Scan ports tree, list categories
@@ -2767,6 +2781,218 @@ pub const CLI = struct {
             std.debug.print("Size: {d} bytes\n", .{stat.size});
         } else {
             std.debug.print("Error: Bundle creation failed\n", .{});
+        }
+    }
+
+    // Phase 28: Bundle verification commands
+
+    fn bundleVerify(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom bundle-verify <bundle.pgsdimg> [options]\n", .{});
+            std.debug.print("       axiom verify-bundle <bundle.pgsdimg> [options]\n", .{});
+            std.debug.print("\nVerify a bundle's signature and integrity.\n", .{});
+            std.debug.print("\nOptions:\n", .{});
+            std.debug.print("  --trust-store <dir>  Path to trust store directory\n", .{});
+            std.debug.print("  --allow-unsigned     Allow unsigned bundles (still verify hash)\n", .{});
+            std.debug.print("  --allow-untrusted    Allow bundles from untrusted signers\n", .{});
+            std.debug.print("  --verbose            Show detailed verification info\n", .{});
+            std.debug.print("\nExamples:\n", .{});
+            std.debug.print("  axiom bundle-verify app.pgsdimg\n", .{});
+            std.debug.print("  axiom verify-bundle app.pgsdimg --trust-store /etc/axiom/trust\n", .{});
+            return;
+        }
+
+        const bundle_path = args[0];
+
+        // Parse options
+        var trust_store: ?[]const u8 = null;
+        var allow_unsigned = false;
+        var allow_untrusted = false;
+        var verbose = false;
+
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--trust-store") and i + 1 < args.len) {
+                i += 1;
+                trust_store = args[i];
+            } else if (std.mem.eql(u8, args[i], "--allow-unsigned")) {
+                allow_unsigned = true;
+            } else if (std.mem.eql(u8, args[i], "--allow-untrusted")) {
+                allow_untrusted = true;
+            } else if (std.mem.eql(u8, args[i], "--verbose") or std.mem.eql(u8, args[i], "-v")) {
+                verbose = true;
+            }
+        }
+
+        std.debug.print("Bundle Verification\n", .{});
+        std.debug.print("===================\n\n", .{});
+        std.debug.print("Bundle: {s}\n", .{bundle_path});
+
+        // Check if bundle exists
+        std.fs.cwd().access(bundle_path, .{}) catch {
+            std.debug.print("Error: Bundle not found: {s}\n", .{bundle_path});
+            return;
+        };
+
+        // Initialize secure bundle launcher for verification
+        var launcher = bundle_pkg.SecureBundleLauncher.init(self.allocator, .{
+            .temp_dir = "/tmp",
+            .trust_store_path = trust_store,
+            .require_signature = !allow_unsigned,
+            .allow_untrusted = allow_untrusted,
+        });
+        defer launcher.deinit();
+
+        // Perform verification
+        const result = launcher.verify(bundle_path) catch |err| {
+            std.debug.print("Error: Verification failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+
+        // Display results
+        std.debug.print("\n", .{});
+        std.debug.print("Verification Status: {s}\n", .{result.status.toString()});
+
+        if (result.status.isValid()) {
+            std.debug.print("Result: VERIFIED (signature valid, hash matches)\n", .{});
+        } else if (result.status.isSafe()) {
+            std.debug.print("Result: SAFE (signature valid, signer not in trust store)\n", .{});
+        } else {
+            std.debug.print("Result: FAILED\n", .{});
+            if (result.error_message) |msg| {
+                std.debug.print("Error: {s}\n", .{msg});
+            }
+        }
+
+        if (verbose) {
+            std.debug.print("\nDetails:\n", .{});
+            if (result.payload_hash) |hash| {
+                std.debug.print("  Payload SHA-256: ", .{});
+                for (hash) |byte| {
+                    std.debug.print("{x:0>2}", .{byte});
+                }
+                std.debug.print("\n", .{});
+            }
+            if (result.verified_at != 0) {
+                std.debug.print("  Verified at: {d}\n", .{result.verified_at});
+            }
+            if (result.signer_id) |signer| {
+                std.debug.print("  Signer: {s}\n", .{signer});
+            }
+        }
+
+        std.debug.print("\n", .{});
+        if (result.status.isValid()) {
+            std.debug.print("Bundle is safe to run.\n", .{});
+        } else if (result.status.isSafe()) {
+            std.debug.print("Bundle is from an untrusted signer. Use --allow-untrusted to run.\n", .{});
+        } else {
+            std.debug.print("DO NOT RUN this bundle - verification failed!\n", .{});
+        }
+    }
+
+    fn bundleRun(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom bundle-run <bundle.pgsdimg> [args...]\n", .{});
+            std.debug.print("       axiom run-bundle <bundle.pgsdimg> [args...]\n", .{});
+            std.debug.print("\nRun a bundle with pre-execution verification.\n", .{});
+            std.debug.print("\nOptions:\n", .{});
+            std.debug.print("  --trust-store <dir>  Path to trust store directory\n", .{});
+            std.debug.print("  --allow-unsigned     Allow unsigned bundles\n", .{});
+            std.debug.print("  --allow-untrusted    Allow bundles from untrusted signers\n", .{});
+            std.debug.print("  --skip-verify        Skip verification (DANGEROUS)\n", .{});
+            std.debug.print("  --keep-extracted     Keep extraction directory after run\n", .{});
+            std.debug.print("  --                   End options, remaining args passed to bundle\n", .{});
+            std.debug.print("\nExamples:\n", .{});
+            std.debug.print("  axiom bundle-run app.pgsdimg\n", .{});
+            std.debug.print("  axiom run-bundle app.pgsdimg --allow-unsigned -- --help\n", .{});
+            return;
+        }
+
+        const bundle_path = args[0];
+
+        // Parse options
+        var trust_store: ?[]const u8 = null;
+        var allow_unsigned = false;
+        var allow_untrusted = false;
+        var skip_verify = false;
+        var keep_extracted = false;
+        var bundle_args = std.ArrayList([]const u8).init(self.allocator);
+        defer bundle_args.deinit();
+
+        var i: usize = 1;
+        var in_bundle_args = false;
+        while (i < args.len) : (i += 1) {
+            if (in_bundle_args) {
+                try bundle_args.append(args[i]);
+            } else if (std.mem.eql(u8, args[i], "--")) {
+                in_bundle_args = true;
+            } else if (std.mem.eql(u8, args[i], "--trust-store") and i + 1 < args.len) {
+                i += 1;
+                trust_store = args[i];
+            } else if (std.mem.eql(u8, args[i], "--allow-unsigned")) {
+                allow_unsigned = true;
+            } else if (std.mem.eql(u8, args[i], "--allow-untrusted")) {
+                allow_untrusted = true;
+            } else if (std.mem.eql(u8, args[i], "--skip-verify")) {
+                skip_verify = true;
+            } else if (std.mem.eql(u8, args[i], "--keep-extracted")) {
+                keep_extracted = true;
+            } else {
+                // Treat unknown args as bundle args
+                try bundle_args.append(args[i]);
+            }
+        }
+
+        // Check if bundle exists
+        std.fs.cwd().access(bundle_path, .{}) catch {
+            std.debug.print("Error: Bundle not found: {s}\n", .{bundle_path});
+            return;
+        };
+
+        if (skip_verify) {
+            std.debug.print("WARNING: Skipping verification is DANGEROUS!\n", .{});
+            std.debug.print("Only use this for testing purposes.\n\n", .{});
+        }
+
+        // Initialize secure bundle launcher
+        var launcher = bundle_pkg.SecureBundleLauncher.init(self.allocator, .{
+            .temp_dir = "/tmp",
+            .trust_store_path = trust_store,
+            .require_signature = !allow_unsigned and !skip_verify,
+            .allow_untrusted = allow_untrusted,
+        });
+        defer launcher.deinit();
+
+        std.debug.print("Launching: {s}\n", .{bundle_path});
+        if (!skip_verify) {
+            std.debug.print("Verifying bundle...\n", .{});
+        }
+
+        // Launch with verification
+        const result = launcher.launch(bundle_path, bundle_args.items) catch |err| {
+            std.debug.print("Error: Launch failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+
+        switch (result) {
+            .success => |s| {
+                std.debug.print("Bundle exited with code: {d}\n", .{s.exit_code});
+                if (!keep_extracted) {
+                    launcher.cleanup(@constCast(s.extract_dir));
+                } else {
+                    std.debug.print("Extraction preserved at: {s}\n", .{s.extract_dir});
+                }
+            },
+            .signaled => |s| {
+                std.debug.print("Bundle terminated by signal: {d}\n", .{s.signal});
+                if (!keep_extracted) {
+                    launcher.cleanup(@constCast(s.extract_dir));
+                }
+            },
+            .failed => |f| {
+                std.debug.print("Bundle launch failed: {s}\n", .{f.message});
+            },
         }
     }
 
