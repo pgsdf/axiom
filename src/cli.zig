@@ -1046,15 +1046,22 @@ pub const CLI = struct {
         if (args.len < 1) {
             std.debug.print("Usage: axiom build <recipe.yaml> [options]\n", .{});
             std.debug.print("\nOptions:\n", .{});
-            std.debug.print("  --jobs <n>       Number of parallel jobs (default: 4)\n", .{});
-            std.debug.print("  --no-test        Skip test phase\n", .{});
-            std.debug.print("  --dry-run        Show build plan without executing\n", .{});
-            std.debug.print("  --keep-sandbox   Don't destroy build sandbox after completion\n", .{});
-            std.debug.print("  --no-import      Don't import result into store\n", .{});
-            std.debug.print("  --verbose        Show detailed output\n", .{});
+            std.debug.print("  --jobs <n>         Number of parallel jobs (default: 4)\n", .{});
+            std.debug.print("  --no-test          Skip test phase\n", .{});
+            std.debug.print("  --dry-run          Show build plan without executing\n", .{});
+            std.debug.print("  --keep-sandbox     Don't destroy build sandbox after completion\n", .{});
+            std.debug.print("  --no-import        Don't import result into store\n", .{});
+            std.debug.print("  --verbose          Show detailed output\n", .{});
+            std.debug.print("\nSecurity options (Phase 27):\n", .{});
+            std.debug.print("  --allow-network    Allow network access during build (INSECURE)\n", .{});
+            std.debug.print("  --no-sandbox       Disable sandbox entirely (VERY INSECURE)\n", .{});
+            std.debug.print("  --memory <MB>      Set memory limit in MB (default: 4096)\n", .{});
+            std.debug.print("  --cpu-time <sec>   Set CPU time limit in seconds (default: 3600)\n", .{});
+            std.debug.print("  --audit-log <path> Path for security audit log\n", .{});
             std.debug.print("\nExample:\n", .{});
             std.debug.print("  axiom build bash.yaml\n", .{});
             std.debug.print("  axiom build myapp.yaml --jobs 8 --no-test\n", .{});
+            std.debug.print("  axiom build myapp.yaml --memory 8192 --audit-log /var/log/axiom-build.log\n", .{});
             return;
         }
 
@@ -1086,6 +1093,30 @@ pub const CLI = struct {
             } else if (std.mem.eql(u8, arg, "--verbose")) {
                 options.verbose = true;
                 i += 1;
+            // Phase 27: Security options
+            } else if (std.mem.eql(u8, arg, "--allow-network")) {
+                options.allow_network = true;
+                std.debug.print("⚠ WARNING: Network access enabled - build is NOT isolated!\n", .{});
+                i += 1;
+            } else if (std.mem.eql(u8, arg, "--no-sandbox")) {
+                options.no_sandbox = true;
+                std.debug.print("⚠ WARNING: Sandbox disabled - build runs with full system access!\n", .{});
+                i += 1;
+            } else if (std.mem.eql(u8, arg, "--memory") and i + 1 < args.len) {
+                options.memory_limit_mb = std.fmt.parseInt(u64, args[i + 1], 10) catch {
+                    std.debug.print("Invalid memory limit: {s}\n", .{args[i + 1]});
+                    return;
+                };
+                i += 2;
+            } else if (std.mem.eql(u8, arg, "--cpu-time") and i + 1 < args.len) {
+                options.cpu_limit_seconds = std.fmt.parseInt(u64, args[i + 1], 10) catch {
+                    std.debug.print("Invalid CPU time limit: {s}\n", .{args[i + 1]});
+                    return;
+                };
+                i += 2;
+            } else if (std.mem.eql(u8, arg, "--audit-log") and i + 1 < args.len) {
+                options.audit_log = args[i + 1];
+                i += 2;
             } else {
                 std.debug.print("Unknown option: {s}\n", .{arg});
                 return;
