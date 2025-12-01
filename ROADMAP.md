@@ -27,7 +27,7 @@ This document outlines the planned enhancements for Axiom beyond the core 8 phas
 | 25 | Mandatory Signature Verification | Critical | Medium | Phase 15 | ✓ Complete |
 | 26 | ZFS Dataset Path Validation | High | Low | None | ✓ Complete |
 | 27 | Build Sandboxing | High | High | Phase 10 | ✓ Complete |
-| 28 | Secure Bundle Verification | High | Medium | Phase 18 | Planned |
+| 28 | Secure Bundle Verification | High | Medium | Phase 18 | ✓ Complete |
 | 29 | Resolver Resource Limits | Medium | Low | Phase 16 | Planned |
 | 30 | Thread-Safe libzfs | Medium | Medium | None | Planned |
 
@@ -2699,7 +2699,7 @@ axiom build package.yaml --no-sandbox --i-understand-the-risks
 **Priority**: High
 **Complexity**: Medium
 **Dependencies**: Phase 18 (Bundles)
-**Status**: Planned
+**Status**: ✓ Complete
 
 ### Purpose
 
@@ -2818,6 +2818,45 @@ pub const SecureBundleLauncher = struct {
     }
 };
 ```
+
+### Implementation Notes
+
+**Completed**: December 2024
+
+**Key Components Implemented**:
+
+1. **BundleVerificationStatus enum** (`src/bundle.zig`)
+   - Status tracking: unverified, verifying, verified, untrusted, invalid, tampered, unsigned
+   - Helper methods: `isValid()`, `isSafe()`, `toString()`
+
+2. **BundleVerificationResult struct** (`src/bundle.zig`)
+   - Detailed verification information including signer ID, hashes, timestamps
+   - Error message capture for debugging
+
+3. **SecureBundleManifest struct** (`src/bundle.zig`)
+   - Extended manifest format with verification fields
+   - Payload offset, size, and SHA-256 hash
+   - YAML parsing for manifest content
+
+4. **SecureBundleLauncher struct** (`src/bundle.zig`)
+   - Pre-execution signature verification
+   - Ed25519 signature verification against trust store
+   - SHA-256 payload hash verification
+   - Secure extraction with restricted permissions
+   - Verification result caching
+
+5. **CLI Commands** (`src/cli.zig`)
+   - `bundle-verify <file>` - Verify bundle integrity without running
+   - `bundle-run <file>` - Run bundle with mandatory verification
+   - Options: `--trust-store`, `--allow-unsigned`, `--allow-untrusted`, `--skip-verify`
+
+**Security Features**:
+- Signature verified BEFORE any extraction
+- Payload hash verified BEFORE execution
+- Extraction uses restricted permissions (0o700)
+- Tar extraction with `--no-same-owner`, `--no-same-permissions`
+- Clear warnings for unsigned/untrusted bundles
+- DANGEROUS flag required to skip verification
 
 ---
 
