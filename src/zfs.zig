@@ -385,13 +385,11 @@ pub const ZfsHandle = struct {
         };
         defer c.zfs_close(zhp);
 
-        var c_options: [*c]const u8 = null;
-        if (options) |opts| {
-            const c_opts = try allocator.dupeZ(u8, opts);
-            defer allocator.free(c_opts);
-            c_options = c_opts.ptr;
-        }
+        // Allocate options outside if block to ensure lifetime extends to zfs_mount call
+        const c_opts: ?[:0]u8 = if (options) |opts| try allocator.dupeZ(u8, opts) else null;
+        defer if (c_opts) |o| allocator.free(o);
 
+        const c_options: [*c]const u8 = if (c_opts) |o| o.ptr else null;
         const result = c.zfs_mount(zhp, c_options, 0);
 
         if (result != 0) {
@@ -1467,7 +1465,10 @@ pub const ThreadSafeZfs = struct {
         };
         defer c.zfs_close(zhp);
 
-        _ = recursive;
+        // FreeBSD's libzfs zfs_destroy takes a defer flag, not recursive
+        // Recursive destruction would require iterating children with zfs_iter_filesystems
+        // TODO: Implement recursive deletion if needed
+        _ = recursive; // Mark as used
         const result = c.zfs_destroy(zhp, 0);
 
         if (result != 0) {
@@ -1602,13 +1603,11 @@ pub const ThreadSafeZfs = struct {
         };
         defer c.zfs_close(zhp);
 
-        var c_options: [*c]const u8 = null;
-        if (options) |opts| {
-            const c_opts = try allocator.dupeZ(u8, opts);
-            defer allocator.free(c_opts);
-            c_options = c_opts.ptr;
-        }
+        // Allocate options outside if block to ensure lifetime extends to zfs_mount call
+        const c_opts: ?[:0]u8 = if (options) |opts| try allocator.dupeZ(u8, opts) else null;
+        defer if (c_opts) |o| allocator.free(o);
 
+        const c_options: [*c]const u8 = if (c_opts) |o| o.ptr else null;
         const result = c.zfs_mount(zhp, c_options, 0);
 
         if (result != 0) {
