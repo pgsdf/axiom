@@ -540,7 +540,8 @@ pub const TrustStore = struct {
         var key_iter = self.keys.iterator();
         while (key_iter.next()) |entry| {
             // Free the hash map key (duplicated in addKey)
-            self.allocator.free(entry.key_ptr.*);
+            const key_slice = entry.key_ptr.*;
+            self.allocator.free(@constCast(key_slice));
             // Free the value's strings
             var key = entry.value_ptr.*;
             key.deinit(self.allocator);
@@ -549,7 +550,7 @@ pub const TrustStore = struct {
 
         var trust_iter = self.trusted.keyIterator();
         while (trust_iter.next()) |key| {
-            self.allocator.free(key.*);
+            self.allocator.free(@constCast(key.*));
         }
         self.trusted.deinit();
     }
