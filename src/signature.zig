@@ -539,6 +539,9 @@ pub const TrustStore = struct {
     pub fn deinit(self: *TrustStore) void {
         var key_iter = self.keys.iterator();
         while (key_iter.next()) |entry| {
+            // Free the hash map key (duplicated in addKey)
+            self.allocator.free(entry.key_ptr.*);
+            // Free the value's strings
             var key = entry.value_ptr.*;
             key.deinit(self.allocator);
         }
@@ -762,7 +765,9 @@ pub const TrustStore = struct {
         }
 
         // Load the official PGSD signing key
-        const official_key = try OfficialPGSDKey.getKey(self.allocator);
+        var official_key = try OfficialPGSDKey.getKey(self.allocator);
+        defer official_key.deinit(self.allocator); // Free the temp key after addKey duplicates it
+
         try self.addKeyWithTrust(official_key, .official);
 
         std.debug.print("Loaded official PGSD signing key: {s}\n", .{OfficialPGSDKey.key_id});
