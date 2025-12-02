@@ -2,25 +2,31 @@
 
 ## ZFS Dataset Configuration
 
-Axiom requires proper ZFS dataset configuration before use. Follow these steps:
+Axiom requires proper ZFS dataset configuration before use. Follow these steps **in order**:
 
-### 1. Set Mountpoint
+### 1. Create Root Dataset
 
-Change the `zroot/axiom` dataset from `legacy` to use `/axiom` as its mountpoint:
+```bash
+zfs create zroot/axiom
+```
+
+### 2. Set Mountpoint (BEFORE creating children!)
+
+**IMPORTANT**: Set the mountpoint on `zroot/axiom` **before** creating child datasets. Child datasets inherit the mountpoint from their parent, so this must be done first.
 
 ```bash
 zfs set mountpoint=/axiom zroot/axiom
 ```
 
-**Why `/axiom` instead of `legacy`?**
+**Why `/axiom`?**
 - Automatic mounting by ZFS (no /etc/fstab entries needed)
 - Self-contained and independent from system directories
 - Cleaner separation of concerns
 - Simplifies disaster recovery
 
-### 2. Create Subdataset Structure
+### 3. Create Subdataset Structure
 
-Create the required subdatasets for Axiom's operation:
+Now create the child datasets (they will inherit `/axiom` as their mountpoint base):
 
 ```bash
 # Package store
@@ -36,7 +42,7 @@ zfs create zroot/axiom/env
 zfs create zroot/axiom/builds
 ```
 
-### 3. Verify Configuration
+### 4. Verify Configuration
 
 Check that datasets are properly configured:
 
@@ -54,7 +60,7 @@ zroot/axiom/env          96K   XXX    96K    /axiom/env
 zroot/axiom/builds       96K   XXX    96K    /axiom/builds
 ```
 
-### 4. Filesystem Layout
+### 5. Filesystem Layout
 
 After setup, you'll have:
 
@@ -67,7 +73,7 @@ After setup, you'll have:
 └── builds/            # Build sandbox storage
 ```
 
-### 5. Permissions
+### 6. Permissions
 
 Ensure proper permissions (Axiom typically runs as root for ZFS operations):
 
@@ -99,6 +105,30 @@ zfs set mountpoint=/axiom zroot/axiom
 
 # Mount it
 zfs mount zroot/axiom
+```
+
+### Incorrect mountpoints (e.g., /zroot/axiom instead of /axiom)
+
+If you created child datasets before setting the mountpoint, they will have inherited the wrong mountpoint (e.g., `/zroot/axiom/store` instead of `/axiom/store`).
+
+To fix this:
+
+```bash
+# Set the correct mountpoint on the parent - children inherit automatically
+sudo zfs set mountpoint=/axiom zroot/axiom
+
+# Verify all mountpoints are now correct
+zfs list -r zroot/axiom
+```
+
+Expected output after fix:
+```
+NAME                              MOUNTPOINT
+zroot/axiom                       /axiom
+zroot/axiom/builds                /axiom/builds
+zroot/axiom/env                   /axiom/env
+zroot/axiom/profiles              /axiom/profiles
+zroot/axiom/store                 /axiom/store
 ```
 
 ### Permission denied
