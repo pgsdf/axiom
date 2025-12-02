@@ -1107,7 +1107,25 @@ pub const CLI = struct {
         
         if (input) |line| {
             if (line.len > 0 and (line[0] == 'y' or line[0] == 'Y')) {
-                try self.realization.destroy(env_name);
+                self.realization.destroy(env_name) catch |err| {
+                    if (err == zfs.ZfsError.DatasetBusy) {
+                        std.debug.print("Error: Environment '{s}' is busy.\n\n", .{env_name});
+                        std.debug.print("The dataset may be mounted or in use. Try:\n", .{});
+                        std.debug.print("  1. Deactivate the environment: deactivate\n", .{});
+                        std.debug.print("  2. Unmount manually: zfs unmount zroot/axiom/env/{s}\n", .{env_name});
+                        std.debug.print("  3. Retry: axiom env-destroy {s}\n", .{env_name});
+                        return;
+                    }
+                    if (err == zfs.ZfsError.DatasetNotFound) {
+                        std.debug.print("Error: Environment '{s}' does not exist.\n", .{env_name});
+                        return;
+                    }
+                    if (err == zfs.ZfsError.PermissionDenied) {
+                        std.debug.print("Error: Permission denied. Run with sudo.\n", .{});
+                        return;
+                    }
+                    return err;
+                };
                 std.debug.print("✓ Environment destroyed\n", .{});
             } else {
                 std.debug.print("Cancelled\n", .{});
