@@ -578,8 +578,8 @@ The official key:
 sudo axiom key-generate --output mykey
 
 # Creates:
-#   mykey.priv  - Private key (keep secret!)
-#   mykey.pub   - Public key (distribute)
+#   mykey.key  - Private key (keep secret!)
+#   mykey.pub  - Public key (distribute)
 ```
 
 ### Managing the Trust Store
@@ -602,7 +602,7 @@ sudo axiom key-remove <key-id>
 
 ```bash
 # Sign a package
-sudo axiom sign /path/to/package --key mykey.priv
+sudo axiom sign /path/to/package --key mykey.key
 
 # This creates a signature file in the package
 ```

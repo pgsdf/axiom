@@ -329,7 +329,7 @@ sudo axiom build mypackage.yaml --dry-run
 **Step 3: Sign the Package (Optional)**
 
 ```bash
-sudo axiom sign /axiom/store/pkg/mypackage/1.0.0/1/abc123 --key mykey.priv
+sudo axiom sign /axiom/store/pkg/mypackage/1.0.0/1/abc123 --key mykey.key
 ```
 
 ### Sandboxed Builds
@@ -389,7 +389,7 @@ sudo axiom cache-sync
 
 ```bash
 # Sign the package first
-sudo axiom sign /axiom/store/pkg/mypackage/1.0.0/1/abc123 --key mykey.priv
+sudo axiom sign /axiom/store/pkg/mypackage/1.0.0/1/abc123 --key mykey.key
 
 # Push to cache (requires write access)
 sudo axiom cache-push mypackage@1.0.0 https://cache.pgsdf.org
@@ -441,7 +441,7 @@ sudo axiom bundle myapp --output myapp-bundle.pgsdimg
 **Step 2: Sign the Bundle**
 
 ```bash
-sudo axiom sign bash-bundle.pgsdimg --key publisher.priv
+sudo axiom sign bash-bundle.pgsdimg --key publisher.key
 ```
 
 **Step 3: Distribute**
@@ -596,7 +596,7 @@ All official PGSD releases are signed with this key. You can immediately verify 
 axiom key-generate --output myorg
 
 # This creates:
-#   myorg.priv  - Private key (keep secure!)
+#   myorg.key  - Private key (keep secure!)
 #   myorg.pub   - Public key (share freely)
 ```
 
@@ -625,7 +625,7 @@ axiom key
 
 ```bash
 # Sign with your private key
-sudo axiom sign /axiom/store/pkg/mypackage/1.0.0/1/abc123 --key myorg.priv
+sudo axiom sign /axiom/store/pkg/mypackage/1.0.0/1/abc123 --key myorg.key
 ```
 
 **Verify a Package**
