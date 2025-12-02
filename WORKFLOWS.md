@@ -63,10 +63,25 @@ axiom completions fish > ~/.config/fish/completions/axiom.fish
 
 ### Set Up Trust Store
 
+The official PGSD signing key is **pre-bundled** with Axiom and automatically trusted on startup. No manual setup is required to verify official PGSD releases.
+
 ```bash
-# Add the official PGSD signing key
-sudo axiom key-add /path/to/pgsd-official.pub
-sudo axiom key-trust pgsd-official
+# Verify the official key is loaded
+axiom key
+
+# Output shows:
+#   Trusted keys:
+#     [1] PGSD0001A7E3F9B2 (official) ✓
+#         Owner: PGSD Official
+#         Trust Level: Official PGSD Release Key
+```
+
+To add additional third-party keys:
+
+```bash
+# Add a third-party signing key
+sudo axiom key-add /path/to/publisher.pub
+sudo axiom key-trust <key-id>
 
 # Verify trusted keys
 axiom key
@@ -560,6 +575,18 @@ sudo axiom system-gc
 
 ## Security Operations
 
+### Official PGSD Signing Key
+
+Axiom ships with the **official PGSD signing key pre-bundled**. This key is automatically loaded and trusted at the highest level (`.official`) when Axiom starts.
+
+```
+Key ID:      PGSD0001A7E3F9B2
+Owner:       PGSD Official
+Trust Level: Official PGSD Release Key
+```
+
+All official PGSD releases are signed with this key. You can immediately verify official packages without any setup.
+
 ### Workflow: Key Management
 
 **Generate a Signing Key**
@@ -586,9 +613,9 @@ axiom key-generate --output myorg
 sudo axiom key-add publisher.pub
 
 # Trust the key
-sudo axiom key-trust publisher
+sudo axiom key-trust <key-id>
 
-# List trusted keys
+# List trusted keys (includes pre-bundled official key)
 axiom key
 ```
 
