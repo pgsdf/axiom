@@ -6,6 +6,11 @@ const realization = @import("realization.zig");
 const store = @import("store.zig");
 const conflict = @import("conflict.zig");
 
+// POSIX getuid/getgid - works on FreeBSD, Linux, and other POSIX systems
+const c = @cImport({
+    @cInclude("unistd.h");
+});
+
 const ZfsHandle = zfs.ZfsHandle;
 const Profile = profile.Profile;
 const ProfileLock = profile.ProfileLock;
@@ -40,8 +45,8 @@ pub const UserContext = struct {
     /// Initialize user context from current process
     pub fn init(allocator: std.mem.Allocator) !UserContext {
         // Get current user ID (using C library for cross-platform support)
-        const uid = std.c.getuid();
-        const gid = std.c.getgid();
+        const uid = c.getuid();
+        const gid = c.getgid();
 
         // Determine access level based on UID
         const access_level: AccessLevel = if (uid == 0) .root else .user;
