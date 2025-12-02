@@ -597,7 +597,17 @@ pub const CLI = struct {
             self.allocator.free(prof.packages);
         }
 
-        try self.profile_mgr.createProfile(prof);
+        self.profile_mgr.createProfile(prof) catch |err| {
+            if (err == error.ProfileExists) {
+                std.debug.print("Error: Profile '{s}' already exists.\n\n", .{name});
+                std.debug.print("If this is from a previous failed attempt, remove it first:\n", .{});
+                std.debug.print("  zfs destroy {s}/{s}\n\n", .{ self.profile_mgr.profile_root, name });
+                std.debug.print("Then retry:\n", .{});
+                std.debug.print("  axiom profile-create {s}\n", .{name});
+                return;
+            }
+            return err;
+        };
         std.debug.print("✓ Profile '{s}' created\n", .{name});
     }
 
