@@ -4,10 +4,10 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Main executable
+    // Main executable (CLI)
     const exe = b.addExecutable(.{
         .name = "axiom",
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path("src/axiom-cli.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -88,19 +88,19 @@ pub fn build(b: *std.Build) void {
     test_realization.linkSystemLibrary("zfs_core");
     b.installArtifact(test_realization);
 
-    // Axiom CLI executable
-    const axiom_cli = b.addExecutable(.{
-        .name = "axiom-cli",
-        .root_source_file = b.path("src/axiom-cli.zig"),
+    // ZFS integration test executable (original main.zig)
+    const zfs_test = b.addExecutable(.{
+        .name = "zfs-test",
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
-    axiom_cli.addIncludePath(b.path("src"));
-    axiom_cli.linkLibC();
-    axiom_cli.linkSystemLibrary("zfs");
-    axiom_cli.linkSystemLibrary("nvpair");
-    axiom_cli.linkSystemLibrary("zfs_core");
-    b.installArtifact(axiom_cli);
+    zfs_test.addIncludePath(b.path("src"));
+    zfs_test.linkLibC();
+    zfs_test.linkSystemLibrary("zfs");
+    zfs_test.linkSystemLibrary("nvpair");
+    zfs_test.linkSystemLibrary("zfs_core");
+    b.installArtifact(zfs_test);
 
     // Garbage collector test executable
     const test_gc = b.addExecutable(.{
