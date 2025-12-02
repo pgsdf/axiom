@@ -192,7 +192,6 @@ pub const ZfsHandle = struct {
         // For recursive destruction (including snapshots), shell out to zfs command
         // as the libzfs API doesn't reliably handle all cases
         if (recursive) {
-            _ = self; // Mark as used
             const cmd = try std.fmt.allocPrint(allocator, "zfs destroy -r {s}", .{path});
             defer allocator.free(cmd);
 
@@ -200,10 +199,12 @@ pub const ZfsHandle = struct {
             child.stderr_behavior = .Ignore;
             child.stdout_behavior = .Ignore;
             try child.spawn();
-            const term = child.wait();
+            const term = child.wait() catch return ZfsError.InternalError;
             if (term.Exited != 0) {
                 return ZfsError.Unknown;
             }
+            // Access self.handle to avoid unused parameter error in recursive path
+            _ = self.handle;
             return;
         }
 
