@@ -1041,6 +1041,14 @@ pub const CLI = struct {
                 std.debug.print("  - Use --conflict-policy keep-both to keep both files\n", .{});
                 return;
             }
+            if (err == realization.RealizationError.EnvironmentExists) {
+                std.debug.print("Error: Environment '{s}' already exists.\n\n", .{env_name});
+                std.debug.print("To recreate it, destroy the existing environment first:\n", .{});
+                std.debug.print("  axiom env-destroy {s}\n\n", .{env_name});
+                std.debug.print("Then retry:\n", .{});
+                std.debug.print("  axiom realize {s} {s}\n", .{ env_name, profile_name });
+                return;
+            }
             return err;
         };
         defer realization.freeEnvironment(&env, self.allocator);
