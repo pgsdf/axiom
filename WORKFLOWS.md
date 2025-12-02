@@ -42,6 +42,7 @@ sudo zfs create zroot/axiom/store
 sudo zfs create zroot/axiom/store/pkg
 sudo zfs create zroot/axiom/profiles
 sudo zfs create zroot/axiom/env
+sudo zfs create zroot/axiom/builds
 
 # Set the mountpoint to /axiom (IMPORTANT!)
 sudo zfs set mountpoint=/axiom zroot/axiom
@@ -107,9 +108,22 @@ The recommended way to manage packages is through profiles.
    profile.yaml          profile.lock.yaml      /axiom/env/<name>
 ```
 
+**Prerequisites**: Ensure ZFS datasets are created first (see [Initial Setup](#initial-setup)).
+
 **Step 1: Create a Profile**
 
 ```bash
+sudo axiom profile-create development
+```
+
+If this fails with `DatasetNotFound`, ensure `zroot/axiom/profiles` exists:
+```bash
+sudo zfs create zroot/axiom/profiles
+```
+
+If this fails with `ProfileExists` (from a previous failed attempt):
+```bash
+sudo zfs destroy zroot/axiom/profiles/development
 sudo axiom profile-create development
 ```
 
