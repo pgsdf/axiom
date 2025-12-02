@@ -39,9 +39,9 @@ pub const UserContext = struct {
 
     /// Initialize user context from current process
     pub fn init(allocator: std.mem.Allocator) !UserContext {
-        // Get current user ID
-        const uid = std.os.linux.getuid();
-        const gid = std.os.linux.getgid();
+        // Get current user ID (using C library for cross-platform support)
+        const uid = std.c.getuid();
+        const gid = std.c.getgid();
 
         // Determine access level based on UID
         const access_level: AccessLevel = if (uid == 0) .root else .user;
