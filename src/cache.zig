@@ -59,9 +59,13 @@ pub const LocalCacheConfig = struct {
     max_size_bytes: u64 = 10 * 1024 * 1024 * 1024, // 10GB default
     cleanup_policy: CleanupPolicy = .lru,
     enabled: bool = true,
+    path_allocated: bool = false, // Track if path was allocated
 
     pub fn deinit(self: *LocalCacheConfig, allocator: std.mem.Allocator) void {
-        allocator.free(self.path);
+        // Only free path if it was allocated (not a string literal)
+        if (self.path_allocated) {
+            allocator.free(self.path);
+        }
     }
 };
 
@@ -210,6 +214,7 @@ pub const CacheConfig = struct {
                 if (std.mem.startsWith(u8, trimmed, "path:")) {
                     const path_value = std.mem.trim(u8, trimmed[5..], " \t");
                     self.local.path = try self.allocator.dupe(u8, path_value);
+                    self.local.path_allocated = true;
                 } else if (std.mem.startsWith(u8, trimmed, "max_size:")) {
                     const size_str = std.mem.trim(u8, trimmed[9..], " \t");
                     self.local.max_size_bytes = parseSize(size_str) catch self.local.max_size_bytes;
