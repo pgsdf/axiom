@@ -355,9 +355,9 @@ pub const PublicKey = struct {
     trust_level: TrustLevel = .unknown,
 
     pub fn deinit(self: *PublicKey, allocator: std.mem.Allocator) void {
-        allocator.free(self.key_id);
-        if (self.owner) |o| allocator.free(o);
-        if (self.email) |e| allocator.free(e);
+        allocator.free(@constCast(self.key_id));
+        if (self.owner) |o| allocator.free(@constCast(o));
+        if (self.email) |e| allocator.free(@constCast(e));
     }
 
     /// Check if key has expired
