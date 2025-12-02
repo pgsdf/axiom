@@ -358,9 +358,24 @@ pub const ProfileManager = struct {
             .atime = false,
         });
 
+        // Ensure the dataset is mounted
+        self.zfs_handle.mount(self.allocator, dataset_path, null) catch |err| {
+            // Ignore if already mounted
+            if (err != error.DatasetBusy) {
+                std.debug.print("Warning: Could not mount {s}: {}\n", .{ dataset_path, err });
+            }
+        };
+
         // Get mountpoint
         const mountpoint = try self.zfs_handle.getMountpoint(self.allocator, dataset_path);
         defer self.allocator.free(mountpoint);
+
+        // Ensure mountpoint directory exists (in case ZFS didn't create it)
+        std.fs.makeDirAbsolute(mountpoint) catch |err| {
+            if (err != error.PathAlreadyExists) {
+                std.debug.print("Warning: Could not create mountpoint dir {s}: {}\n", .{ mountpoint, err });
+            }
+        };
 
         // Write profile.yaml
         const profile_path = try std.fs.path.join(
@@ -369,7 +384,7 @@ pub const ProfileManager = struct {
         );
         defer self.allocator.free(profile_path);
 
-        const file = try std.fs.cwd().createFile(profile_path, .{});
+        const file = try std.fs.createFileAbsolute(profile_path, .{});
         defer file.close();
 
         try profile.write(file.writer());
