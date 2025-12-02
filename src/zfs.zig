@@ -189,6 +189,24 @@ pub const ZfsHandle = struct {
         path: []const u8,
         recursive: bool,
     ) !void {
+        // For recursive destruction (including snapshots), shell out to zfs command
+        // as the libzfs API doesn't reliably handle all cases
+        if (recursive) {
+            _ = self; // Mark as used
+            const cmd = try std.fmt.allocPrint(allocator, "zfs destroy -r {s}", .{path});
+            defer allocator.free(cmd);
+
+            var child = std.process.Child.init(&[_][]const u8{ "sh", "-c", cmd }, allocator);
+            child.stderr_behavior = .Ignore;
+            child.stdout_behavior = .Ignore;
+            try child.spawn();
+            const term = child.wait();
+            if (term.Exited != 0) {
+                return ZfsError.Unknown;
+            }
+            return;
+        }
+
         const c_path = try allocator.dupeZ(u8, path);
         defer allocator.free(c_path);
 
@@ -197,12 +215,6 @@ pub const ZfsHandle = struct {
             return libzfsErrorToZig(errno_val);
         };
         defer c.zfs_close(zhp);
-
-        // For recursive destruction (including snapshots), use zfs_destroy_snaps first
-        if (recursive) {
-            // Destroy all snapshots of this dataset first
-            _ = c.zfs_destroy_snaps(zhp, null, 0);
-        }
 
         const result = c.zfs_destroy(zhp, 0);
 
