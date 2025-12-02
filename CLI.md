@@ -419,7 +419,7 @@ axiom key-generate --output mykey
 ```
 
 **Creates:**
-- `mykey.priv` - Private key (keep secure!)
+- `mykey.key` - Private key (keep secure!)
 - `mykey.pub` - Public key (share freely)
 
 #### `axiom key-add <keyfile>`
@@ -451,7 +451,7 @@ axiom key-trust a1b2c3d4
 Sign a package with a private key.
 
 ```bash
-axiom sign /axiom/store/pkg/bash/5.2.0/1/abc123 --key mykey.priv
+axiom sign /axiom/store/pkg/bash/5.2.0/1/abc123 --key mykey.key
 ```
 
 **Creates:** `signature.yaml` in the package directory containing:
