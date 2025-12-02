@@ -77,10 +77,10 @@ sudo ./zig-out/bin/test-import  # Full tests with ZFS
 ./zig-out/bin/test-signature
 
 # Test CLI
-sudo ./zig-out/bin/axiom-cli help
-sudo ./zig-out/bin/axiom-cli key-generate --output mykey
-sudo ./zig-out/bin/axiom-cli key-add mykey.pub
-sudo ./zig-out/bin/axiom-cli key
+sudo ./zig-out/bin/axiom help
+sudo ./zig-out/bin/axiom key-generate --output mykey
+sudo ./zig-out/bin/axiom key-add mykey.pub
+sudo ./zig-out/bin/axiom key
 ```
 
 ### ZFS Integration API
@@ -123,7 +123,7 @@ defer allocator.free(compression);
 ```bash
 # Install
 zig build
-sudo cp zig-out/bin/axiom-cli /usr/local/bin/axiom
+sudo cp zig-out/bin/axiom /usr/local/bin/axiom
 
 # Create profile
 sudo axiom profile-create development

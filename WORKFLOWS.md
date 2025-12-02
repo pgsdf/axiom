@@ -27,7 +27,7 @@ cd /path/to/axiom
 zig build
 
 # 2. Install the CLI
-sudo cp zig-out/bin/axiom-cli /usr/local/bin/axiom
+sudo cp zig-out/bin/axiom /usr/local/bin/axiom
 
 # 3. Verify installation
 axiom version
@@ -42,6 +42,9 @@ sudo zfs create zroot/axiom/store
 sudo zfs create zroot/axiom/store/pkg
 sudo zfs create zroot/axiom/profiles
 sudo zfs create zroot/axiom/env
+
+# Set the mountpoint to /axiom (IMPORTANT!)
+sudo zfs set mountpoint=/axiom zroot/axiom
 
 # Set recommended properties
 sudo zfs set compression=lz4 zroot/axiom

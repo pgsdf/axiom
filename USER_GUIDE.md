@@ -60,7 +60,7 @@ cd axiom
 zig build
 
 # Install (optional)
-sudo cp zig-out/bin/axiom-cli /usr/local/bin/axiom
+sudo cp zig-out/bin/axiom /usr/local/bin/axiom
 ```
 
 ### ZFS Setup
