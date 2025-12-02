@@ -32,7 +32,7 @@ zroot/axiom/
 
 Requires:
 - Zig 0.13.0 or later
-- FreeBSD/GhostBSD with ZFS
+- FreeBSD with ZFS or PGSD
 - libzfs development headers
 
 ```bash
