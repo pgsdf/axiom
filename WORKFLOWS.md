@@ -36,20 +36,23 @@ axiom version
 ### Initialize the Package Store
 
 ```bash
-# Create the root Axiom dataset structure
+# 1. Create the root Axiom dataset
 sudo zfs create zroot/axiom
+
+# 2. Set the mountpoint BEFORE creating children (IMPORTANT!)
+#    This must be done before child datasets are created so they inherit correctly
+sudo zfs set mountpoint=/axiom zroot/axiom
+
+# 3. Set recommended properties
+sudo zfs set compression=lz4 zroot/axiom
+sudo zfs set atime=off zroot/axiom
+
+# 4. Now create child datasets (they inherit /axiom mountpoint)
 sudo zfs create zroot/axiom/store
 sudo zfs create zroot/axiom/store/pkg
 sudo zfs create zroot/axiom/profiles
 sudo zfs create zroot/axiom/env
 sudo zfs create zroot/axiom/builds
-
-# Set the mountpoint to /axiom (IMPORTANT!)
-sudo zfs set mountpoint=/axiom zroot/axiom
-
-# Set recommended properties
-sudo zfs set compression=lz4 zroot/axiom
-sudo zfs set atime=off zroot/axiom
 ```
 
 ### Configure Shell Completions
