@@ -8,7 +8,7 @@ The Axiom CLI provides a user-friendly interface to the Axiom package manager. I
 
 ```bash
 zig build
-sudo cp zig-out/bin/axiom-cli /usr/local/bin/axiom
+sudo cp zig-out/bin/axiom /usr/local/bin/axiom
 ```
 
 ## General Usage

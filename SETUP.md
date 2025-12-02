@@ -76,8 +76,8 @@ ls -ld /axiom
 After completing dataset setup:
 
 1. Build Axiom: `zig build`
-2. Run the demo: `sudo ./zig-out/bin/axiom`
-3. Verify ZFS integration works correctly
+2. Install CLI: `sudo cp zig-out/bin/axiom /usr/local/bin/axiom`
+3. Verify installation: `sudo axiom help`
 
 ## Troubleshooting
 
