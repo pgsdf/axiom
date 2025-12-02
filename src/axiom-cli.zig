@@ -49,6 +49,11 @@ pub fn main() !void {
     defer trust_store.deinit();
     trust_store.load() catch {}; // Ignore error if file doesn't exist
 
+    // Load official PGSD signing keys (bundled with Axiom)
+    trust_store.loadOfficialKeys() catch |err| {
+        std.debug.print("Warning: Could not load official PGSD keys: {}\n", .{err});
+    };
+
     var verifier = signature.Verifier.init(allocator, &trust_store, .warn);
 
     // Initialize cache subsystems
