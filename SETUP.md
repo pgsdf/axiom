@@ -31,6 +31,9 @@ zfs create zroot/axiom/profiles
 
 # Environment storage
 zfs create zroot/axiom/env
+
+# Build sandbox storage
+zfs create zroot/axiom/builds
 ```
 
 ### 3. Verify Configuration
@@ -48,6 +51,7 @@ zroot/axiom              XXX   XXX    96K    /axiom
 zroot/axiom/store        96K   XXX    96K    /axiom/store
 zroot/axiom/profiles     96K   XXX    96K    /axiom/profiles
 zroot/axiom/env          96K   XXX    96K    /axiom/env
+zroot/axiom/builds       96K   XXX    96K    /axiom/builds
 ```
 
 ### 4. Filesystem Layout
@@ -59,7 +63,8 @@ After setup, you'll have:
 ├── store/              # Immutable package storage
 │   └── pkg/           # Package datasets will go here
 ├── profiles/          # Profile definitions
-└── env/               # Realized environments
+├── env/               # Realized environments
+└── builds/            # Build sandbox storage
 ```
 
 ### 5. Permissions
@@ -111,6 +116,21 @@ Ensure the parent dataset exists and is mounted:
 ```bash
 zfs list zroot/axiom
 zfs get mounted zroot/axiom
+```
+
+### Profile creation fails
+
+If `axiom profile-create` fails partway through (e.g., dataset created but file writing failed), you need to clean up before retrying:
+
+```bash
+# Check if the dataset was created
+zfs list zroot/axiom/profiles/<profile-name>
+
+# If it exists, destroy it before retrying
+zfs destroy zroot/axiom/profiles/<profile-name>
+
+# Then retry
+axiom profile-create <profile-name>
 ```
 
 ## Advanced Configuration
