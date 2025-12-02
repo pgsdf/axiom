@@ -198,9 +198,12 @@ pub const ZfsHandle = struct {
         };
         defer c.zfs_close(zhp);
 
-        // FreeBSD's libzfs may not have ZFS_DEFER_DESTROY flag
-        // Use 0 for flags, recursive destruction is handled by zfs_destroy
-        _ = recursive; // Mark as used
+        // For recursive destruction (including snapshots), use zfs_destroy_snaps first
+        if (recursive) {
+            // Destroy all snapshots of this dataset first
+            _ = c.zfs_destroy_snaps(zhp, null, 0);
+        }
+
         const result = c.zfs_destroy(zhp, 0);
 
         if (result != 0) {
