@@ -554,6 +554,23 @@ sudo axiom virtual-providers shell
 
 Axiom uses Ed25519 signatures for package integrity.
 
+### Official PGSD Signing Key
+
+Axiom ships with the **official PGSD signing key pre-bundled**. This key is automatically loaded and trusted at startup, so you can verify official PGSD releases immediately without any configuration.
+
+```
+Key ID:      PGSD0001A7E3F9B2
+Owner:       PGSD Official
+Email:       security@pgsd.io
+Trust Level: Official PGSD Release Key (highest)
+```
+
+The official key:
+- Is automatically loaded on every Axiom startup
+- Has the highest trust level (`.official`)
+- Never expires
+- Cannot be removed from the trust store
+
 ### Generating Keys
 
 ```bash
@@ -568,16 +585,16 @@ sudo axiom key-generate --output mykey
 ### Managing the Trust Store
 
 ```bash
+# List trusted keys (shows official key + any user-added keys)
+sudo axiom key-list
+
 # Add a public key to trust store
 sudo axiom key-add mykey.pub
 
 # Add with a name
 sudo axiom key-add --name "My Signing Key" mykey.pub
 
-# List trusted keys
-sudo axiom key-list
-
-# Remove a key
+# Remove a key (cannot remove official key)
 sudo axiom key-remove <key-id>
 ```
 
@@ -1062,10 +1079,11 @@ sudo axiom --verbose resolve my-profile
 
 ### Security
 
-1. **Verify signatures**: Use `--verify` when importing packages
-2. **Keep keys secure**: Store private keys safely, never commit them
-3. **Trust carefully**: Only add trusted public keys to your keyring
-4. **Use strict mode in production**: Require signatures on all packages
+1. **Official packages are pre-verified**: The official PGSD signing key is bundled with Axiom
+2. **Verify signatures**: Use `--verify` when importing packages
+3. **Keep keys secure**: Store private keys safely, never commit them
+4. **Trust carefully**: Only add trusted public keys to your keyring
+5. **Use strict mode in production**: Require signatures on all packages
 
 ### ZFS Best Practices
 
