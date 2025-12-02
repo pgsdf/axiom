@@ -24,6 +24,8 @@ pub const ZfsError = error{
     PropertyError,
     /// Memory allocation failed
     OutOfMemory,
+    /// Dataset is busy (mounted, has dependents, etc.)
+    DatasetBusy,
     /// Unknown libzfs error
     Unknown,
     /// Internal error (e.g., subprocess failed)
@@ -39,7 +41,11 @@ fn libzfsErrorToZig(errno_val: c_int) ZfsError {
         c.EZFS_INVALIDNAME => ZfsError.InvalidOperation,
         c.EZFS_PROPTYPE, c.EZFS_BADPROP => ZfsError.PropertyError,
         c.EZFS_NOMEM => ZfsError.OutOfMemory,
-        else => ZfsError.Unknown,
+        c.EZFS_BUSY => ZfsError.DatasetBusy,
+        else => {
+            std.debug.print("Unknown ZFS error code: {d}\n", .{errno_val});
+            return ZfsError.Unknown;
+        },
     };
 }
 
