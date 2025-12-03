@@ -182,6 +182,58 @@ pub const ZfsHandle = struct {
         }
     }
 
+    /// Create a new filesystem dataset with parent creation (like zfs create -p)
+    pub fn createDatasetWithParents(
+        self: *ZfsHandle,
+        allocator: std.mem.Allocator,
+        path: []const u8,
+        props: ?DatasetProperties,
+    ) !void {
+        _ = self; // Accessed via shell command
+
+        // Build zfs create -p command with properties
+        var cmd_parts = std.ArrayList(u8).init(allocator);
+        defer cmd_parts.deinit();
+
+        try cmd_parts.appendSlice("zfs create -p");
+
+        // Add properties if provided
+        if (props) |p| {
+            if (p.compression) |comp| {
+                try cmd_parts.appendSlice(" -o compression=");
+                try cmd_parts.appendSlice(comp);
+            }
+            if (p.atime != null and !p.atime.?) {
+                try cmd_parts.appendSlice(" -o atime=off");
+            }
+        }
+
+        try cmd_parts.appendSlice(" ");
+        try cmd_parts.appendSlice(path);
+
+        const cmd = try cmd_parts.toOwnedSlice();
+        defer allocator.free(cmd);
+
+        var child = std.process.Child.init(&[_][]const u8{ "sh", "-c", cmd }, allocator);
+        child.stderr_behavior = .Pipe;
+        child.stdout_behavior = .Ignore;
+        try child.spawn();
+
+        var stderr_output: ?[]const u8 = null;
+        if (child.stderr) |stderr_pipe| {
+            stderr_output = stderr_pipe.readToEndAlloc(allocator, 1024 * 1024) catch null;
+        }
+        defer if (stderr_output) |s| allocator.free(s);
+
+        const term = child.wait() catch return ZfsError.InternalError;
+        if (term.Exited != 0) {
+            if (stderr_output) |stderr| {
+                std.debug.print("zfs create -p failed: {s}\n", .{stderr});
+            }
+            return ZfsError.Unknown;
+        }
+    }
+
     /// Destroy a dataset (and optionally its children)
     pub fn destroyDataset(
         self: *ZfsHandle,
