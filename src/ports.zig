@@ -700,11 +700,12 @@ pub const PortsMigrator = struct {
         var clean_result = try self.runMakeTarget(port_path, "clean", null);
         clean_result.deinit(self.allocator);
 
-        // Step 2: Install build dependencies from packages (not from ports)
-        std.debug.print("  Installing build dependencies...\n", .{});
-        try self.installBuildDependencies(port_path);
+        // Step 2: Check and display required dependencies
+        // (User must build these first via separate ports-import calls)
+        try self.displayDependencies(port_path);
 
-        // Step 3: Build the port (with dependencies already installed from packages)
+        // Step 3: Build the port with NO_DEPENDS (skip ports dependency machinery)
+        // Dependencies must already be available on the system (built via axiom)
         std.debug.print("  Building...\n", .{});
         var build_result = try self.runMakeTargetNoDeps(port_path, "build", null);
         if (build_result.exit_code != 0) {
@@ -934,51 +935,32 @@ pub const PortsMigrator = struct {
         };
     }
 
-    /// Install build dependencies from packages using pkg
-    fn installBuildDependencies(self: *PortsMigrator, port_path: []const u8) !void {
-        // Get the list of missing packages for this port
-        // Using 'make missing-packages' which returns package names
-        var args = [_][]const u8{
-            "make",
-            "-C",
-            port_path,
-            "-V",
-            "BUILD_DEPENDS",
-        };
-
-        var child = std.process.Child.init(&args, self.allocator);
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Ignore;
-
-        try child.spawn();
+    /// Display build dependencies (user must build these first via separate ports-import calls)
+    fn displayDependencies(self: *PortsMigrator, port_path: []const u8) !void {
+        // Get BUILD_DEPENDS
+        var build_args = [_][]const u8{ "make", "-C", port_path, "-V", "BUILD_DEPENDS" };
+        var build_child = std.process.Child.init(&build_args, self.allocator);
+        build_child.stdout_behavior = .Pipe;
+        build_child.stderr_behavior = .Ignore;
+        try build_child.spawn();
 
         var build_deps: ?[]const u8 = null;
-        if (child.stdout) |stdout_pipe| {
+        if (build_child.stdout) |stdout_pipe| {
             build_deps = stdout_pipe.readToEndAlloc(self.allocator, 1024 * 1024) catch null;
         }
+        _ = try build_child.wait();
 
-        _ = try child.wait();
-
-        // Also get LIB_DEPENDS and RUN_DEPENDS that might be needed at build time
-        var lib_args = [_][]const u8{
-            "make",
-            "-C",
-            port_path,
-            "-V",
-            "LIB_DEPENDS",
-        };
-
+        // Get LIB_DEPENDS
+        var lib_args = [_][]const u8{ "make", "-C", port_path, "-V", "LIB_DEPENDS" };
         var lib_child = std.process.Child.init(&lib_args, self.allocator);
         lib_child.stdout_behavior = .Pipe;
         lib_child.stderr_behavior = .Ignore;
-
         try lib_child.spawn();
 
         var lib_deps: ?[]const u8 = null;
         if (lib_child.stdout) |stdout_pipe| {
             lib_deps = stdout_pipe.readToEndAlloc(self.allocator, 1024 * 1024) catch null;
         }
-
         _ = try lib_child.wait();
 
         defer {
@@ -986,13 +968,11 @@ pub const PortsMigrator = struct {
             if (lib_deps) |d| self.allocator.free(d);
         }
 
-        // Parse the dependencies and extract package names
-        var packages = std.ArrayList([]const u8).init(self.allocator);
+        // Parse dependencies and extract port origins (category/port format)
+        var origins = std.ArrayList([]const u8).init(self.allocator);
         defer {
-            for (packages.items) |pkg| {
-                self.allocator.free(pkg);
-            }
-            packages.deinit();
+            for (origins.items) |o| self.allocator.free(o);
+            origins.deinit();
         }
 
         // BUILD_DEPENDS format: "/path/to/file:category/port" or "command:category/port"
@@ -1004,13 +984,20 @@ pub const PortsMigrator = struct {
                     const dep_trimmed = std.mem.trim(u8, dep, " \t\n\r");
                     if (dep_trimmed.len == 0) continue;
 
-                    // Extract port origin from "file:category/port" format
                     if (std.mem.indexOf(u8, dep_trimmed, ":")) |colon_pos| {
                         const origin = dep_trimmed[colon_pos + 1 ..];
-                        // Get just the port name from "category/port"
-                        if (std.mem.lastIndexOf(u8, origin, "/")) |slash_pos| {
-                            const port_name = try self.allocator.dupe(u8, origin[slash_pos + 1 ..]);
-                            try packages.append(port_name);
+                        if (origin.len > 0 and std.mem.indexOf(u8, origin, "/") != null) {
+                            // Check for duplicates
+                            var found = false;
+                            for (origins.items) |existing| {
+                                if (std.mem.eql(u8, existing, origin)) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found) {
+                                try origins.append(try self.allocator.dupe(u8, origin));
+                            }
                         }
                     }
                 }
@@ -1026,52 +1013,36 @@ pub const PortsMigrator = struct {
                     const dep_trimmed = std.mem.trim(u8, dep, " \t\n\r");
                     if (dep_trimmed.len == 0) continue;
 
-                    // Extract port origin from "lib:category/port" format
                     if (std.mem.indexOf(u8, dep_trimmed, ":")) |colon_pos| {
                         const origin = dep_trimmed[colon_pos + 1 ..];
-                        // Get just the port name from "category/port"
-                        if (std.mem.lastIndexOf(u8, origin, "/")) |slash_pos| {
-                            const port_name = try self.allocator.dupe(u8, origin[slash_pos + 1 ..]);
-                            try packages.append(port_name);
+                        if (origin.len > 0 and std.mem.indexOf(u8, origin, "/") != null) {
+                            var found = false;
+                            for (origins.items) |existing| {
+                                if (std.mem.eql(u8, existing, origin)) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found) {
+                                try origins.append(try self.allocator.dupe(u8, origin));
+                            }
                         }
                     }
                 }
             }
         }
 
-        if (packages.items.len == 0) {
-            std.debug.print("    No build dependencies found\n", .{});
+        if (origins.items.len == 0) {
+            std.debug.print("  Dependencies: none\n", .{});
             return;
         }
 
-        // Install dependencies via pkg
-        std.debug.print("    Installing {d} dependencies via pkg...\n", .{packages.items.len});
-
-        var pkg_args = std.ArrayList([]const u8).init(self.allocator);
-        defer pkg_args.deinit();
-
-        try pkg_args.append("pkg");
-        try pkg_args.append("install");
-        try pkg_args.append("-y"); // Non-interactive
-
-        for (packages.items) |pkg| {
-            std.debug.print("      - {s}\n", .{pkg});
-            try pkg_args.append(pkg);
+        std.debug.print("  Dependencies ({d} ports):\n", .{origins.items.len});
+        for (origins.items) |origin| {
+            std.debug.print("    - {s}\n", .{origin});
         }
-
-        var pkg_child = std.process.Child.init(pkg_args.items, self.allocator);
-        pkg_child.stdout_behavior = .Inherit;
-        pkg_child.stderr_behavior = .Inherit;
-
-        try pkg_child.spawn();
-        const pkg_term = try pkg_child.wait();
-
-        if (pkg_term.Exited != 0) {
-            std.debug.print("    Warning: pkg install returned {d} (some packages may already be installed)\n", .{pkg_term.Exited});
-            // Don't fail - pkg returns non-zero if packages are already installed
-        } else {
-            std.debug.print("    Dependencies installed successfully\n", .{});
-        }
+        std.debug.print("  Note: Build these first if not already available on the system.\n", .{});
+        std.debug.print("        e.g., axiom ports-import {s}\n", .{origins.items[0]});
     }
 
     /// Import a built port into the Axiom store
