@@ -780,17 +780,31 @@ You can now use this package in your profiles.
 
 ### Bootstrap Limitation
 
-**Important**: During initial bootstrap, `ports-import` cannot provide build-time dependencies (headers, libraries) to subsequent builds. This is because packages are imported to the Axiom store but not installed to system paths where compilers look.
+**Important**: During initial bootstrap, `ports-import` cannot provide build-time dependencies (headers, libraries, Perl modules) to subsequent builds. This is because packages are imported to the Axiom store but not installed to system paths where compilers and interpreters look.
 
 **Workaround for initial bootstrap:**
 
 ```bash
-# Install build-time dependencies via pkg first
-pkg install libtextstyle gettext-runtime libiconv
+# Install common build-time dependencies via pkg first
+pkg install gmake              # GNU make (required by many ports)
+pkg install gettext-tools      # msgfmt and gettext utilities
+pkg install p5-Locale-gettext  # Perl Locale::gettext module
+pkg install p5-Locale-libintl  # Perl Locale::Messages module
 
 # Then use ports-import for the final packages
 axiom ports-import shells/bash
 ```
+
+**Common bootstrap packages by category:**
+
+| Package | Provides | Needed by |
+|---------|----------|-----------|
+| `gmake` | GNU make | Most GNU software |
+| `gettext-tools` | msgfmt, xgettext | i18n-enabled software |
+| `p5-Locale-gettext` | Perl Locale::gettext | help2man, texinfo |
+| `p5-Locale-libintl` | Perl Locale::Messages | texinfo |
+| `libtextstyle` | Text styling library | gettext-tools |
+| `libiconv` | Character conversion | Many ports |
 
 This hybrid approach uses `pkg` to provide build-time headers/libraries while Axiom manages the final installed packages.
 
