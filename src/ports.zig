@@ -1222,7 +1222,7 @@ pub const PortsMigrator = struct {
     pub fn migrateWithDependencies(self: *PortsMigrator, origin: []const u8) !std.ArrayList(MigrationResult) {
         var results = std.ArrayList(MigrationResult).init(self.allocator);
         errdefer {
-            for (results.items) |*r| r.deinit();
+            for (results.items) |*r| r.deinit(self.allocator);
             results.deinit();
         }
 

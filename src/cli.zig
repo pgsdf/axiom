@@ -3301,7 +3301,7 @@ pub const CLI = struct {
             return;
         };
         defer {
-            for (results.items) |*r| r.deinit();
+            for (results.items) |*r| r.deinit(self.allocator);
             results.deinit();
         }
 
