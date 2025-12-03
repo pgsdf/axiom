@@ -1370,7 +1370,9 @@ pub const PortsMigrator = struct {
             .license = if (metadata.license.len > 0) metadata.license else null,
             .dry_run = false,
             .auto_detect = false,
-            .allow_unsigned = true, // Ports builds don't have signatures
+            .security = .{
+                .allow_unsigned = true, // Ports builds don't have signatures
+            },
         };
 
         // Find the actual package files (usually in usr/local under stage_dir)
