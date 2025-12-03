@@ -700,9 +700,13 @@ pub const PortsMigrator = struct {
         var clean_result = try self.runMakeTarget(port_path, "clean", null);
         clean_result.deinit(self.allocator);
 
-        // Step 2: Build the port
+        // Step 2: Install build dependencies from packages (not from ports)
+        std.debug.print("  Installing build dependencies...\n", .{});
+        try self.installBuildDependencies(port_path);
+
+        // Step 3: Build the port (with dependencies already installed from packages)
         std.debug.print("  Building...\n", .{});
-        var build_result = try self.runMakeTarget(port_path, "build", null);
+        var build_result = try self.runMakeTargetNoDeps(port_path, "build", null);
         if (build_result.exit_code != 0) {
             std.debug.print("  Build failed with exit code: {d}\n", .{build_result.exit_code});
             // Show the last part of stdout (compiler errors are in stdout)
@@ -720,9 +724,9 @@ pub const PortsMigrator = struct {
         }
         build_result.deinit(self.allocator);
 
-        // Step 3: Stage the installation
+        // Step 4: Stage the installation
         std.debug.print("  Staging installation...\n", .{});
-        var stage_result = try self.runMakeTarget(port_path, "stage", stage_dir);
+        var stage_result = try self.runMakeTargetNoDeps(port_path, "stage", stage_dir);
         if (stage_result.exit_code != 0) {
             std.debug.print("  Staging failed with exit code: {d}\n", .{stage_result.exit_code});
             if (stage_result.stdout) |stdout| {
@@ -841,6 +845,233 @@ pub const PortsMigrator = struct {
             .stdout = stdout_output,
             .stderr = stderr_output,
         };
+    }
+
+    /// Run a make target with NO_DEPENDS to skip port-based dependency building
+    /// (assumes dependencies were pre-installed from packages)
+    fn runMakeTargetNoDeps(
+        self: *PortsMigrator,
+        port_path: []const u8,
+        target: []const u8,
+        destdir: ?[]const u8,
+    ) !MakeResult {
+        var args = std.ArrayList([]const u8).init(self.allocator);
+        defer args.deinit();
+
+        try args.append("make");
+        try args.append("-C");
+        try args.append(port_path);
+
+        // Add BATCH=yes to prevent interactive prompts
+        try args.append("BATCH=yes");
+
+        // Disable interactive dialogs
+        try args.append("DISABLE_VULNERABILITIES=yes");
+
+        // Skip dependency building - we installed them from packages
+        try args.append("NO_DEPENDS=yes");
+
+        // Add DESTDIR if provided
+        if (destdir) |dir| {
+            const destdir_arg = try std.fmt.allocPrint(self.allocator, "DESTDIR={s}", .{dir});
+            defer self.allocator.free(destdir_arg);
+            try args.append(destdir_arg);
+        }
+
+        // Add job count for parallel builds
+        const jobs_arg = try std.fmt.allocPrint(self.allocator, "-j{d}", .{self.options.build_jobs});
+        defer self.allocator.free(jobs_arg);
+        try args.append(jobs_arg);
+
+        try args.append(target);
+
+        var child = std.process.Child.init(args.items, self.allocator);
+
+        child.stdout_behavior = .Pipe;
+        child.stderr_behavior = .Pipe;
+
+        try child.spawn();
+
+        // Read stdout (contains compiler output including errors)
+        var stdout_output: ?[]const u8 = null;
+        if (child.stdout) |stdout_pipe| {
+            const stdout_content = stdout_pipe.readToEndAlloc(self.allocator, 10 * 1024 * 1024) catch null;
+            if (stdout_content) |content| {
+                if (content.len > 0) {
+                    stdout_output = content;
+                } else {
+                    self.allocator.free(content);
+                }
+            }
+        }
+
+        // Read stderr
+        var stderr_output: ?[]const u8 = null;
+        if (child.stderr) |stderr_pipe| {
+            const stderr_content = stderr_pipe.readToEndAlloc(self.allocator, 1024 * 1024) catch null;
+            if (stderr_content) |content| {
+                if (content.len > 0) {
+                    stderr_output = content;
+                } else {
+                    self.allocator.free(content);
+                }
+            }
+        }
+
+        const term = try child.wait();
+
+        // In verbose mode, show stdout
+        if (self.options.verbose) {
+            if (stdout_output) |out| {
+                std.debug.print("{s}", .{out});
+            }
+        }
+
+        return MakeResult{
+            .exit_code = term.Exited,
+            .stdout = stdout_output,
+            .stderr = stderr_output,
+        };
+    }
+
+    /// Install build dependencies from packages using pkg
+    fn installBuildDependencies(self: *PortsMigrator, port_path: []const u8) !void {
+        // Get the list of missing packages for this port
+        // Using 'make missing-packages' which returns package names
+        var args = [_][]const u8{
+            "make",
+            "-C",
+            port_path,
+            "-V",
+            "BUILD_DEPENDS",
+        };
+
+        var child = std.process.Child.init(&args, self.allocator);
+        child.stdout_behavior = .Pipe;
+        child.stderr_behavior = .Ignore;
+
+        try child.spawn();
+
+        var build_deps: ?[]const u8 = null;
+        if (child.stdout) |stdout_pipe| {
+            build_deps = stdout_pipe.readToEndAlloc(self.allocator, 1024 * 1024) catch null;
+        }
+
+        _ = try child.wait();
+
+        // Also get LIB_DEPENDS and RUN_DEPENDS that might be needed at build time
+        var lib_args = [_][]const u8{
+            "make",
+            "-C",
+            port_path,
+            "-V",
+            "LIB_DEPENDS",
+        };
+
+        var lib_child = std.process.Child.init(&lib_args, self.allocator);
+        lib_child.stdout_behavior = .Pipe;
+        lib_child.stderr_behavior = .Ignore;
+
+        try lib_child.spawn();
+
+        var lib_deps: ?[]const u8 = null;
+        if (lib_child.stdout) |stdout_pipe| {
+            lib_deps = stdout_pipe.readToEndAlloc(self.allocator, 1024 * 1024) catch null;
+        }
+
+        _ = try lib_child.wait();
+
+        defer {
+            if (build_deps) |d| self.allocator.free(d);
+            if (lib_deps) |d| self.allocator.free(d);
+        }
+
+        // Parse the dependencies and extract package names
+        var packages = std.ArrayList([]const u8).init(self.allocator);
+        defer {
+            for (packages.items) |pkg| {
+                self.allocator.free(pkg);
+            }
+            packages.deinit();
+        }
+
+        // BUILD_DEPENDS format: "/path/to/file:category/port" or "command:category/port"
+        if (build_deps) |deps| {
+            const trimmed = std.mem.trim(u8, deps, " \t\n\r");
+            if (trimmed.len > 0) {
+                var dep_iter = std.mem.splitSequence(u8, trimmed, " ");
+                while (dep_iter.next()) |dep| {
+                    const dep_trimmed = std.mem.trim(u8, dep, " \t\n\r");
+                    if (dep_trimmed.len == 0) continue;
+
+                    // Extract port origin from "file:category/port" format
+                    if (std.mem.indexOf(u8, dep_trimmed, ":")) |colon_pos| {
+                        const origin = dep_trimmed[colon_pos + 1 ..];
+                        // Get just the port name from "category/port"
+                        if (std.mem.lastIndexOf(u8, origin, "/")) |slash_pos| {
+                            const port_name = try self.allocator.dupe(u8, origin[slash_pos + 1 ..]);
+                            try packages.append(port_name);
+                        }
+                    }
+                }
+            }
+        }
+
+        // LIB_DEPENDS format: "libname.so:category/port"
+        if (lib_deps) |deps| {
+            const trimmed = std.mem.trim(u8, deps, " \t\n\r");
+            if (trimmed.len > 0) {
+                var dep_iter = std.mem.splitSequence(u8, trimmed, " ");
+                while (dep_iter.next()) |dep| {
+                    const dep_trimmed = std.mem.trim(u8, dep, " \t\n\r");
+                    if (dep_trimmed.len == 0) continue;
+
+                    // Extract port origin from "lib:category/port" format
+                    if (std.mem.indexOf(u8, dep_trimmed, ":")) |colon_pos| {
+                        const origin = dep_trimmed[colon_pos + 1 ..];
+                        // Get just the port name from "category/port"
+                        if (std.mem.lastIndexOf(u8, origin, "/")) |slash_pos| {
+                            const port_name = try self.allocator.dupe(u8, origin[slash_pos + 1 ..]);
+                            try packages.append(port_name);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (packages.items.len == 0) {
+            std.debug.print("    No build dependencies found\n", .{});
+            return;
+        }
+
+        // Install dependencies via pkg
+        std.debug.print("    Installing {d} dependencies via pkg...\n", .{packages.items.len});
+
+        var pkg_args = std.ArrayList([]const u8).init(self.allocator);
+        defer pkg_args.deinit();
+
+        try pkg_args.append("pkg");
+        try pkg_args.append("install");
+        try pkg_args.append("-y"); // Non-interactive
+
+        for (packages.items) |pkg| {
+            std.debug.print("      - {s}\n", .{pkg});
+            try pkg_args.append(pkg);
+        }
+
+        var pkg_child = std.process.Child.init(pkg_args.items, self.allocator);
+        pkg_child.stdout_behavior = .Inherit;
+        pkg_child.stderr_behavior = .Inherit;
+
+        try pkg_child.spawn();
+        const pkg_term = try pkg_child.wait();
+
+        if (pkg_term.Exited != 0) {
+            std.debug.print("    Warning: pkg install returned {d} (some packages may already be installed)\n", .{pkg_term.Exited});
+            // Don't fail - pkg returns non-zero if packages are already installed
+        } else {
+            std.debug.print("    Dependencies installed successfully\n", .{});
+        }
     }
 
     /// Import a built port into the Axiom store
