@@ -636,6 +636,11 @@ pub const PortsMigrator = struct {
                         .{@errorName(err)},
                     ));
                     result.status = .failed;
+                    // Clean up build output before returning
+                    if (!self.options.keep_sandbox) {
+                        std.fs.cwd().deleteTree(build_result.output_dir) catch {};
+                    }
+                    self.allocator.free(build_result.output_dir);
                     return result;
                 };
 
@@ -650,8 +655,8 @@ pub const PortsMigrator = struct {
             // Clean up build output if we're not keeping the sandbox
             if (!self.options.keep_sandbox) {
                 std.fs.cwd().deleteTree(build_result.output_dir) catch {};
-                self.allocator.free(build_result.output_dir);
             }
+            self.allocator.free(build_result.output_dir);
         }
 
         return result;

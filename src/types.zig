@@ -7,17 +7,18 @@ pub const Version = struct {
     patch: u32,
 
     /// Parse a semantic version string
+    /// Accepts 1, 2, or 3 part versions (e.g., "1", "1.07", "1.2.3")
     pub fn parse(s: []const u8) !Version {
         var parts = std.mem.splitScalar(u8, s, '.');
-        
+
         const major_str = parts.next() orelse return error.InvalidVersion;
-        const minor_str = parts.next() orelse return error.InvalidVersion;
-        const patch_str = parts.next() orelse return error.InvalidVersion;
+        const minor_str = parts.next();
+        const patch_str = if (minor_str != null) parts.next() else null;
 
         return Version{
             .major = try std.fmt.parseInt(u32, major_str, 10),
-            .minor = try std.fmt.parseInt(u32, minor_str, 10),
-            .patch = try std.fmt.parseInt(u32, patch_str, 10),
+            .minor = if (minor_str) |m| try std.fmt.parseInt(u32, m, 10) else 0,
+            .patch = if (patch_str) |p| try std.fmt.parseInt(u32, p, 10) else 0,
         };
     }
 
