@@ -90,6 +90,70 @@ After completing dataset setup:
 2. Install CLI: `sudo cp zig-out/bin/axiom /usr/local/bin/axiom`
 3. Verify installation: `sudo axiom help`
 
+## Setup Order: Packages Before Profiles
+
+**IMPORTANT**: Packages must exist in the store before you can create profiles that reference them.
+
+The setup order is:
+
+```
+ZFS Datasets → Install Axiom → Import Packages → Create Profiles → Resolve → Realize
+```
+
+### Why This Order Matters
+
+When you create a profile and try to resolve it, the resolver looks in the store (`/axiom/store/pkg/`) for available packages. If the packages don't exist, resolution will fail with `PackageNotFound`.
+
+### Recommended First-Time Setup Flow
+
+```bash
+# 1. Complete ZFS setup (above)
+
+# 2. Build and install Axiom
+zig build
+sudo cp zig-out/bin/axiom /usr/local/bin/axiom
+
+# 3. Import packages FIRST (choose one method)
+
+# Option A: Import from FreeBSD Ports
+axiom ports-import shells/bash
+axiom ports-import editors/vim
+axiom ports-import devel/git
+
+# Option B: Import pre-built packages
+sudo axiom import /path/to/bash-5.2.0.tar.gz
+sudo axiom import /path/to/vim-9.0.tar.gz
+
+# Option C: Fetch from binary cache
+sudo axiom cache-add https://cache.pgsdf.org 1
+sudo axiom cache-fetch bash@5.2.0 --install
+
+# 4. NOW create profiles (packages are available)
+sudo axiom profile-create development
+
+# 5. Edit profile to add the packages you imported
+sudo vi /axiom/profiles/development/profile.yaml
+
+# 6. Resolve and realize
+sudo axiom resolve development
+sudo axiom realize dev-env development
+```
+
+### Common Mistake
+
+```bash
+# WRONG ORDER - This will fail!
+sudo axiom profile-create development
+# Edit profile.yaml to include bash, vim, git...
+sudo axiom resolve development
+# Error: PackageNotFound - bash not in store
+
+# CORRECT ORDER
+axiom ports-import shells/bash    # First import packages
+sudo axiom profile-create development
+sudo axiom resolve development    # Now resolution succeeds
+```
+
 ## Troubleshooting
 
 ### Dataset already has legacy mountpoint

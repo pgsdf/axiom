@@ -94,6 +94,29 @@ sudo axiom key-trust <key-id>
 axiom key
 ```
 
+### Import Packages to Store
+
+**IMPORTANT**: Before creating profiles, you must import packages into the store. The resolver cannot find packages that haven't been imported yet.
+
+Choose one of these methods to populate the store:
+
+```bash
+# Option A: Import from FreeBSD Ports (recommended for bootstrapping)
+axiom ports-import shells/bash
+axiom ports-import editors/vim
+axiom ports-import devel/git
+
+# Option B: Import pre-built packages
+sudo axiom import /path/to/package-directory
+sudo axiom import package.tar.gz
+
+# Option C: Fetch from binary cache
+sudo axiom cache-add https://cache.pgsdf.org 1
+sudo axiom cache-fetch bash@5.2.0 --install
+```
+
+See [Ports Migration](#ports-migration) for details on migrating FreeBSD ports to Axiom.
+
 ---
 
 ## Package Installation
@@ -111,7 +134,11 @@ The recommended way to manage packages is through profiles.
    profile.yaml          profile.lock.yaml      /axiom/env/<name>
 ```
 
-**Prerequisites**: Ensure ZFS datasets are created first (see [Initial Setup](#initial-setup)).
+**Prerequisites**:
+- ZFS datasets are created (see [Initial Setup](#initial-setup))
+- **Packages are imported into the store** (see [Import Packages to Store](#import-packages-to-store))
+
+> **Note**: Resolution will fail with `PackageNotFound` if you try to resolve a profile before importing the packages it references. Always import packages first via `ports-import`, `axiom import`, or `cache-fetch`.
 
 **Step 1: Create a Profile**
 
