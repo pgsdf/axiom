@@ -12,6 +12,14 @@ const manifest_pkg = @import("manifest.zig");
 const types = @import("types.zig");
 const store_pkg = @import("store.zig");
 const build_pkg = @import("build.zig");
+const import_pkg = @import("import.zig");
+const zfs = @import("zfs.zig");
+
+const ZfsHandle = zfs.ZfsHandle;
+const PackageStore = store_pkg.PackageStore;
+const Builder = build_pkg.Builder;
+const Importer = import_pkg.Importer;
+const PackageId = types.PackageId;
 
 pub const PortsError = error{
     PortNotFound,
@@ -164,6 +172,15 @@ pub const MigrateOptions = struct {
     name_mappings: []const NameMapping = &[_]NameMapping{},
     skip_options: bool = false,
     default_options_only: bool = true,
+
+    // Build system dependencies (required if build_after_generate or import_after_build is true)
+    zfs_handle: ?*ZfsHandle = null,
+    store: ?*PackageStore = null,
+    importer: ?*Importer = null,
+
+    // Build options
+    build_jobs: u32 = 4,
+    keep_sandbox: bool = false,
 };
 
 /// Ports migration tool
@@ -579,17 +596,230 @@ pub const PortsMigrator = struct {
 
         // Phase 2: Build (optional)
         if (self.options.build_after_generate and !self.options.dry_run) {
-            // TODO: Integrate with build_pkg.Builder
-            try result.warnings.append(try self.allocator.dupe(u8, "Build phase not yet implemented"));
-        }
+            const build_result = self.buildPort(origin, &metadata, result.manifest_path) catch |err| {
+                try result.errors.append(try std.fmt.allocPrint(
+                    self.allocator,
+                    "Build failed: {s}",
+                    .{@errorName(err)},
+                ));
+                result.status = .failed;
+                return result;
+            };
 
-        // Phase 3: Import (optional)
-        if (self.options.import_after_build and !self.options.dry_run) {
-            // TODO: Integrate with store_pkg.PackageStore
-            try result.warnings.append(try self.allocator.dupe(u8, "Import phase not yet implemented"));
+            result.status = .built;
+
+            // Phase 3: Import (optional)
+            if (self.options.import_after_build) {
+                const pkg_id = self.importPort(&metadata, build_result.output_dir) catch |err| {
+                    try result.errors.append(try std.fmt.allocPrint(
+                        self.allocator,
+                        "Import failed: {s}",
+                        .{@errorName(err)},
+                    ));
+                    result.status = .failed;
+                    return result;
+                };
+
+                result.status = .imported;
+                result.axiom_package = try std.fmt.allocPrint(
+                    self.allocator,
+                    "{s}@{}.{}.{}-r{d}",
+                    .{ pkg_id.name, pkg_id.version.major, pkg_id.version.minor, pkg_id.version.patch, pkg_id.revision },
+                );
+            }
+
+            // Clean up build output if we're not keeping the sandbox
+            if (!self.options.keep_sandbox) {
+                std.fs.cwd().deleteTree(build_result.output_dir) catch {};
+                self.allocator.free(build_result.output_dir);
+            }
         }
 
         return result;
+    }
+
+    /// Build result from port build
+    const PortBuildResult = struct {
+        output_dir: []const u8,
+        success: bool,
+    };
+
+    /// Build a port using the FreeBSD ports build system
+    fn buildPort(
+        self: *PortsMigrator,
+        origin: []const u8,
+        metadata: *const PortMetadata,
+        manifest_path: ?[]const u8,
+    ) !PortBuildResult {
+        _ = manifest_path; // May be used in future for dependency resolution
+
+        std.debug.print("\n=== Building port: {s} ===\n", .{origin});
+
+        const port_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+            self.options.ports_tree,
+            origin,
+        });
+        defer self.allocator.free(port_path);
+
+        // Create a temporary output directory for the staged installation
+        const timestamp = std.time.timestamp();
+        var random_bytes: [4]u8 = undefined;
+        std.crypto.random.bytes(&random_bytes);
+
+        const stage_dir = try std.fmt.allocPrint(
+            self.allocator,
+            "/tmp/axiom-ports-stage-{s}-{d}-{x:0>2}{x:0>2}{x:0>2}{x:0>2}",
+            .{ metadata.name, timestamp, random_bytes[0], random_bytes[1], random_bytes[2], random_bytes[3] },
+        );
+        errdefer self.allocator.free(stage_dir);
+
+        try std.fs.cwd().makePath(stage_dir);
+
+        // Build using FreeBSD ports make with DESTDIR
+        std.debug.print("Building in: {s}\n", .{port_path});
+        std.debug.print("Staging to: {s}\n", .{stage_dir});
+
+        // Step 1: Clean any previous build
+        std.debug.print("  Cleaning...\n", .{});
+        _ = try self.runMakeTarget(port_path, "clean", null);
+
+        // Step 2: Build the port
+        std.debug.print("  Building...\n", .{});
+        const build_exit = try self.runMakeTarget(port_path, "build", null);
+        if (build_exit != 0) {
+            std.debug.print("  Build failed with exit code: {d}\n", .{build_exit});
+            return PortsError.BuildFailed;
+        }
+
+        // Step 3: Stage the installation
+        std.debug.print("  Staging installation...\n", .{});
+        const stage_exit = try self.runMakeTarget(port_path, "stage", stage_dir);
+        if (stage_exit != 0) {
+            std.debug.print("  Staging failed with exit code: {d}\n", .{stage_exit});
+            return PortsError.BuildFailed;
+        }
+
+        std.debug.print("  Build completed successfully\n", .{});
+
+        return PortBuildResult{
+            .output_dir = stage_dir,
+            .success = true,
+        };
+    }
+
+    /// Run a make target in the port directory
+    fn runMakeTarget(
+        self: *PortsMigrator,
+        port_path: []const u8,
+        target: []const u8,
+        destdir: ?[]const u8,
+    ) !u8 {
+        var args = std.ArrayList([]const u8).init(self.allocator);
+        defer args.deinit();
+
+        try args.append("make");
+        try args.append("-C");
+        try args.append(port_path);
+
+        // Add DESTDIR if provided
+        if (destdir) |dir| {
+            const destdir_arg = try std.fmt.allocPrint(self.allocator, "DESTDIR={s}", .{dir});
+            defer self.allocator.free(destdir_arg);
+            try args.append(destdir_arg);
+        }
+
+        // Add job count for parallel builds
+        const jobs_arg = try std.fmt.allocPrint(self.allocator, "-j{d}", .{self.options.build_jobs});
+        defer self.allocator.free(jobs_arg);
+        try args.append(jobs_arg);
+
+        try args.append(target);
+
+        var child = std.process.Child.init(args.items, self.allocator);
+        if (!self.options.verbose) {
+            child.stdout_behavior = .Ignore;
+            child.stderr_behavior = .Ignore;
+        }
+
+        try child.spawn();
+        const term = try child.wait();
+
+        return term.Exited;
+    }
+
+    /// Import a built port into the Axiom store
+    fn importPort(
+        self: *PortsMigrator,
+        metadata: *const PortMetadata,
+        stage_dir: []const u8,
+    ) !PackageId {
+        std.debug.print("\n=== Importing to store: {s} ===\n", .{metadata.name});
+
+        // Get the importer from options
+        const importer = self.options.importer orelse {
+            std.debug.print("Error: Importer not provided in options\n", .{});
+            return PortsError.ImportFailed;
+        };
+
+        // Parse version
+        const version = types.Version.parse(metadata.version) catch {
+            std.debug.print("Error: Failed to parse version: {s}\n", .{metadata.version});
+            return PortsError.ImportFailed;
+        };
+
+        // Create import options
+        const import_options = import_pkg.ImportOptions{
+            .name = self.mapPortName(metadata.name),
+            .version = version,
+            .revision = metadata.revision,
+            .description = metadata.comment,
+            .license = if (metadata.license.len > 0) metadata.license else null,
+            .dry_run = false,
+            .auto_detect = false,
+        };
+
+        // Find the actual package files (usually in usr/local under stage_dir)
+        const pkg_root = try self.findPackageRoot(stage_dir);
+        defer if (pkg_root.ptr != stage_dir.ptr) self.allocator.free(pkg_root);
+
+        std.debug.print("  Package root: {s}\n", .{pkg_root});
+
+        // Import the package
+        const pkg_id = importer.import(
+            import_pkg.ImportSource{ .directory = pkg_root },
+            import_options,
+        ) catch |err| {
+            std.debug.print("Import error: {s}\n", .{@errorName(err)});
+            return PortsError.ImportFailed;
+        };
+
+        std.debug.print("  ✓ Package imported: {s}@{}\n", .{ pkg_id.name, pkg_id.version });
+
+        return pkg_id;
+    }
+
+    /// Find the actual package root directory (e.g., usr/local) in staged output
+    fn findPackageRoot(self: *PortsMigrator, stage_dir: []const u8) ![]const u8 {
+        // FreeBSD ports typically stage to DESTDIR/usr/local
+        const usr_local = try std.fs.path.join(self.allocator, &[_][]const u8{ stage_dir, "usr", "local" });
+
+        if (std.fs.cwd().access(usr_local, .{})) |_| {
+            return usr_local;
+        } else |_| {
+            self.allocator.free(usr_local);
+        }
+
+        // Try just usr/
+        const usr = try std.fs.path.join(self.allocator, &[_][]const u8{ stage_dir, "usr" });
+
+        if (std.fs.cwd().access(usr, .{})) |_| {
+            return usr;
+        } else |_| {
+            self.allocator.free(usr);
+        }
+
+        // Fall back to stage_dir itself
+        return stage_dir;
     }
 
     /// Batch migrate multiple ports

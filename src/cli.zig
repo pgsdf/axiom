@@ -3221,46 +3221,121 @@ pub const CLI = struct {
 
     fn portsImport(self: *CLI, args: []const []const u8) !void {
         if (args.len < 1) {
-            std.debug.print("Usage: axiom ports-import <origin>\n", .{});
+            std.debug.print("Usage: axiom ports-import <origin> [options]\n", .{});
             std.debug.print("\nFull migration: generate manifests, build, and import to store.\n", .{});
-            std.debug.print("\nThis is equivalent to:\n", .{});
-            std.debug.print("  axiom ports-gen <origin> --build --import\n", .{});
+            std.debug.print("\nOptions:\n", .{});
+            std.debug.print("  --ports-tree <path>  Path to ports tree (default: /usr/ports)\n", .{});
+            std.debug.print("  --jobs <n>           Number of parallel build jobs (default: 4)\n", .{});
+            std.debug.print("  --verbose            Show detailed build output\n", .{});
+            std.debug.print("  --keep-sandbox       Don't clean up build staging directory\n", .{});
+            std.debug.print("  --dry-run            Generate manifests only, don't build\n", .{});
+            std.debug.print("\nExamples:\n", .{});
+            std.debug.print("  axiom ports-import shells/bash\n", .{});
+            std.debug.print("  axiom ports-import editors/vim --jobs 8 --verbose\n", .{});
             return;
         }
 
-        const origin = args[0];
-        std.debug.print("Full port migration: {s}\n", .{origin});
-        std.debug.print("=======================\n\n", .{});
+        // Parse arguments
+        var origin: ?[]const u8 = null;
+        var ports_tree: []const u8 = "/usr/ports";
+        var jobs: u32 = 4;
+        var verbose: bool = false;
+        var keep_sandbox: bool = false;
+        var dry_run: bool = false;
 
-        // Run full migration
-        var migrator = PortsMigrator.init(self.allocator, .{
-            .ports_tree = "/usr/ports",
-            .output_dir = "./generated/axiom-ports",
-            .build_after_generate = true,
-            .import_after_build = true,
-            .dry_run = false,
-        });
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--ports-tree") and i + 1 < args.len) {
+                i += 1;
+                ports_tree = args[i];
+            } else if (std.mem.eql(u8, args[i], "--jobs") and i + 1 < args.len) {
+                i += 1;
+                jobs = std.fmt.parseInt(u32, args[i], 10) catch 4;
+            } else if (std.mem.eql(u8, args[i], "--verbose")) {
+                verbose = true;
+            } else if (std.mem.eql(u8, args[i], "--keep-sandbox")) {
+                keep_sandbox = true;
+            } else if (std.mem.eql(u8, args[i], "--dry-run")) {
+                dry_run = true;
+            } else if (origin == null and args[i][0] != '-') {
+                origin = args[i];
+            }
+        }
 
-        const result = migrator.migrate(origin) catch |err| {
-            std.debug.print("Migration failed: {s}\n", .{@errorName(err)});
+        const port_origin = origin orelse {
+            std.debug.print("Error: Port origin required (e.g., shells/bash)\n", .{});
             return;
         };
 
+        std.debug.print("Full port migration: {s}\n", .{port_origin});
+        std.debug.print("========================================\n\n", .{});
+
+        // Run full migration with build system integration
+        var migrator = PortsMigrator.init(self.allocator, .{
+            .ports_tree = ports_tree,
+            .output_dir = "./generated/axiom-ports",
+            .build_after_generate = !dry_run,
+            .import_after_build = !dry_run,
+            .dry_run = dry_run,
+            .verbose = verbose,
+            // Pass build system dependencies
+            .zfs_handle = self.zfs_handle,
+            .store = self.store,
+            .importer = self.importer,
+            .build_jobs = jobs,
+            .keep_sandbox = keep_sandbox,
+        });
+
+        var result = migrator.migrate(port_origin) catch |err| {
+            std.debug.print("Migration failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer result.deinit(self.allocator);
+
+        // Show any warnings
+        if (result.warnings.items.len > 0) {
+            std.debug.print("\nWarnings:\n", .{});
+            for (result.warnings.items) |warning| {
+                std.debug.print("  - {s}\n", .{warning});
+            }
+        }
+
+        // Show any errors
+        if (result.errors.items.len > 0) {
+            std.debug.print("\nErrors:\n", .{});
+            for (result.errors.items) |err_msg| {
+                std.debug.print("  - {s}\n", .{err_msg});
+            }
+        }
+
+        std.debug.print("\n", .{});
+
         switch (result.status) {
             .imported => {
-                std.debug.print("Success! Port imported to store.\n", .{});
+                std.debug.print("✓ Success! Port imported to store.\n", .{});
                 if (result.axiom_package) |pkg| {
-                    std.debug.print("Package: {s}\n", .{pkg});
+                    std.debug.print("  Package: {s}\n", .{pkg});
                 }
+                std.debug.print("\nYou can now use this package in your profiles.\n", .{});
+            },
+            .built => {
+                std.debug.print("✓ Port built successfully.\n", .{});
+                std.debug.print("  Import was not requested.\n", .{});
             },
             .generated => {
-                std.debug.print("Manifests generated. Build/import phases not yet implemented.\n", .{});
+                std.debug.print("✓ Manifests generated.\n", .{});
                 if (result.manifest_path) |path| {
-                    std.debug.print("Output: {s}\n", .{path});
+                    std.debug.print("  Output: {s}\n", .{path});
+                }
+                if (dry_run) {
+                    std.debug.print("  (dry-run mode - build/import skipped)\n", .{});
                 }
             },
+            .failed => {
+                std.debug.print("✗ Migration failed.\n", .{});
+            },
             else => {
-                std.debug.print("Migration incomplete: {s}\n", .{@tagName(result.status)});
+                std.debug.print("Migration status: {s}\n", .{@tagName(result.status)});
             },
         }
     }
