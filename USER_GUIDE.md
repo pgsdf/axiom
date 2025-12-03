@@ -91,6 +91,30 @@ zfs list -r zroot/axiom
 
 ## Quick Start
 
+> **Important Setup Order**: Before creating profiles, you must have packages in the store. The workflow is:
+>
+> **Import Packages → Create Profile → Resolve → Realize → Activate**
+>
+> If you skip the import step, resolution will fail with `PackageNotFound`.
+
+### Import Packages First
+
+Before creating profiles, populate the store with packages:
+
+```bash
+# Option A: Import from FreeBSD Ports (recommended for bootstrapping)
+axiom ports-import shells/bash
+axiom ports-import editors/vim
+axiom ports-import devel/git
+
+# Option B: Import pre-built packages
+sudo axiom import /path/to/package.tar.gz
+
+# Option C: Fetch from binary cache
+sudo axiom cache-add https://cache.pgsdf.org 1
+sudo axiom cache-fetch bash@5.2.0 --install
+```
+
 ### Create Your First Profile
 
 ```bash
