@@ -154,6 +154,99 @@ sudo axiom profile-create development
 sudo axiom resolve development    # Now resolution succeeds
 ```
 
+## Importing from FreeBSD Ports
+
+The `axiom ports-import` command builds ports and imports them into the Axiom store. It automatically resolves the dependency tree and builds packages in the correct order.
+
+### Basic Usage
+
+```bash
+# Import a single port with all its dependencies
+axiom ports-import shells/bash
+
+# Import with verbose output
+axiom ports-import editors/vim --verbose
+
+# Import without auto-dependency resolution
+axiom ports-import devel/m4 --no-deps
+```
+
+### What ports-import Does
+
+1. **Resolves dependencies** - Recursively discovers all BUILD_DEPENDS, LIB_DEPENDS, and RUN_DEPENDS
+2. **Topologically sorts** - Orders packages so dependencies build first (leaves first)
+3. **Builds each port** - Uses `make build` and `make stage` with NO_DEPENDS=yes
+4. **Imports to store** - Copies staged files into Axiom's ZFS package store
+
+### Bootstrap Limitation
+
+**Important**: During initial bootstrap, `ports-import` cannot provide build-time dependencies (headers, libraries) to subsequent builds. This is because packages are imported to the Axiom store but not installed to system paths where compilers look.
+
+**Workaround for initial bootstrap:**
+
+```bash
+# Install build-time dependencies via pkg first
+pkg install libtextstyle gettext-runtime libiconv
+
+# Then use ports-import for the final packages
+axiom ports-import shells/bash
+```
+
+This hybrid approach uses `pkg` to provide build-time headers/libraries while Axiom manages the final installed packages.
+
+### Example: Building bash
+
+```bash
+$ axiom ports-import shells/bash
+
+Resolving dependency tree for shells/bash...
+
+Build order (16 ports):
+  1. print/indexinfo
+  2. devel/gettext-runtime
+  3. devel/libtextstyle
+  4. devel/gettext-tools
+  5. lang/perl5.42
+  ...
+  16. shells/bash
+
+============================================================
+Processing: print/indexinfo
+============================================================
+=== Building port: print/indexinfo ===
+  Cleaning...
+  Dependencies: none
+  Building...
+  Staging...
+  Copying staged files...
+  Build completed successfully
+=== Importing to store: indexinfo ===
+  ⚠ WARNING: Package is not signed
+  ✓ Package imported: indexinfo@0.3.1
+
+... (continues for each dependency)
+
+============================================================
+Summary: 16 succeeded, 0 failed (of 16 total)
+============================================================
+
+✓ Success! shells/bash imported to store.
+  Package: bash@5.2.37
+
+You can now use this package in your profiles.
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--ports-tree <path>` | Path to ports tree (default: /usr/ports) |
+| `--jobs <n>` | Parallel build jobs (default: 4) |
+| `--verbose` | Show detailed build output |
+| `--keep-sandbox` | Don't clean up staging directory |
+| `--dry-run` | Generate manifests only |
+| `--no-deps` | Don't auto-resolve dependencies |
+
 ## Troubleshooting
 
 ### Dataset already has legacy mountpoint

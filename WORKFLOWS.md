@@ -705,13 +705,109 @@ axiom bundle-run untrusted-app.pgsdimg --allow-untrusted
 
 ## Ports Migration
 
-### Workflow: Migrate a FreeBSD Port to Axiom
+The `ports-import` command is the primary way to populate the Axiom store from FreeBSD ports. It automatically resolves dependencies, builds ports in the correct order, and imports packages to the store.
+
+### Workflow: Import from FreeBSD Ports
 
 ```
-┌─────────────────┐      ┌────────────────────┐     ┌─────────────────┐
-│ Scan Port       │ ──▶ │ Generate Manifests │ ──▶│ Build & Import  │
-└─────────────────┘      └────────────────────┘     └─────────────────┘
+┌──────────────────┐      ┌────────────────────┐      ┌─────────────────┐
+│ Resolve Deps     │ ──▶ │ Topological Sort   │ ──▶ │ Build & Import  │
+│ (recursive)      │      │ (leaves first)     │      │ (each port)     │
+└──────────────────┘      └────────────────────┘      └─────────────────┘
 ```
+
+**Basic Usage**
+
+```bash
+# Import a port with all its dependencies
+axiom ports-import shells/bash
+
+# Import with verbose output
+axiom ports-import editors/vim --verbose
+
+# Import without auto-dependency resolution
+axiom ports-import devel/m4 --no-deps
+```
+
+**What ports-import Does**
+
+1. **Resolves dependencies** - Recursively discovers all BUILD_DEPENDS, LIB_DEPENDS, and RUN_DEPENDS
+2. **Topologically sorts** - Orders packages so dependencies build first (leaves first)
+3. **Builds each port** - Uses `make build` and `make stage` with NO_DEPENDS=yes
+4. **Imports to store** - Copies staged files into Axiom's ZFS package store
+
+**Example Output**
+
+```bash
+$ axiom ports-import shells/bash
+
+Resolving dependency tree for shells/bash...
+
+Build order (16 ports):
+  1. print/indexinfo
+  2. devel/gettext-runtime
+  3. devel/libtextstyle
+  4. devel/gettext-tools
+  5. lang/perl5.42
+  ...
+  16. shells/bash
+
+============================================================
+Processing: print/indexinfo
+============================================================
+=== Building port: print/indexinfo ===
+  Cleaning...
+  Dependencies: none
+  Building...
+  Staging...
+  Copying staged files...
+  Build completed successfully
+=== Importing to store: indexinfo ===
+  ⚠ WARNING: Package is not signed
+  ✓ Package imported: indexinfo@0.3.1
+
+... (continues for each dependency)
+
+============================================================
+Summary: 16 succeeded, 0 failed (of 16 total)
+============================================================
+
+✓ Success! shells/bash imported to store.
+  Package: bash@5.2.37
+
+You can now use this package in your profiles.
+```
+
+### Bootstrap Limitation
+
+**Important**: During initial bootstrap, `ports-import` cannot provide build-time dependencies (headers, libraries) to subsequent builds. This is because packages are imported to the Axiom store but not installed to system paths where compilers look.
+
+**Workaround for initial bootstrap:**
+
+```bash
+# Install build-time dependencies via pkg first
+pkg install libtextstyle gettext-runtime libiconv
+
+# Then use ports-import for the final packages
+axiom ports-import shells/bash
+```
+
+This hybrid approach uses `pkg` to provide build-time headers/libraries while Axiom manages the final installed packages.
+
+### ports-import Options
+
+| Option | Description |
+|--------|-------------|
+| `--ports-tree <path>` | Path to ports tree (default: /usr/ports) |
+| `--jobs <n>` | Parallel build jobs (default: 4) |
+| `--verbose` | Show detailed build output |
+| `--keep-sandbox` | Don't clean up staging directory |
+| `--dry-run` | Generate manifests only |
+| `--no-deps` | Don't auto-resolve dependencies |
+
+### Advanced: Manual Manifest Generation
+
+For more control over the migration process:
 
 **Step 1: Explore Available Ports**
 
@@ -752,20 +848,13 @@ axiom ports-gen shells/bash --dry-run
 axiom ports-build shells/bash
 ```
 
-**Step 5: Import to Store**
-
-```bash
-# Or do all steps at once
-axiom ports-import shells/bash
-```
-
 ### Batch Migration
 
 ```bash
-# Migrate multiple ports
-for port in bash zsh fish; do
-  axiom ports-import shells/$port
-done
+# Migrate multiple ports (dependencies resolved automatically)
+axiom ports-import shells/bash
+axiom ports-import editors/vim
+axiom ports-import devel/git
 ```
 
 ---
