@@ -728,30 +728,72 @@ pub const PortsMigrator = struct {
         }
         build_result.deinit(self.allocator);
 
-        // Step 4: Install to staging directory
-        // Use 'make install' with DESTDIR instead of 'make stage'
-        // The ports stage target handles staging internally; we need install with DESTDIR
-        std.debug.print("  Installing to staging directory...\n", .{});
-        var install_result = try self.runMakeTargetNoDeps(port_path, "install", stage_dir);
-        if (install_result.exit_code != 0) {
-            std.debug.print("  Install failed with exit code: {d}\n", .{install_result.exit_code});
-            if (install_result.stdout) |stdout| {
+        // Step 4: Stage the port (uses internal staging in work/stage)
+        std.debug.print("  Staging...\n", .{});
+        var stage_result = try self.runMakeTargetNoDeps(port_path, "stage", null);
+        if (stage_result.exit_code != 0) {
+            std.debug.print("  Stage failed with exit code: {d}\n", .{stage_result.exit_code});
+            if (stage_result.stdout) |stdout| {
                 const start = if (stdout.len > 4096) stdout.len - 4096 else 0;
-                std.debug.print("\n--- Install output (last 4KB) ---\n{s}\n", .{stdout[start..]});
+                std.debug.print("\n--- Stage output (last 4KB) ---\n{s}\n", .{stdout[start..]});
             }
-            if (install_result.stderr) |stderr| {
+            if (stage_result.stderr) |stderr| {
                 std.debug.print("--- stderr ---\n{s}\n", .{stderr});
             }
             std.debug.print("-------------------------------\n", .{});
-            install_result.deinit(self.allocator);
+            stage_result.deinit(self.allocator);
             return PortsError.BuildFailed;
         }
-        install_result.deinit(self.allocator);
+        stage_result.deinit(self.allocator);
+
+        // Step 5: Copy staged files from work/stage to our staging directory
+        // The ports system stages to <port_path>/work/stage/usr/local
+        std.debug.print("  Copying staged files...\n", .{});
+        const work_stage = try std.fs.path.join(self.allocator, &[_][]const u8{
+            port_path,
+            "work/stage",
+        });
+        defer self.allocator.free(work_stage);
+
+        // Use cp -a to preserve attributes and copy recursively
+        var cp_args = [_][]const u8{
+            "cp",
+            "-a",
+            work_stage,
+            stage_dir,
+        };
+
+        var cp_child = std.process.Child.init(&cp_args, self.allocator);
+        cp_child.stdout_behavior = .Ignore;
+        cp_child.stderr_behavior = .Pipe;
+        try cp_child.spawn();
+
+        var cp_stderr: ?[]const u8 = null;
+        if (cp_child.stderr) |stderr_pipe| {
+            cp_stderr = stderr_pipe.readToEndAlloc(self.allocator, 1024 * 1024) catch null;
+        }
+        defer if (cp_stderr) |s| self.allocator.free(s);
+
+        const cp_term = try cp_child.wait();
+        if (cp_term.Exited != 0) {
+            std.debug.print("  Copy failed with exit code: {d}\n", .{cp_term.Exited});
+            if (cp_stderr) |stderr| {
+                std.debug.print("  stderr: {s}\n", .{stderr});
+            }
+            return PortsError.BuildFailed;
+        }
 
         std.debug.print("  Build completed successfully\n", .{});
 
+        // Return path to the copied stage directory
+        const final_stage = try std.fs.path.join(self.allocator, &[_][]const u8{
+            stage_dir,
+            "stage",
+        });
+        self.allocator.free(stage_dir);
+
         return PortBuildResult{
-            .output_dir = stage_dir,
+            .output_dir = final_stage,
             .success = true,
         };
     }
