@@ -778,6 +778,13 @@ pub const PortsMigrator = struct {
         var args = std.ArrayList([]const u8).init(self.allocator);
         defer args.deinit();
 
+        // Track allocated strings to free after process completes
+        var destdir_arg: ?[]const u8 = null;
+        defer if (destdir_arg) |d| self.allocator.free(d);
+
+        var jobs_arg: ?[]const u8 = null;
+        defer if (jobs_arg) |j| self.allocator.free(j);
+
         try args.append("make");
         try args.append("-C");
         try args.append(port_path);
@@ -790,15 +797,13 @@ pub const PortsMigrator = struct {
 
         // Add DESTDIR if provided
         if (destdir) |dir| {
-            const destdir_arg = try std.fmt.allocPrint(self.allocator, "DESTDIR={s}", .{dir});
-            defer self.allocator.free(destdir_arg);
-            try args.append(destdir_arg);
+            destdir_arg = try std.fmt.allocPrint(self.allocator, "DESTDIR={s}", .{dir});
+            try args.append(destdir_arg.?);
         }
 
         // Add job count for parallel builds
-        const jobs_arg = try std.fmt.allocPrint(self.allocator, "-j{d}", .{self.options.build_jobs});
-        defer self.allocator.free(jobs_arg);
-        try args.append(jobs_arg);
+        jobs_arg = try std.fmt.allocPrint(self.allocator, "-j{d}", .{self.options.build_jobs});
+        try args.append(jobs_arg.?);
 
         try args.append(target);
 
@@ -864,6 +869,13 @@ pub const PortsMigrator = struct {
         var args = std.ArrayList([]const u8).init(self.allocator);
         defer args.deinit();
 
+        // Track allocated strings to free after process completes
+        var destdir_arg: ?[]const u8 = null;
+        defer if (destdir_arg) |d| self.allocator.free(d);
+
+        var jobs_arg: ?[]const u8 = null;
+        defer if (jobs_arg) |j| self.allocator.free(j);
+
         try args.append("make");
         try args.append("-C");
         try args.append(port_path);
@@ -879,15 +891,13 @@ pub const PortsMigrator = struct {
 
         // Add DESTDIR if provided
         if (destdir) |dir| {
-            const destdir_arg = try std.fmt.allocPrint(self.allocator, "DESTDIR={s}", .{dir});
-            defer self.allocator.free(destdir_arg);
-            try args.append(destdir_arg);
+            destdir_arg = try std.fmt.allocPrint(self.allocator, "DESTDIR={s}", .{dir});
+            try args.append(destdir_arg.?);
         }
 
         // Add job count for parallel builds
-        const jobs_arg = try std.fmt.allocPrint(self.allocator, "-j{d}", .{self.options.build_jobs});
-        defer self.allocator.free(jobs_arg);
-        try args.append(jobs_arg);
+        jobs_arg = try std.fmt.allocPrint(self.allocator, "-j{d}", .{self.options.build_jobs});
+        try args.append(jobs_arg.?);
 
         try args.append(target);
 
