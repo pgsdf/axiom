@@ -578,6 +578,22 @@ pub const PortsMigrator = struct {
         };
         defer metadata.deinit();
 
+        // Check if package already exists in store (skip if so)
+        if (self.options.store) |store| {
+            const pkg_name = self.mapPortName(metadata.name);
+            const exists = store.packageNameExists(pkg_name) catch false;
+            if (exists) {
+                std.debug.print("  ✓ Package '{s}' already in store, skipping\n", .{pkg_name});
+                result.status = .skipped;
+                result.axiom_package = try std.fmt.allocPrint(
+                    self.allocator,
+                    "{s} (existing)",
+                    .{pkg_name},
+                );
+                return result;
+            }
+        }
+
         // Check for unsupported features
         if (metadata.flavors.len > 0 and !self.options.skip_options) {
             try result.warnings.append(try self.allocator.dupe(u8, "Port has FLAVORS - only default flavor generated"));

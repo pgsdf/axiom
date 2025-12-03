@@ -271,6 +271,22 @@ pub const PackageStore = struct {
         return self.zfs_handle.datasetExists(self.allocator, dataset_path, .filesystem);
     }
 
+    /// Check if any version of a package exists in the store by name
+    pub fn packageNameExists(
+        self: *PackageStore,
+        name: []const u8,
+    ) !bool {
+        // Build path to the package name directory: {store_root}/{name}
+        const dataset_path = try std.fmt.allocPrint(
+            self.allocator,
+            "{s}/{s}",
+            .{ self.paths.store_root, name },
+        );
+        defer self.allocator.free(dataset_path);
+
+        return self.zfs_handle.datasetExists(self.allocator, dataset_path, .filesystem);
+    }
+
     /// Get package metadata
     pub fn getPackage(
         self: *PackageStore,

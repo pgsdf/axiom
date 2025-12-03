@@ -3308,6 +3308,7 @@ pub const CLI = struct {
         // Summarize results
         var succeeded: usize = 0;
         var failed: usize = 0;
+        var skipped: usize = 0;
 
         for (results.items) |*result| {
             // Show any warnings
@@ -3328,13 +3329,19 @@ pub const CLI = struct {
 
             if (result.status == .failed) {
                 failed += 1;
+            } else if (result.status == .skipped) {
+                skipped += 1;
             } else if (result.status == .imported or result.status == .built or result.status == .generated) {
                 succeeded += 1;
             }
         }
 
         std.debug.print("\n" ++ "=" ** 60 ++ "\n", .{});
-        std.debug.print("Summary: {d} succeeded, {d} failed (of {d} total)\n", .{ succeeded, failed, results.items.len });
+        if (skipped > 0) {
+            std.debug.print("Summary: {d} succeeded, {d} skipped, {d} failed (of {d} total)\n", .{ succeeded, skipped, failed, results.items.len });
+        } else {
+            std.debug.print("Summary: {d} succeeded, {d} failed (of {d} total)\n", .{ succeeded, failed, results.items.len });
+        }
         std.debug.print("=" ** 60 ++ "\n", .{});
 
         // Show final status for the target port
@@ -3364,6 +3371,12 @@ pub const CLI = struct {
                     },
                     .failed => {
                         std.debug.print("\n✗ Migration of {s} failed.\n", .{port_origin});
+                    },
+                    .skipped => {
+                        std.debug.print("\n✓ {s} already in store, skipped.\n", .{port_origin});
+                        if (final_result.axiom_package) |pkg| {
+                            std.debug.print("  Package: {s}\n", .{pkg});
+                        }
                     },
                     else => {
                         std.debug.print("\nMigration status: {s}\n", .{@tagName(final_result.status)});
