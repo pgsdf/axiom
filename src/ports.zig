@@ -1123,8 +1123,15 @@ pub const PortsMigrator = struct {
     /// Build complete dependency tree for a port (recursive)
     /// Returns list of all dependencies in topological order (leaves first)
     pub fn resolveDependencyTree(self: *PortsMigrator, root_origin: []const u8) !std.ArrayList([]const u8) {
-        var visited = std.StringHashMap(usize).init(self.allocator);
-        defer visited.deinit();
+        // Use ArrayHashMap so we can iterate keys later to free them
+        var visited = std.StringArrayHashMap(usize).init(self.allocator);
+        defer {
+            // Free all owned keys
+            for (visited.keys()) |key| {
+                self.allocator.free(key);
+            }
+            visited.deinit();
+        }
 
         var result = std.ArrayList([]const u8).init(self.allocator);
         errdefer {
@@ -1133,6 +1140,7 @@ pub const PortsMigrator = struct {
         }
 
         // Track what we're currently visiting (for cycle detection)
+        // Keys are borrowed from visited, so no need to free
         var visiting = std.StringHashMap(void).init(self.allocator);
         defer visiting.deinit();
 
@@ -1140,9 +1148,8 @@ pub const PortsMigrator = struct {
         try self.visitDependency(root_origin, &visited, &visiting, &result, 0);
 
         // Sort by depth (deepest first = leaves first)
-        // We need to sort the result based on the depth stored in visited
         const SortContext = struct {
-            visited: *std.StringHashMap(usize),
+            visited: *std.StringArrayHashMap(usize),
         };
 
         const ctx = SortContext{ .visited = &visited };
@@ -1162,17 +1169,16 @@ pub const PortsMigrator = struct {
     fn visitDependency(
         self: *PortsMigrator,
         origin: []const u8,
-        visited: *std.StringHashMap(usize),
+        visited: *std.StringArrayHashMap(usize),
         visiting: *std.StringHashMap(void),
         result: *std.ArrayList([]const u8),
         depth: usize,
     ) !void {
         // Already fully visited?
-        if (visited.contains(origin)) {
+        if (visited.get(origin)) |existing_depth| {
             // Update depth if we found a deeper path
-            const existing_depth = visited.get(origin).?;
             if (depth > existing_depth) {
-                try visited.put(origin, depth);
+                visited.putAssumeCapacity(origin, depth);
             }
             return;
         }
@@ -1185,16 +1191,20 @@ pub const PortsMigrator = struct {
             return;
         }
 
-        // Mark as currently visiting
-        try visiting.put(origin, {});
+        // Dupe the origin string so we own it (for use as hashmap key)
+        const owned_origin = try self.allocator.dupe(u8, origin);
+        errdefer self.allocator.free(owned_origin);
+
+        // Mark as currently visiting (borrow from owned_origin)
+        try visiting.put(owned_origin, {});
 
         // Get direct dependencies
         var deps = self.getPortDependencies(origin) catch |err| {
             if (self.options.verbose) {
                 std.debug.print("  Warning: Could not get dependencies for {s}: {s}\n", .{ origin, @errorName(err) });
             }
-            // Remove from visiting
-            _ = visiting.remove(origin);
+            _ = visiting.remove(owned_origin);
+            self.allocator.free(owned_origin);
             return;
         };
         defer {
@@ -1208,12 +1218,12 @@ pub const PortsMigrator = struct {
         }
 
         // Done visiting children
-        _ = visiting.remove(origin);
+        _ = visiting.remove(owned_origin);
 
-        // Mark as visited with depth
-        try visited.put(origin, depth);
+        // Mark as visited with depth (transfer ownership of owned_origin to visited map)
+        try visited.put(owned_origin, depth);
 
-        // Add to result
+        // Add to result (dupe again since result needs its own copy)
         try result.append(try self.allocator.dupe(u8, origin));
     }
 
