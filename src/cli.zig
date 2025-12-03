@@ -3223,15 +3223,18 @@ pub const CLI = struct {
         if (args.len < 1) {
             std.debug.print("Usage: axiom ports-import <origin> [options]\n", .{});
             std.debug.print("\nFull migration: generate manifests, build, and import to store.\n", .{});
+            std.debug.print("Automatically resolves and builds dependencies in correct order.\n", .{});
             std.debug.print("\nOptions:\n", .{});
             std.debug.print("  --ports-tree <path>  Path to ports tree (default: /usr/ports)\n", .{});
             std.debug.print("  --jobs <n>           Number of parallel build jobs (default: 4)\n", .{});
             std.debug.print("  --verbose            Show detailed build output\n", .{});
             std.debug.print("  --keep-sandbox       Don't clean up build staging directory\n", .{});
             std.debug.print("  --dry-run            Generate manifests only, don't build\n", .{});
+            std.debug.print("  --no-deps            Don't auto-resolve dependencies\n", .{});
             std.debug.print("\nExamples:\n", .{});
             std.debug.print("  axiom ports-import shells/bash\n", .{});
             std.debug.print("  axiom ports-import editors/vim --jobs 8 --verbose\n", .{});
+            std.debug.print("  axiom ports-import devel/m4 --no-deps  # Just this port\n", .{});
             return;
         }
 
@@ -3242,6 +3245,7 @@ pub const CLI = struct {
         var verbose: bool = false;
         var keep_sandbox: bool = false;
         var dry_run: bool = false;
+        var auto_deps: bool = true;
 
         var i: usize = 0;
         while (i < args.len) : (i += 1) {
@@ -3257,6 +3261,8 @@ pub const CLI = struct {
                 keep_sandbox = true;
             } else if (std.mem.eql(u8, args[i], "--dry-run")) {
                 dry_run = true;
+            } else if (std.mem.eql(u8, args[i], "--no-deps")) {
+                auto_deps = false;
             } else if (origin == null and args[i][0] != '-') {
                 origin = args[i];
             }
@@ -3268,6 +3274,9 @@ pub const CLI = struct {
         };
 
         std.debug.print("Full port migration: {s}\n", .{port_origin});
+        if (auto_deps) {
+            std.debug.print("(with automatic dependency resolution)\n", .{});
+        }
         std.debug.print("========================================\n\n", .{});
 
         // Run full migration with build system integration
@@ -3278,6 +3287,7 @@ pub const CLI = struct {
             .import_after_build = !dry_run,
             .dry_run = dry_run,
             .verbose = verbose,
+            .auto_deps = auto_deps,
             // Pass build system dependencies
             .zfs_handle = self.zfs_handle,
             .store = self.store,
@@ -3286,57 +3296,80 @@ pub const CLI = struct {
             .keep_sandbox = keep_sandbox,
         });
 
-        var result = migrator.migrate(port_origin) catch |err| {
+        var results = migrator.migrateWithDependencies(port_origin) catch |err| {
             std.debug.print("Migration failed: {s}\n", .{@errorName(err)});
             return;
         };
-        defer result.deinit(self.allocator);
+        defer {
+            for (results.items) |*r| r.deinit();
+            results.deinit();
+        }
 
-        // Show any warnings
-        if (result.warnings.items.len > 0) {
-            std.debug.print("\nWarnings:\n", .{});
-            for (result.warnings.items) |warning| {
-                std.debug.print("  - {s}\n", .{warning});
+        // Summarize results
+        var succeeded: usize = 0;
+        var failed: usize = 0;
+
+        for (results.items) |*result| {
+            // Show any warnings
+            if (result.warnings.items.len > 0) {
+                std.debug.print("\nWarnings for {s}:\n", .{result.origin});
+                for (result.warnings.items) |warning| {
+                    std.debug.print("  - {s}\n", .{warning});
+                }
+            }
+
+            // Show any errors
+            if (result.errors.items.len > 0) {
+                std.debug.print("\nErrors for {s}:\n", .{result.origin});
+                for (result.errors.items) |err_msg| {
+                    std.debug.print("  - {s}\n", .{err_msg});
+                }
+            }
+
+            if (result.status == .failed) {
+                failed += 1;
+            } else if (result.status == .imported or result.status == .built or result.status == .generated) {
+                succeeded += 1;
             }
         }
 
-        // Show any errors
-        if (result.errors.items.len > 0) {
-            std.debug.print("\nErrors:\n", .{});
-            for (result.errors.items) |err_msg| {
-                std.debug.print("  - {s}\n", .{err_msg});
+        std.debug.print("\n" ++ "=" ** 60 ++ "\n", .{});
+        std.debug.print("Summary: {d} succeeded, {d} failed (of {d} total)\n", .{ succeeded, failed, results.items.len });
+        std.debug.print("=" ** 60 ++ "\n", .{});
+
+        // Show final status for the target port
+        if (results.items.len > 0) {
+            const final_result = &results.items[results.items.len - 1];
+            if (std.mem.eql(u8, final_result.origin, port_origin)) {
+                switch (final_result.status) {
+                    .imported => {
+                        std.debug.print("\n✓ Success! {s} imported to store.\n", .{port_origin});
+                        if (final_result.axiom_package) |pkg| {
+                            std.debug.print("  Package: {s}\n", .{pkg});
+                        }
+                        std.debug.print("\nYou can now use this package in your profiles.\n", .{});
+                    },
+                    .built => {
+                        std.debug.print("\n✓ {s} built successfully.\n", .{port_origin});
+                        std.debug.print("  Import was not requested.\n", .{});
+                    },
+                    .generated => {
+                        std.debug.print("\n✓ Manifests generated for {s}.\n", .{port_origin});
+                        if (final_result.manifest_path) |path| {
+                            std.debug.print("  Output: {s}\n", .{path});
+                        }
+                        if (dry_run) {
+                            std.debug.print("  (dry-run mode - build/import skipped)\n", .{});
+                        }
+                    },
+                    .failed => {
+                        std.debug.print("\n✗ Migration of {s} failed.\n", .{port_origin});
+                    },
+                    else => {
+                        std.debug.print("\nMigration status: {s}\n", .{@tagName(final_result.status)});
+                    },
+                }
             }
-        }
-
-        std.debug.print("\n", .{});
-
-        switch (result.status) {
-            .imported => {
-                std.debug.print("✓ Success! Port imported to store.\n", .{});
-                if (result.axiom_package) |pkg| {
-                    std.debug.print("  Package: {s}\n", .{pkg});
-                }
-                std.debug.print("\nYou can now use this package in your profiles.\n", .{});
-            },
-            .built => {
-                std.debug.print("✓ Port built successfully.\n", .{});
-                std.debug.print("  Import was not requested.\n", .{});
-            },
-            .generated => {
-                std.debug.print("✓ Manifests generated.\n", .{});
-                if (result.manifest_path) |path| {
-                    std.debug.print("  Output: {s}\n", .{path});
-                }
-                if (dry_run) {
-                    std.debug.print("  (dry-run mode - build/import skipped)\n", .{});
-                }
-            },
-            .failed => {
-                std.debug.print("✗ Migration failed.\n", .{});
-            },
-            else => {
-                std.debug.print("Migration status: {s}\n", .{@tagName(result.status)});
-            },
         }
     }
 

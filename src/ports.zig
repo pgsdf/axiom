@@ -173,6 +173,9 @@ pub const MigrateOptions = struct {
     skip_options: bool = false,
     default_options_only: bool = true,
 
+    // Dependency resolution
+    auto_deps: bool = true, // Automatically build dependencies first
+
     // Build system dependencies (required if build_after_generate or import_after_build is true)
     zfs_handle: ?*ZfsHandle = null,
     store: ?*PackageStore = null,
@@ -1043,6 +1046,231 @@ pub const PortsMigrator = struct {
         }
         std.debug.print("  Note: Build these first if not already available on the system.\n", .{});
         std.debug.print("        e.g., axiom ports-import {s}\n", .{origins.items[0]});
+    }
+
+    /// Get direct dependencies for a port (returns list of port origins)
+    fn getPortDependencies(self: *PortsMigrator, origin: []const u8) !std.ArrayList([]const u8) {
+        const port_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+            self.options.ports_tree,
+            origin,
+        });
+        defer self.allocator.free(port_path);
+
+        var deps = std.ArrayList([]const u8).init(self.allocator);
+        errdefer {
+            for (deps.items) |d| self.allocator.free(d);
+            deps.deinit();
+        }
+
+        // Get BUILD_DEPENDS, LIB_DEPENDS, RUN_DEPENDS
+        const dep_vars = [_][]const u8{ "BUILD_DEPENDS", "LIB_DEPENDS", "RUN_DEPENDS" };
+
+        for (dep_vars) |dep_var| {
+            var args = [_][]const u8{ "make", "-C", port_path, "-V", dep_var };
+            var child = std.process.Child.init(&args, self.allocator);
+            child.stdout_behavior = .Pipe;
+            child.stderr_behavior = .Ignore;
+
+            child.spawn() catch continue;
+
+            var dep_output: ?[]const u8 = null;
+            if (child.stdout) |stdout_pipe| {
+                dep_output = stdout_pipe.readToEndAlloc(self.allocator, 1024 * 1024) catch null;
+            }
+            _ = child.wait() catch continue;
+
+            if (dep_output) |output| {
+                defer self.allocator.free(output);
+                const trimmed = std.mem.trim(u8, output, " \t\n\r");
+                if (trimmed.len == 0) continue;
+
+                var iter = std.mem.splitSequence(u8, trimmed, " ");
+                while (iter.next()) |dep| {
+                    const dep_trimmed = std.mem.trim(u8, dep, " \t\n\r");
+                    if (dep_trimmed.len == 0) continue;
+
+                    // Extract origin from "file:category/port" or "lib:category/port"
+                    if (std.mem.indexOf(u8, dep_trimmed, ":")) |colon_pos| {
+                        const dep_origin = dep_trimmed[colon_pos + 1 ..];
+                        if (dep_origin.len > 0 and std.mem.indexOf(u8, dep_origin, "/") != null) {
+                            // Check for duplicates
+                            var found = false;
+                            for (deps.items) |existing| {
+                                if (std.mem.eql(u8, existing, dep_origin)) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found) {
+                                try deps.append(try self.allocator.dupe(u8, dep_origin));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return deps;
+    }
+
+    /// Dependency graph node
+    const DepNode = struct {
+        origin: []const u8,
+        deps: []const []const u8,
+        depth: usize,
+    };
+
+    /// Build complete dependency tree for a port (recursive)
+    /// Returns list of all dependencies in topological order (leaves first)
+    pub fn resolveDependencyTree(self: *PortsMigrator, root_origin: []const u8) !std.ArrayList([]const u8) {
+        var visited = std.StringHashMap(usize).init(self.allocator);
+        defer visited.deinit();
+
+        var result = std.ArrayList([]const u8).init(self.allocator);
+        errdefer {
+            for (result.items) |r| self.allocator.free(r);
+            result.deinit();
+        }
+
+        // Track what we're currently visiting (for cycle detection)
+        var visiting = std.StringHashMap(void).init(self.allocator);
+        defer visiting.deinit();
+
+        // Recursive depth-first traversal
+        try self.visitDependency(root_origin, &visited, &visiting, &result, 0);
+
+        // Sort by depth (deepest first = leaves first)
+        // We need to sort the result based on the depth stored in visited
+        const SortContext = struct {
+            visited: *std.StringHashMap(usize),
+        };
+
+        const ctx = SortContext{ .visited = &visited };
+        std.mem.sort([]const u8, result.items, ctx, struct {
+            fn lessThan(c: SortContext, a: []const u8, b: []const u8) bool {
+                const depth_a = c.visited.get(a) orelse 0;
+                const depth_b = c.visited.get(b) orelse 0;
+                // Higher depth = deeper in tree = should come first (leaves)
+                return depth_a > depth_b;
+            }
+        }.lessThan);
+
+        return result;
+    }
+
+    /// Visit a dependency node (recursive DFS)
+    fn visitDependency(
+        self: *PortsMigrator,
+        origin: []const u8,
+        visited: *std.StringHashMap(usize),
+        visiting: *std.StringHashMap(void),
+        result: *std.ArrayList([]const u8),
+        depth: usize,
+    ) !void {
+        // Already fully visited?
+        if (visited.contains(origin)) {
+            // Update depth if we found a deeper path
+            const existing_depth = visited.get(origin).?;
+            if (depth > existing_depth) {
+                try visited.put(origin, depth);
+            }
+            return;
+        }
+
+        // Currently visiting? (cycle detection)
+        if (visiting.contains(origin)) {
+            if (self.options.verbose) {
+                std.debug.print("  Warning: Circular dependency detected at {s}, skipping\n", .{origin});
+            }
+            return;
+        }
+
+        // Mark as currently visiting
+        try visiting.put(origin, {});
+
+        // Get direct dependencies
+        var deps = self.getPortDependencies(origin) catch |err| {
+            if (self.options.verbose) {
+                std.debug.print("  Warning: Could not get dependencies for {s}: {s}\n", .{ origin, @errorName(err) });
+            }
+            // Remove from visiting
+            _ = visiting.remove(origin);
+            return;
+        };
+        defer {
+            for (deps.items) |d| self.allocator.free(d);
+            deps.deinit();
+        }
+
+        // Visit each dependency first (depth-first)
+        for (deps.items) |dep| {
+            try self.visitDependency(dep, visited, visiting, result, depth + 1);
+        }
+
+        // Done visiting children
+        _ = visiting.remove(origin);
+
+        // Mark as visited with depth
+        try visited.put(origin, depth);
+
+        // Add to result
+        try result.append(try self.allocator.dupe(u8, origin));
+    }
+
+    /// Migrate a port and all its dependencies
+    /// Returns results for all ports in build order
+    pub fn migrateWithDependencies(self: *PortsMigrator, origin: []const u8) !std.ArrayList(MigrationResult) {
+        var results = std.ArrayList(MigrationResult).init(self.allocator);
+        errdefer {
+            for (results.items) |*r| r.deinit();
+            results.deinit();
+        }
+
+        if (self.options.auto_deps) {
+            // Resolve full dependency tree
+            std.debug.print("Resolving dependency tree for {s}...\n", .{origin});
+
+            var dep_tree = try self.resolveDependencyTree(origin);
+            defer {
+                for (dep_tree.items) |d| self.allocator.free(d);
+                dep_tree.deinit();
+            }
+
+            if (dep_tree.items.len > 1) {
+                std.debug.print("\nBuild order ({d} ports):\n", .{dep_tree.items.len});
+                for (dep_tree.items, 0..) |dep, i| {
+                    std.debug.print("  {d}. {s}\n", .{ i + 1, dep });
+                }
+                std.debug.print("\n", .{});
+            }
+
+            // Build each dependency in order
+            for (dep_tree.items) |dep| {
+                std.debug.print("\n" ++ "=" ** 60 ++ "\n", .{});
+                std.debug.print("Processing: {s}\n", .{dep});
+                std.debug.print("=" ** 60 ++ "\n", .{});
+
+                // Temporarily disable auto_deps to avoid infinite recursion
+                const saved_auto_deps = self.options.auto_deps;
+                self.options.auto_deps = false;
+                defer self.options.auto_deps = saved_auto_deps;
+
+                const result = try self.migrate(dep);
+                try results.append(result);
+
+                // Stop on failure
+                if (result.status == .failed) {
+                    std.debug.print("Stopping due to failure in {s}\n", .{dep});
+                    break;
+                }
+            }
+        } else {
+            // Just migrate the single port (no dependency resolution)
+            const result = try self.migrate(origin);
+            try results.append(result);
+        }
+
+        return results;
     }
 
     /// Import a built port into the Axiom store
