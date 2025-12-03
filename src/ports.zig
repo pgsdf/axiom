@@ -215,8 +215,24 @@ pub const PortsMigrator = struct {
         // Core identity
         metadata.name = try self.makeVar(port_path, "PORTNAME");
         metadata.version = try self.makeVar(port_path, "PORTVERSION");
-        metadata.revision = std.fmt.parseInt(u32, try self.makeVarOptional(port_path, "PORTREVISION") orelse "0", 10) catch 0;
-        metadata.epoch = std.fmt.parseInt(u32, try self.makeVarOptional(port_path, "PORTEPOCH") orelse "0", 10) catch 0;
+
+        // Parse revision (free the string after parsing)
+        const revision_str = try self.makeVarOptional(port_path, "PORTREVISION");
+        if (revision_str) |rev| {
+            metadata.revision = std.fmt.parseInt(u32, rev, 10) catch 0;
+            self.allocator.free(rev);
+        } else {
+            metadata.revision = 0;
+        }
+
+        // Parse epoch (free the string after parsing)
+        const epoch_str = try self.makeVarOptional(port_path, "PORTEPOCH");
+        if (epoch_str) |ep| {
+            metadata.epoch = std.fmt.parseInt(u32, ep, 10) catch 0;
+            self.allocator.free(ep);
+        } else {
+            metadata.epoch = 0;
+        }
 
         // Categories
         const cats_str = try self.makeVar(port_path, "CATEGORIES");
@@ -681,23 +697,34 @@ pub const PortsMigrator = struct {
 
         // Step 1: Clean any previous build
         std.debug.print("  Cleaning...\n", .{});
-        _ = try self.runMakeTarget(port_path, "clean", null);
+        var clean_result = try self.runMakeTarget(port_path, "clean", null);
+        clean_result.deinit(self.allocator);
 
         // Step 2: Build the port
         std.debug.print("  Building...\n", .{});
-        const build_exit = try self.runMakeTarget(port_path, "build", null);
-        if (build_exit != 0) {
-            std.debug.print("  Build failed with exit code: {d}\n", .{build_exit});
+        var build_result = try self.runMakeTarget(port_path, "build", null);
+        if (build_result.exit_code != 0) {
+            std.debug.print("  Build failed with exit code: {d}\n", .{build_result.exit_code});
+            if (build_result.stderr) |stderr| {
+                std.debug.print("\n--- Build error output ---\n{s}\n--------------------------\n", .{stderr});
+            }
+            build_result.deinit(self.allocator);
             return PortsError.BuildFailed;
         }
+        build_result.deinit(self.allocator);
 
         // Step 3: Stage the installation
         std.debug.print("  Staging installation...\n", .{});
-        const stage_exit = try self.runMakeTarget(port_path, "stage", stage_dir);
-        if (stage_exit != 0) {
-            std.debug.print("  Staging failed with exit code: {d}\n", .{stage_exit});
+        var stage_result = try self.runMakeTarget(port_path, "stage", stage_dir);
+        if (stage_result.exit_code != 0) {
+            std.debug.print("  Staging failed with exit code: {d}\n", .{stage_result.exit_code});
+            if (stage_result.stderr) |stderr| {
+                std.debug.print("\n--- Stage error output ---\n{s}\n--------------------------\n", .{stderr});
+            }
+            stage_result.deinit(self.allocator);
             return PortsError.BuildFailed;
         }
+        stage_result.deinit(self.allocator);
 
         std.debug.print("  Build completed successfully\n", .{});
 
@@ -707,19 +734,35 @@ pub const PortsMigrator = struct {
         };
     }
 
+    /// Result from running a make target
+    const MakeResult = struct {
+        exit_code: u8,
+        stderr: ?[]const u8,
+
+        pub fn deinit(self: *MakeResult, allocator: std.mem.Allocator) void {
+            if (self.stderr) |s| allocator.free(s);
+        }
+    };
+
     /// Run a make target in the port directory
     fn runMakeTarget(
         self: *PortsMigrator,
         port_path: []const u8,
         target: []const u8,
         destdir: ?[]const u8,
-    ) !u8 {
+    ) !MakeResult {
         var args = std.ArrayList([]const u8).init(self.allocator);
         defer args.deinit();
 
         try args.append("make");
         try args.append("-C");
         try args.append(port_path);
+
+        // Add BATCH=yes to prevent interactive prompts
+        try args.append("BATCH=yes");
+
+        // Disable interactive dialogs
+        try args.append("DISABLE_VULNERABILITIES=yes");
 
         // Add DESTDIR if provided
         if (destdir) |dir| {
@@ -736,15 +779,35 @@ pub const PortsMigrator = struct {
         try args.append(target);
 
         var child = std.process.Child.init(args.items, self.allocator);
+
+        // Always capture stderr so we can show errors
+        child.stderr_behavior = .Pipe;
+
         if (!self.options.verbose) {
             child.stdout_behavior = .Ignore;
-            child.stderr_behavior = .Ignore;
         }
 
         try child.spawn();
+
+        // Read stderr
+        var stderr_output: ?[]const u8 = null;
+        if (child.stderr) |stderr_pipe| {
+            const stderr_content = stderr_pipe.readToEndAlloc(self.allocator, 1024 * 1024) catch null;
+            if (stderr_content) |content| {
+                if (content.len > 0) {
+                    stderr_output = content;
+                } else {
+                    self.allocator.free(content);
+                }
+            }
+        }
+
         const term = try child.wait();
 
-        return term.Exited;
+        return MakeResult{
+            .exit_code = term.Exited,
+            .stderr = stderr_output,
+        };
     }
 
     /// Import a built port into the Axiom store
