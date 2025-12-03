@@ -209,8 +209,8 @@ pub const PackageStore = struct {
             return StoreError.PackageExists;
         }
 
-        // 3. Create immutable dataset
-        try self.zfs_handle.createDataset(self.allocator, dataset_path, .{
+        // 3. Create immutable dataset (with parent creation for nested paths)
+        try self.zfs_handle.createDatasetWithParents(self.allocator, dataset_path, .{
             .compression = "lz4",
             .atime = false,
             .readonly = false, // We'll set to readonly after populating
