@@ -889,6 +889,9 @@ pub const PortsMigrator = struct {
         // Skip dependency building - we installed them from packages
         try args.append("NO_DEPENDS=yes");
 
+        // Don't chroot during install (DESTDIR is empty staging dir without /bin/sh)
+        try args.append("NO_INSTALL_CHROOT=yes");
+
         // Add DESTDIR if provided
         if (destdir) |dir| {
             destdir_arg = try std.fmt.allocPrint(self.allocator, "DESTDIR={s}", .{dir});
