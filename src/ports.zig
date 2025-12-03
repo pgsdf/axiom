@@ -705,9 +705,16 @@ pub const PortsMigrator = struct {
         var build_result = try self.runMakeTarget(port_path, "build", null);
         if (build_result.exit_code != 0) {
             std.debug.print("  Build failed with exit code: {d}\n", .{build_result.exit_code});
-            if (build_result.stderr) |stderr| {
-                std.debug.print("\n--- Build error output ---\n{s}\n--------------------------\n", .{stderr});
+            // Show the last part of stdout (compiler errors are in stdout)
+            if (build_result.stdout) |stdout| {
+                // Show last 4KB of output to catch the actual error
+                const start = if (stdout.len > 4096) stdout.len - 4096 else 0;
+                std.debug.print("\n--- Build output (last 4KB) ---\n{s}\n", .{stdout[start..]});
             }
+            if (build_result.stderr) |stderr| {
+                std.debug.print("--- stderr ---\n{s}\n", .{stderr});
+            }
+            std.debug.print("-------------------------------\n", .{});
             build_result.deinit(self.allocator);
             return PortsError.BuildFailed;
         }
@@ -718,9 +725,14 @@ pub const PortsMigrator = struct {
         var stage_result = try self.runMakeTarget(port_path, "stage", stage_dir);
         if (stage_result.exit_code != 0) {
             std.debug.print("  Staging failed with exit code: {d}\n", .{stage_result.exit_code});
-            if (stage_result.stderr) |stderr| {
-                std.debug.print("\n--- Stage error output ---\n{s}\n--------------------------\n", .{stderr});
+            if (stage_result.stdout) |stdout| {
+                const start = if (stdout.len > 4096) stdout.len - 4096 else 0;
+                std.debug.print("\n--- Stage output (last 4KB) ---\n{s}\n", .{stdout[start..]});
             }
+            if (stage_result.stderr) |stderr| {
+                std.debug.print("--- stderr ---\n{s}\n", .{stderr});
+            }
+            std.debug.print("-------------------------------\n", .{});
             stage_result.deinit(self.allocator);
             return PortsError.BuildFailed;
         }
@@ -737,9 +749,11 @@ pub const PortsMigrator = struct {
     /// Result from running a make target
     const MakeResult = struct {
         exit_code: u8,
+        stdout: ?[]const u8,
         stderr: ?[]const u8,
 
         pub fn deinit(self: *MakeResult, allocator: std.mem.Allocator) void {
+            if (self.stdout) |s| allocator.free(s);
             if (self.stderr) |s| allocator.free(s);
         }
     };
@@ -780,14 +794,25 @@ pub const PortsMigrator = struct {
 
         var child = std.process.Child.init(args.items, self.allocator);
 
-        // Always capture stderr so we can show errors
+        // Always capture both stdout and stderr so we can show errors
+        // (compiler errors go to stdout, make errors go to stderr)
+        child.stdout_behavior = .Pipe;
         child.stderr_behavior = .Pipe;
 
-        if (!self.options.verbose) {
-            child.stdout_behavior = .Ignore;
-        }
-
         try child.spawn();
+
+        // Read stdout (contains compiler output including errors)
+        var stdout_output: ?[]const u8 = null;
+        if (child.stdout) |stdout_pipe| {
+            const stdout_content = stdout_pipe.readToEndAlloc(self.allocator, 10 * 1024 * 1024) catch null;
+            if (stdout_content) |content| {
+                if (content.len > 0) {
+                    stdout_output = content;
+                } else {
+                    self.allocator.free(content);
+                }
+            }
+        }
 
         // Read stderr
         var stderr_output: ?[]const u8 = null;
@@ -804,8 +829,16 @@ pub const PortsMigrator = struct {
 
         const term = try child.wait();
 
+        // In verbose mode, show stdout
+        if (self.options.verbose) {
+            if (stdout_output) |out| {
+                std.debug.print("{s}", .{out});
+            }
+        }
+
         return MakeResult{
             .exit_code = term.Exited,
+            .stdout = stdout_output,
             .stderr = stderr_output,
         };
     }
