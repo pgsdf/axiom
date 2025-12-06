@@ -622,7 +622,7 @@ pub const PortsMigrator = struct {
 
         // Check if package already exists in store (skip only if same origin)
         if (self.options.store) |store| {
-            const pkg_name = self.mapPortName(metadata.name);
+            const pkg_name = self.mapPortName(origin);
             const exists = store.packageNameExists(pkg_name) catch false;
             if (exists) {
                 // Check if the existing package has the same origin
@@ -970,10 +970,9 @@ pub const PortsMigrator = struct {
             // Skip the package itself (it's included in the tree)
             if (std.mem.eql(u8, dep_origin, origin)) continue;
 
-            // Extract package name from origin (e.g., "devel/m4" -> "m4")
-            // Use mapPortName to handle cases like autoconf-switch -> autoconf
-            const raw_name = std.fs.path.basename(dep_origin);
-            const pkg_name = self.mapPortName(raw_name);
+            // Map port origin to Axiom package name
+            // Handles: lang/perl5.42 → perl, devel/p5-Locale-gettext → Locale-gettext, etc.
+            const pkg_name = self.mapPortName(dep_origin);
 
             std.debug.print("    [DEBUG] Looking for {s} (from {s}) in store\n", .{ pkg_name, dep_origin });
 
@@ -2132,12 +2131,57 @@ pub const PortsMigrator = struct {
         return .gnu_configure; // Default assumption
     }
 
-    fn mapPortName(self: *PortsMigrator, port_name: []const u8) []const u8 {
-        for (self.options.name_mappings) |mapping| {
-            if (std.mem.eql(u8, mapping.port_origin, port_name)) {
-                return mapping.axiom_name;
-            }
+    /// Map a ports origin like "devel/p5-Locale-gettext" or "lang/perl5.42"
+    /// to the canonical Axiom package name used in the store.
+    ///
+    /// Rules in order:
+    /// 1. Exact origin overrides (lang/perl5.42 → perl, devel/autoconf-switch → autoconf)
+    /// 2. Perl core ports: perl5* → perl
+    /// 3. Perl modules: p5-* → strip "p5-" prefix
+    /// 4. Fallback: use the port name (last path component) as-is
+    fn mapPortName(self: *PortsMigrator, origin: []const u8) []const u8 {
+        _ = self; // May use self.options.name_mappings for additional overrides later
+
+        // Compile-time map for exact origin overrides
+        const overrides = std.StaticStringMap([]const u8).initComptime(.{
+            // Perl core (explicit origins)
+            .{ "lang/perl5.42", "perl" },
+            .{ "lang/perl5.40", "perl" },
+            .{ "lang/perl5.38", "perl" },
+            .{ "lang/perl5.36", "perl" },
+
+            // Autoconf switch installs tools under autoconf
+            .{ "devel/autoconf-switch", "autoconf" },
+
+            // gmake installs as 'make' not 'gmake'
+            .{ "devel/gmake", "make" },
+        });
+
+        // 0. Check exact origin overrides
+        if (overrides.get(origin)) |name| {
+            return name;
         }
+
+        // 1. Extract last path component: "category/name" → "name"
+        const port_name = blk: {
+            if (std.mem.lastIndexOfScalar(u8, origin, '/')) |idx| {
+                break :blk origin[idx + 1 ..];
+            } else {
+                break :blk origin;
+            }
+        };
+
+        // 2. Perl core ports: perl5, perl5.42, perl5XX → "perl"
+        if (std.mem.startsWith(u8, port_name, "perl5")) {
+            return "perl";
+        }
+
+        // 3. Perl modules: p5-* → strip "p5-" prefix
+        if (std.mem.startsWith(u8, port_name, "p5-") and port_name.len > 3) {
+            return port_name[3..]; // Skip "p5-"
+        }
+
+        // 4. Fallback: use the port name as-is
         return port_name;
     }
 
