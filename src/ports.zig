@@ -764,6 +764,85 @@ pub const PortsMigrator = struct {
         }
     };
 
+    /// Find ALL root paths for a package in the Axiom store by name
+    /// Returns paths to all versions' root/ directories (important for packages like autoconf
+    /// where autoconf-switch and autoconf both provide different binaries under the same package name)
+    fn findAllPackageRootsInStore(self: *PortsMigrator, pkg_name: []const u8) !std.ArrayList([]const u8) {
+        var roots = std.ArrayList([]const u8).init(self.allocator);
+        errdefer {
+            for (roots.items) |r| self.allocator.free(r);
+            roots.deinit();
+        }
+
+        const store = self.options.store orelse return roots;
+
+        const store_mountpoint = store.zfs_handle.getMountpoint(self.allocator, store.paths.store_root) catch {
+            return roots;
+        };
+        defer self.allocator.free(store_mountpoint);
+
+        const pkg_dir_path = std.fs.path.join(self.allocator, &[_][]const u8{
+            store_mountpoint,
+            pkg_name,
+        }) catch return roots;
+        defer self.allocator.free(pkg_dir_path);
+
+        var pkg_dir = std.fs.cwd().openDir(pkg_dir_path, .{ .iterate = true }) catch {
+            return roots;
+        };
+        defer pkg_dir.close();
+
+        // Iterate through ALL versions
+        var version_iter = pkg_dir.iterate();
+        while (version_iter.next() catch null) |version_entry| {
+            if (version_entry.kind != .directory) continue;
+
+            const version_path = std.fs.path.join(self.allocator, &[_][]const u8{
+                pkg_dir_path,
+                version_entry.name,
+            }) catch continue;
+            defer self.allocator.free(version_path);
+
+            var version_dir = std.fs.cwd().openDir(version_path, .{ .iterate = true }) catch continue;
+            defer version_dir.close();
+
+            // First revision
+            var revision_iter = version_dir.iterate();
+            const revision_entry = (revision_iter.next() catch continue) orelse continue;
+            if (revision_entry.kind != .directory) continue;
+
+            const revision_path = std.fs.path.join(self.allocator, &[_][]const u8{
+                version_path,
+                revision_entry.name,
+            }) catch continue;
+            defer self.allocator.free(revision_path);
+
+            var revision_dir = std.fs.cwd().openDir(revision_path, .{ .iterate = true }) catch continue;
+            defer revision_dir.close();
+
+            // First build-id
+            var build_iter = revision_dir.iterate();
+            const build_entry = (build_iter.next() catch continue) orelse continue;
+            if (build_entry.kind != .directory) continue;
+
+            const root_path = std.fs.path.join(self.allocator, &[_][]const u8{
+                revision_path,
+                build_entry.name,
+                "root",
+            }) catch continue;
+
+            // Verify root directory exists
+            std.fs.cwd().access(root_path, .{}) catch {
+                self.allocator.free(root_path);
+                continue;
+            };
+
+            try roots.append(root_path);
+        }
+
+        return roots;
+    }
+
     /// Find the root path for a package in the Axiom store by name
     /// Returns the path to the package's root/ directory, or null if not found
     fn findPackageRootInStore(self: *PortsMigrator, pkg_name: []const u8) ?[]const u8 {
@@ -867,8 +946,10 @@ pub const PortsMigrator = struct {
             lib_parts.deinit();
         }
 
-        // Get dependencies for this port
-        var deps = self.getPortDependencies(origin) catch {
+        // Get ALL transitive dependencies for this port (not just direct ones)
+        // This is critical for cases like automake -> autoconf -> autoconf-switch
+        // where autoconf-switch provides the 'autoconf' wrapper needed by automake
+        var deps = self.resolveDependencyTree(origin) catch {
             // If we can't get dependencies, just return system defaults
             std.debug.print("    [DEBUG] Failed to get dependencies for {s}, using system defaults\n", .{origin});
             return BuildEnvironment{
@@ -882,36 +963,50 @@ pub const PortsMigrator = struct {
             deps.deinit();
         }
 
-        std.debug.print("    [DEBUG] Processing {d} dependencies for PATH\n", .{deps.items.len});
+        std.debug.print("    [DEBUG] Processing {d} transitive dependencies for PATH\n", .{deps.items.len});
 
         // For each dependency, check if it exists in the Axiom store
         for (deps.items) |dep_origin| {
+            // Skip the package itself (it's included in the tree)
+            if (std.mem.eql(u8, dep_origin, origin)) continue;
+
             // Extract package name from origin (e.g., "devel/m4" -> "m4")
-            const pkg_name = std.fs.path.basename(dep_origin);
+            // Use mapPortName to handle cases like autoconf-switch -> autoconf
+            const raw_name = std.fs.path.basename(dep_origin);
+            const pkg_name = self.mapPortName(raw_name);
 
             std.debug.print("    [DEBUG] Looking for {s} (from {s}) in store\n", .{ pkg_name, dep_origin });
 
-            // Find package root in store
-            if (self.findPackageRootInStore(pkg_name)) |root_path| {
-                std.debug.print("    [DEBUG] Found {s} at: {s}\n", .{ pkg_name, root_path });
+            // Find ALL versions of package in store (important for autoconf/autoconf-switch case)
+            var roots = self.findAllPackageRootsInStore(pkg_name) catch continue;
+            defer {
+                for (roots.items) |r| self.allocator.free(r);
+                roots.deinit();
+            }
+
+            if (roots.items.len == 0) {
+                std.debug.print("    [DEBUG] Package {s} NOT found in store\n", .{pkg_name});
                 if (self.options.verbose) {
-                    std.debug.print("    Found {s} in store: {s}\n", .{ pkg_name, root_path });
+                    std.debug.print("    Package {s} not found in store\n", .{pkg_name});
                 }
+                continue;
+            }
+
+            std.debug.print("    [DEBUG] Found {d} version(s) of {s}\n", .{ roots.items.len, pkg_name });
+
+            // Add paths from ALL versions
+            for (roots.items) |root_path| {
+                std.debug.print("    [DEBUG]   Version at: {s}\n", .{root_path});
 
                 // Add bin/ to PATH
                 const bin_path = std.fs.path.join(self.allocator, &[_][]const u8{
                     root_path,
                     "bin",
-                }) catch {
-                    self.allocator.free(root_path);
-                    continue;
-                };
+                }) catch continue;
 
                 // Verify bin directory exists before adding
                 if (std.fs.cwd().access(bin_path, .{})) |_| {
-                    if (self.options.verbose) {
-                        std.debug.print("      Adding to PATH: {s}\n", .{bin_path});
-                    }
+                    std.debug.print("    [DEBUG]     Adding to PATH: {s}\n", .{bin_path});
                     try path_parts.append(bin_path);
                 } else |_| {
                     self.allocator.free(bin_path);
@@ -921,12 +1016,8 @@ pub const PortsMigrator = struct {
                 const lib_path = std.fs.path.join(self.allocator, &[_][]const u8{
                     root_path,
                     "lib",
-                }) catch {
-                    self.allocator.free(root_path);
-                    continue;
-                };
+                }) catch continue;
 
-                // Verify lib directory exists before adding
                 if (std.fs.cwd().access(lib_path, .{})) |_| {
                     try lib_parts.append(lib_path);
                 } else |_| {
@@ -937,15 +1028,10 @@ pub const PortsMigrator = struct {
                 const usr_local_bin = std.fs.path.join(self.allocator, &[_][]const u8{
                     root_path,
                     "usr/local/bin",
-                }) catch {
-                    self.allocator.free(root_path);
-                    continue;
-                };
+                }) catch continue;
 
                 if (std.fs.cwd().access(usr_local_bin, .{})) |_| {
-                    if (self.options.verbose) {
-                        std.debug.print("      Adding to PATH: {s}\n", .{usr_local_bin});
-                    }
+                    std.debug.print("    [DEBUG]     Adding to PATH: {s}\n", .{usr_local_bin});
                     try path_parts.append(usr_local_bin);
                 } else |_| {
                     self.allocator.free(usr_local_bin);
@@ -954,22 +1040,12 @@ pub const PortsMigrator = struct {
                 const usr_local_lib = std.fs.path.join(self.allocator, &[_][]const u8{
                     root_path,
                     "usr/local/lib",
-                }) catch {
-                    self.allocator.free(root_path);
-                    continue;
-                };
+                }) catch continue;
 
                 if (std.fs.cwd().access(usr_local_lib, .{})) |_| {
                     try lib_parts.append(usr_local_lib);
                 } else |_| {
                     self.allocator.free(usr_local_lib);
-                }
-
-                self.allocator.free(root_path);
-            } else {
-                std.debug.print("    [DEBUG] Package {s} NOT found in store\n", .{pkg_name});
-                if (self.options.verbose) {
-                    std.debug.print("    Package {s} not found in store\n", .{pkg_name});
                 }
             }
         }
