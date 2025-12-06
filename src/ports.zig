@@ -777,27 +777,27 @@ pub const PortsMigrator = struct {
             return null;
         };
 
-        // Build ZFS dataset path for this package name
-        const pkg_dataset = std.fmt.allocPrint(
-            self.allocator,
-            "{s}/{s}",
-            .{ store.paths.store_root, pkg_name },
-        ) catch return null;
-        defer self.allocator.free(pkg_dataset);
-
-        std.debug.print("      [DEBUG findPkg] Looking up dataset: {s}\n", .{pkg_dataset});
-
-        // Get the actual mountpoint from ZFS
-        const mountpoint = store.zfs_handle.getMountpoint(self.allocator, pkg_dataset) catch |err| {
-            std.debug.print("      [DEBUG findPkg] getMountpoint failed: {}\n", .{err});
+        // Get the ROOT store mountpoint (e.g., zroot/axiom/store/pkg -> /axiom/store/pkg)
+        // This is more reliable than querying child datasets which may not have explicit mountpoints
+        const store_mountpoint = store.zfs_handle.getMountpoint(self.allocator, store.paths.store_root) catch |err| {
+            std.debug.print("      [DEBUG findPkg] getMountpoint for store root failed: {}\n", .{err});
             return null;
         };
-        defer self.allocator.free(mountpoint);
+        defer self.allocator.free(store_mountpoint);
 
-        std.debug.print("      [DEBUG findPkg] Mountpoint: {s}\n", .{mountpoint});
+        std.debug.print("      [DEBUG findPkg] Store mountpoint: {s}\n", .{store_mountpoint});
 
-        // Open the package name directory (at the mountpoint)
-        var pkg_dir = std.fs.cwd().openDir(mountpoint, .{ .iterate = true }) catch |err| {
+        // Construct the package directory path under the store
+        const pkg_dir_path = std.fs.path.join(self.allocator, &[_][]const u8{
+            store_mountpoint,
+            pkg_name,
+        }) catch return null;
+        defer self.allocator.free(pkg_dir_path);
+
+        std.debug.print("      [DEBUG findPkg] Looking for package at: {s}\n", .{pkg_dir_path});
+
+        // Open the package name directory
+        var pkg_dir = std.fs.cwd().openDir(pkg_dir_path, .{ .iterate = true }) catch |err| {
             std.debug.print("      [DEBUG findPkg] openDir failed: {}\n", .{err});
             return null;
         };
@@ -809,7 +809,7 @@ pub const PortsMigrator = struct {
         if (version_entry.kind != .directory) return null;
 
         const version_path = std.fs.path.join(self.allocator, &[_][]const u8{
-            mountpoint,
+            pkg_dir_path,
             version_entry.name,
         }) catch return null;
         defer self.allocator.free(version_path);
