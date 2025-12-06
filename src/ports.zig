@@ -1510,10 +1510,22 @@ pub const PortsMigrator = struct {
             if (std.posix.getenv("LANG")) |lang| {
                 try env_map.?.put("LANG", lang);
             }
+            // LOCALBASE is critical for FreeBSD ports - it's where ports look for dependencies
+            // Default to /usr/local if not set
+            if (std.posix.getenv("LOCALBASE")) |localbase| {
+                try env_map.?.put("LOCALBASE", localbase);
+            } else {
+                try env_map.?.put("LOCALBASE", "/usr/local");
+            }
 
             // Set custom PATH with Axiom store bin directories first
             try env_map.?.put("PATH", env.path);
             try env_map.?.put("LD_LIBRARY_PATH", env.ld_library_path);
+
+            // Set LDFLAGS and CPPFLAGS in environment for configure-time detection
+            // This helps Perl Makefile.PL and other detection scripts find libraries
+            try env_map.?.put("LDFLAGS", env.ldflags);
+            try env_map.?.put("CPPFLAGS", env.cppflags);
 
             // FreeBSD make needs these
             try env_map.?.put("MAKE", "make");
