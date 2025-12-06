@@ -620,19 +620,45 @@ pub const PortsMigrator = struct {
         };
         defer metadata.deinit();
 
-        // Check if package already exists in store (skip if so)
+        // Check if package already exists in store (skip only if same origin)
         if (self.options.store) |store| {
             const pkg_name = self.mapPortName(metadata.name);
             const exists = store.packageNameExists(pkg_name) catch false;
             if (exists) {
-                std.debug.print("  ✓ Package '{s}' already in store, skipping\n", .{pkg_name});
-                result.status = .skipped;
-                result.axiom_package = try std.fmt.allocPrint(
-                    self.allocator,
-                    "{s} (existing)",
-                    .{pkg_name},
-                );
-                return result;
+                // Check if the existing package has the same origin
+                const existing_origin = store.getPackageOriginByName(pkg_name) catch null;
+                defer if (existing_origin) |o| self.allocator.free(o);
+
+                const should_skip = if (existing_origin) |existing|
+                    std.mem.eql(u8, existing, origin)
+                else
+                    // No origin recorded - legacy package built before origin tracking
+                    // Proceed with build to replace it with properly tracked package
+                    false;
+
+                if (should_skip) {
+                    std.debug.print("  ✓ Package '{s}' already in store (same origin: {s}), skipping\n", .{ pkg_name, origin });
+                    result.status = .skipped;
+                    result.axiom_package = try std.fmt.allocPrint(
+                        self.allocator,
+                        "{s} (existing)",
+                        .{pkg_name},
+                    );
+                    return result;
+                } else if (existing_origin) |existing| {
+                    // Different origin - warn and proceed
+                    std.debug.print("  ⚠ Package '{s}' exists from different origin ({s}), building from {s}\n", .{
+                        pkg_name,
+                        existing,
+                        origin,
+                    });
+                } else {
+                    // Legacy package with no origin - will be replaced
+                    std.debug.print("  ⚠ Package '{s}' exists (no origin recorded), rebuilding from {s}\n", .{
+                        pkg_name,
+                        origin,
+                    });
+                }
             }
         }
 
