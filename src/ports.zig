@@ -778,7 +778,7 @@ pub const PortsMigrator = struct {
         }
 
         // Get dependencies for this port
-        var deps = self.getPortDependencies(origin) catch |_| {
+        var deps = self.getPortDependencies(origin) catch {
             // If we can't get dependencies, just return system defaults
             return BuildEnvironment{
                 .path = try self.allocator.dupe(u8, "/usr/local/bin:/usr/bin:/bin"),
@@ -1183,34 +1183,38 @@ pub const PortsMigrator = struct {
         child.stderr_behavior = .Pipe;
 
         // Set up custom environment if provided (includes Axiom store paths)
+        var env_map: ?std.process.EnvMap = null;
         if (build_env) |env| {
             // Create environment map with PATH and LD_LIBRARY_PATH from Axiom store
-            child.env_map = std.process.EnvMap.init(self.allocator);
+            env_map = std.process.EnvMap.init(self.allocator);
 
             // Copy important environment variables from parent process
             if (std.posix.getenv("HOME")) |home| {
-                try child.env_map.?.put("HOME", home);
+                try env_map.?.put("HOME", home);
             }
             if (std.posix.getenv("USER")) |user| {
-                try child.env_map.?.put("USER", user);
+                try env_map.?.put("USER", user);
             }
             if (std.posix.getenv("SHELL")) |shell| {
-                try child.env_map.?.put("SHELL", shell);
+                try env_map.?.put("SHELL", shell);
             }
             if (std.posix.getenv("TERM")) |term| {
-                try child.env_map.?.put("TERM", term);
+                try env_map.?.put("TERM", term);
             }
             if (std.posix.getenv("LANG")) |lang| {
-                try child.env_map.?.put("LANG", lang);
+                try env_map.?.put("LANG", lang);
             }
 
             // Set custom PATH with Axiom store bin directories first
-            try child.env_map.?.put("PATH", env.path);
-            try child.env_map.?.put("LD_LIBRARY_PATH", env.ld_library_path);
+            try env_map.?.put("PATH", env.path);
+            try env_map.?.put("LD_LIBRARY_PATH", env.ld_library_path);
 
             // FreeBSD make needs these
-            try child.env_map.?.put("MAKE", "make");
-            try child.env_map.?.put("PORTSDIR", self.options.ports_tree);
+            try env_map.?.put("MAKE", "make");
+            try env_map.?.put("PORTSDIR", self.options.ports_tree);
+
+            // Set the pointer on child
+            child.env_map = &(env_map.?);
 
             if (self.options.verbose) {
                 std.debug.print("  Build environment:\n", .{});
