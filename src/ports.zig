@@ -1191,7 +1191,7 @@ pub const PortsMigrator = struct {
         // Step 4: Build the port with NO_DEPENDS (skip ports dependency machinery)
         // Dependencies are now available via PATH from Axiom store
         std.debug.print("  Building...\n", .{});
-        var build_result = try self.runMakeTargetNoDeps(port_path, "build", null, &build_env);
+        var build_result = try self.runMakeTargetNoDeps(port_path, "build", null, &build_env, origin);
         if (build_result.exit_code != 0) {
             std.debug.print("  Build failed with exit code: {d}\n", .{build_result.exit_code});
             // Show the last part of stdout (compiler errors are in stdout)
@@ -1211,7 +1211,7 @@ pub const PortsMigrator = struct {
 
         // Step 5: Stage the port (uses internal staging in work/stage)
         std.debug.print("  Staging...\n", .{});
-        var stage_result = try self.runMakeTargetNoDeps(port_path, "stage", null, &build_env);
+        var stage_result = try self.runMakeTargetNoDeps(port_path, "stage", null, &build_env, origin);
         if (stage_result.exit_code != 0) {
             std.debug.print("  Stage failed with exit code: {d}\n", .{stage_result.exit_code});
             if (stage_result.stdout) |stdout| {
@@ -1389,6 +1389,7 @@ pub const PortsMigrator = struct {
         target: []const u8,
         destdir: ?[]const u8,
         build_env: ?*const BuildEnvironment,
+        origin: []const u8,
     ) !MakeResult {
         var args = std.ArrayList([]const u8).init(self.allocator);
         defer args.deinit();
@@ -1406,6 +1407,10 @@ pub const PortsMigrator = struct {
 
         var configure_env_arg: ?[]const u8 = null;
         defer if (configure_env_arg) |c| self.allocator.free(c);
+
+        // For Perl modules, we need CONFIGURE_ARGS with LIBS and INC
+        var configure_args_arg: ?[]const u8 = null;
+        defer if (configure_args_arg) |c| self.allocator.free(c);
 
         try args.append("make");
         try args.append("-C");
@@ -1449,6 +1454,19 @@ pub const PortsMigrator = struct {
             std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PATH={s}\n", .{env.path});
             std.debug.print("    [DEBUG]   CONFIGURE_ENV+=LDFLAGS={s}\n", .{env.ldflags});
             std.debug.print("    [DEBUG]   CONFIGURE_ENV+=CPPFLAGS={s}\n", .{env.cppflags});
+
+            // For Perl modules (p5-*), pass LIBS and INC via CONFIGURE_ARGS
+            // Perl's ExtUtils::MakeMaker doesn't respect LDFLAGS/CPPFLAGS,
+            // but accepts LIBS="-L... -l..." and INC="-I..." as Makefile.PL arguments
+            if (std.mem.indexOf(u8, origin, "/p5-") != null) {
+                configure_args_arg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "CONFIGURE_ARGS+=LIBS=\"{s} -lintl\" INC=\"{s}\"",
+                    .{ env.ldflags, env.cppflags },
+                );
+                try args.append(configure_args_arg.?);
+                std.debug.print("    [DEBUG]   CONFIGURE_ARGS+={s}\n", .{configure_args_arg.?[16..]});
+            }
         }
 
         // Add DESTDIR if provided
