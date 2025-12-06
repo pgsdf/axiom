@@ -684,6 +684,205 @@ pub const PortsMigrator = struct {
         success: bool,
     };
 
+    /// Build environment with PATH and LD_LIBRARY_PATH from Axiom store dependencies
+    const BuildEnvironment = struct {
+        path: []const u8,
+        ld_library_path: []const u8,
+        allocator: std.mem.Allocator,
+
+        pub fn deinit(self: *BuildEnvironment) void {
+            self.allocator.free(self.path);
+            self.allocator.free(self.ld_library_path);
+        }
+    };
+
+    /// Find the root path for a package in the Axiom store by name
+    /// Returns the path to the package's root/ directory, or null if not found
+    fn findPackageRootInStore(self: *PortsMigrator, pkg_name: []const u8) ?[]const u8 {
+        // Axiom store structure: /axiom/store/pkg/<name>/<version>/<revision>/<build-id>/root/
+        // We need to find any version of this package and return its root path
+        const store_mountpoint = "/axiom/store/pkg";
+
+        const pkg_dir_path = std.fs.path.join(self.allocator, &[_][]const u8{
+            store_mountpoint,
+            pkg_name,
+        }) catch return null;
+        defer self.allocator.free(pkg_dir_path);
+
+        // Open the package name directory
+        var pkg_dir = std.fs.cwd().openDir(pkg_dir_path, .{ .iterate = true }) catch return null;
+        defer pkg_dir.close();
+
+        // Find first version directory
+        var version_iter = pkg_dir.iterate();
+        const version_entry = (version_iter.next() catch return null) orelse return null;
+        if (version_entry.kind != .directory) return null;
+
+        const version_path = std.fs.path.join(self.allocator, &[_][]const u8{
+            pkg_dir_path,
+            version_entry.name,
+        }) catch return null;
+        defer self.allocator.free(version_path);
+
+        // Find first revision directory
+        var version_dir = std.fs.cwd().openDir(version_path, .{ .iterate = true }) catch return null;
+        defer version_dir.close();
+
+        var revision_iter = version_dir.iterate();
+        const revision_entry = (revision_iter.next() catch return null) orelse return null;
+        if (revision_entry.kind != .directory) return null;
+
+        const revision_path = std.fs.path.join(self.allocator, &[_][]const u8{
+            version_path,
+            revision_entry.name,
+        }) catch return null;
+        defer self.allocator.free(revision_path);
+
+        // Find first build-id directory
+        var revision_dir = std.fs.cwd().openDir(revision_path, .{ .iterate = true }) catch return null;
+        defer revision_dir.close();
+
+        var build_iter = revision_dir.iterate();
+        const build_entry = (build_iter.next() catch return null) orelse return null;
+        if (build_entry.kind != .directory) return null;
+
+        // Return path to root/ directory
+        const root_path = std.fs.path.join(self.allocator, &[_][]const u8{
+            revision_path,
+            build_entry.name,
+            "root",
+        }) catch return null;
+
+        // Verify root directory exists
+        std.fs.cwd().access(root_path, .{}) catch {
+            self.allocator.free(root_path);
+            return null;
+        };
+
+        return root_path;
+    }
+
+    /// Build environment variables (PATH, LD_LIBRARY_PATH) from dependencies in the Axiom store
+    /// This allows built dependencies to be found during subsequent builds
+    fn getBuildEnvironment(self: *PortsMigrator, origin: []const u8) !BuildEnvironment {
+        var path_parts = std.ArrayList([]const u8).init(self.allocator);
+        defer {
+            for (path_parts.items) |p| self.allocator.free(p);
+            path_parts.deinit();
+        }
+
+        var lib_parts = std.ArrayList([]const u8).init(self.allocator);
+        defer {
+            for (lib_parts.items) |p| self.allocator.free(p);
+            lib_parts.deinit();
+        }
+
+        // Get dependencies for this port
+        var deps = self.getPortDependencies(origin) catch |_| {
+            // If we can't get dependencies, just return system defaults
+            return BuildEnvironment{
+                .path = try self.allocator.dupe(u8, "/usr/local/bin:/usr/bin:/bin"),
+                .ld_library_path = try self.allocator.dupe(u8, "/usr/local/lib:/usr/lib:/lib"),
+                .allocator = self.allocator,
+            };
+        };
+        defer {
+            for (deps.items) |d| self.allocator.free(d);
+            deps.deinit();
+        }
+
+        // For each dependency, check if it exists in the Axiom store
+        for (deps.items) |dep_origin| {
+            // Extract package name from origin (e.g., "devel/m4" -> "m4")
+            const pkg_name = std.fs.path.basename(dep_origin);
+
+            // Find package root in store
+            if (self.findPackageRootInStore(pkg_name)) |root_path| {
+                // Add bin/ to PATH
+                const bin_path = std.fs.path.join(self.allocator, &[_][]const u8{
+                    root_path,
+                    "bin",
+                }) catch {
+                    self.allocator.free(root_path);
+                    continue;
+                };
+
+                // Verify bin directory exists before adding
+                if (std.fs.cwd().access(bin_path, .{})) |_| {
+                    try path_parts.append(bin_path);
+                } else |_| {
+                    self.allocator.free(bin_path);
+                }
+
+                // Add lib/ to LD_LIBRARY_PATH
+                const lib_path = std.fs.path.join(self.allocator, &[_][]const u8{
+                    root_path,
+                    "lib",
+                }) catch {
+                    self.allocator.free(root_path);
+                    continue;
+                };
+
+                // Verify lib directory exists before adding
+                if (std.fs.cwd().access(lib_path, .{})) |_| {
+                    try lib_parts.append(lib_path);
+                } else |_| {
+                    self.allocator.free(lib_path);
+                }
+
+                // Also check usr/local/bin and usr/local/lib (FreeBSD ports layout)
+                const usr_local_bin = std.fs.path.join(self.allocator, &[_][]const u8{
+                    root_path,
+                    "usr/local/bin",
+                }) catch {
+                    self.allocator.free(root_path);
+                    continue;
+                };
+
+                if (std.fs.cwd().access(usr_local_bin, .{})) |_| {
+                    try path_parts.append(usr_local_bin);
+                } else |_| {
+                    self.allocator.free(usr_local_bin);
+                }
+
+                const usr_local_lib = std.fs.path.join(self.allocator, &[_][]const u8{
+                    root_path,
+                    "usr/local/lib",
+                }) catch {
+                    self.allocator.free(root_path);
+                    continue;
+                };
+
+                if (std.fs.cwd().access(usr_local_lib, .{})) |_| {
+                    try lib_parts.append(usr_local_lib);
+                } else |_| {
+                    self.allocator.free(usr_local_lib);
+                }
+
+                self.allocator.free(root_path);
+            }
+        }
+
+        // Add system paths at the end
+        try path_parts.append(try self.allocator.dupe(u8, "/usr/local/bin"));
+        try path_parts.append(try self.allocator.dupe(u8, "/usr/bin"));
+        try path_parts.append(try self.allocator.dupe(u8, "/bin"));
+
+        try lib_parts.append(try self.allocator.dupe(u8, "/usr/local/lib"));
+        try lib_parts.append(try self.allocator.dupe(u8, "/usr/lib"));
+        try lib_parts.append(try self.allocator.dupe(u8, "/lib"));
+
+        // Join paths with ':'
+        const path_joined = try std.mem.join(self.allocator, ":", path_parts.items);
+        const lib_joined = try std.mem.join(self.allocator, ":", lib_parts.items);
+
+        return BuildEnvironment{
+            .path = path_joined,
+            .ld_library_path = lib_joined,
+            .allocator = self.allocator,
+        };
+    }
+
     /// Build a port using the FreeBSD ports build system
     fn buildPort(
         self: *PortsMigrator,
@@ -728,10 +927,20 @@ pub const PortsMigrator = struct {
         // (User must build these first via separate ports-import calls)
         try self.displayDependencies(port_path);
 
-        // Step 3: Build the port with NO_DEPENDS (skip ports dependency machinery)
-        // Dependencies must already be available on the system (built via axiom)
+        // Step 3: Set up build environment with Axiom store paths
+        // This allows built dependencies to be found by configure scripts and compilers
+        std.debug.print("  Setting up build environment...\n", .{});
+        var build_env = try self.getBuildEnvironment(origin);
+        defer build_env.deinit();
+
+        if (self.options.verbose) {
+            std.debug.print("  Axiom store dependencies added to PATH\n", .{});
+        }
+
+        // Step 4: Build the port with NO_DEPENDS (skip ports dependency machinery)
+        // Dependencies are now available via PATH from Axiom store
         std.debug.print("  Building...\n", .{});
-        var build_result = try self.runMakeTargetNoDeps(port_path, "build", null);
+        var build_result = try self.runMakeTargetNoDeps(port_path, "build", null, &build_env);
         if (build_result.exit_code != 0) {
             std.debug.print("  Build failed with exit code: {d}\n", .{build_result.exit_code});
             // Show the last part of stdout (compiler errors are in stdout)
@@ -749,9 +958,9 @@ pub const PortsMigrator = struct {
         }
         build_result.deinit(self.allocator);
 
-        // Step 4: Stage the port (uses internal staging in work/stage)
+        // Step 5: Stage the port (uses internal staging in work/stage)
         std.debug.print("  Staging...\n", .{});
-        var stage_result = try self.runMakeTargetNoDeps(port_path, "stage", null);
+        var stage_result = try self.runMakeTargetNoDeps(port_path, "stage", null, &build_env);
         if (stage_result.exit_code != 0) {
             std.debug.print("  Stage failed with exit code: {d}\n", .{stage_result.exit_code});
             if (stage_result.stdout) |stdout| {
@@ -767,7 +976,7 @@ pub const PortsMigrator = struct {
         }
         stage_result.deinit(self.allocator);
 
-        // Step 5: Copy staged files from work/stage to our staging directory
+        // Step 6: Copy staged files from work/stage to our staging directory
         // The ports system stages to <port_path>/work/stage/usr/local
         std.debug.print("  Copying staged files...\n", .{});
         const work_stage = try std.fs.path.join(self.allocator, &[_][]const u8{
@@ -922,12 +1131,13 @@ pub const PortsMigrator = struct {
     }
 
     /// Run a make target with NO_DEPENDS to skip port-based dependency building
-    /// (assumes dependencies were pre-installed from packages)
+    /// (assumes dependencies were pre-installed from packages or are in Axiom store)
     fn runMakeTargetNoDeps(
         self: *PortsMigrator,
         port_path: []const u8,
         target: []const u8,
         destdir: ?[]const u8,
+        build_env: ?*const BuildEnvironment,
     ) !MakeResult {
         var args = std.ArrayList([]const u8).init(self.allocator);
         defer args.deinit();
@@ -971,6 +1181,43 @@ pub const PortsMigrator = struct {
 
         child.stdout_behavior = .Pipe;
         child.stderr_behavior = .Pipe;
+
+        // Set up custom environment if provided (includes Axiom store paths)
+        if (build_env) |env| {
+            // Create environment map with PATH and LD_LIBRARY_PATH from Axiom store
+            child.env_map = std.process.EnvMap.init(self.allocator);
+
+            // Copy important environment variables from parent process
+            if (std.posix.getenv("HOME")) |home| {
+                try child.env_map.?.put("HOME", home);
+            }
+            if (std.posix.getenv("USER")) |user| {
+                try child.env_map.?.put("USER", user);
+            }
+            if (std.posix.getenv("SHELL")) |shell| {
+                try child.env_map.?.put("SHELL", shell);
+            }
+            if (std.posix.getenv("TERM")) |term| {
+                try child.env_map.?.put("TERM", term);
+            }
+            if (std.posix.getenv("LANG")) |lang| {
+                try child.env_map.?.put("LANG", lang);
+            }
+
+            // Set custom PATH with Axiom store bin directories first
+            try child.env_map.?.put("PATH", env.path);
+            try child.env_map.?.put("LD_LIBRARY_PATH", env.ld_library_path);
+
+            // FreeBSD make needs these
+            try child.env_map.?.put("MAKE", "make");
+            try child.env_map.?.put("PORTSDIR", self.options.ports_tree);
+
+            if (self.options.verbose) {
+                std.debug.print("  Build environment:\n", .{});
+                std.debug.print("    PATH={s}\n", .{env.path});
+                std.debug.print("    LD_LIBRARY_PATH={s}\n", .{env.ld_library_path});
+            }
+        }
 
         try child.spawn();
 
