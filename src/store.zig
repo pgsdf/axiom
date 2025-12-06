@@ -287,6 +287,95 @@ pub const PackageStore = struct {
         return self.zfs_handle.datasetExists(self.allocator, dataset_path, .filesystem);
     }
 
+    /// Get the origin of an existing package by name (reads from first found version)
+    /// Returns null if package doesn't exist or has no origin
+    pub fn getPackageOriginByName(
+        self: *PackageStore,
+        name: []const u8,
+    ) !?[]const u8 {
+        // Path structure: {store_root}/{name}/{version}/{revision}/{build-id}/manifest.yaml
+        const pkg_dir_path = try std.fmt.allocPrint(
+            self.allocator,
+            "{s}/{s}",
+            .{ self.paths.store_root, name },
+        );
+        defer self.allocator.free(pkg_dir_path);
+
+        // Get mountpoint for the pkg directory
+        const mountpoint = self.zfs_handle.getMountpoint(self.allocator, pkg_dir_path) catch {
+            return null;
+        };
+        defer self.allocator.free(mountpoint);
+
+        // Traverse to find first manifest: name/version/revision/build-id/manifest.yaml
+        var pkg_dir = std.fs.cwd().openDir(mountpoint, .{ .iterate = true }) catch {
+            return null;
+        };
+        defer pkg_dir.close();
+
+        // Find first version
+        var version_iter = pkg_dir.iterate();
+        const version_entry = (version_iter.next() catch return null) orelse return null;
+        if (version_entry.kind != .directory) return null;
+
+        const version_path = std.fs.path.join(self.allocator, &[_][]const u8{
+            mountpoint,
+            version_entry.name,
+        }) catch return null;
+        defer self.allocator.free(version_path);
+
+        var version_dir = std.fs.cwd().openDir(version_path, .{ .iterate = true }) catch {
+            return null;
+        };
+        defer version_dir.close();
+
+        // Find first revision
+        var revision_iter = version_dir.iterate();
+        const revision_entry = (revision_iter.next() catch return null) orelse return null;
+        if (revision_entry.kind != .directory) return null;
+
+        const revision_path = std.fs.path.join(self.allocator, &[_][]const u8{
+            version_path,
+            revision_entry.name,
+        }) catch return null;
+        defer self.allocator.free(revision_path);
+
+        var revision_dir = std.fs.cwd().openDir(revision_path, .{ .iterate = true }) catch {
+            return null;
+        };
+        defer revision_dir.close();
+
+        // Find first build-id
+        var build_iter = revision_dir.iterate();
+        const build_entry = (build_iter.next() catch return null) orelse return null;
+        if (build_entry.kind != .directory) return null;
+
+        // Read manifest.yaml
+        const manifest_path = std.fs.path.join(self.allocator, &[_][]const u8{
+            revision_path,
+            build_entry.name,
+            "manifest.yaml",
+        }) catch return null;
+        defer self.allocator.free(manifest_path);
+
+        const manifest_content = std.fs.cwd().readFileAlloc(self.allocator, manifest_path, 1024 * 1024) catch {
+            return null;
+        };
+        defer self.allocator.free(manifest_content);
+
+        // Parse manifest to get origin
+        var pkg_manifest = Manifest.parse(self.allocator, manifest_content) catch {
+            return null;
+        };
+        defer pkg_manifest.deinit(self.allocator);
+
+        // Return duplicated origin (or null if not set)
+        if (pkg_manifest.origin) |origin| {
+            return try self.allocator.dupe(u8, origin);
+        }
+        return null;
+    }
+
     /// Get package metadata
     pub fn getPackage(
         self: *PackageStore,

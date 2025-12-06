@@ -91,6 +91,10 @@ pub const Manifest = struct {
     maintainer: ?[]const u8 = null,
     tags: [][]const u8 = &[_][]const u8{},
 
+    /// FreeBSD port origin (e.g., "devel/autoconf") - used to distinguish
+    /// packages with the same name from different ports
+    origin: ?[]const u8 = null,
+
     /// Virtual package names this package provides (e.g., "shell", "http-client")
     provides: [][]const u8 = &[_][]const u8{},
 
@@ -218,6 +222,8 @@ pub const Manifest = struct {
                 manifest.homepage = try allocator.dupe(u8, value);
             } else if (std.mem.eql(u8, key, "maintainer")) {
                 manifest.maintainer = try allocator.dupe(u8, value);
+            } else if (std.mem.eql(u8, key, "origin")) {
+                manifest.origin = try allocator.dupe(u8, value);
             } else if (std.mem.eql(u8, key, "tags")) {
                 list_context = .tags;
             } else if (std.mem.eql(u8, key, "provides")) {
@@ -261,6 +267,7 @@ pub const Manifest = struct {
         if (self.license) |l| allocator.free(l);
         if (self.homepage) |h| allocator.free(h);
         if (self.maintainer) |m| allocator.free(m);
+        if (self.origin) |o| allocator.free(o);
         for (self.tags) |tag| {
             allocator.free(tag);
         }
@@ -337,6 +344,7 @@ pub const Manifest = struct {
         if (self.license) |l| try writer.print("license: {s}\n", .{l});
         if (self.homepage) |h| try writer.print("homepage: {s}\n", .{h});
         if (self.maintainer) |m| try writer.print("maintainer: {s}\n", .{m});
+        if (self.origin) |o| try writer.print("origin: {s}\n", .{o});
 
         if (self.tags.len > 0) {
             try writer.writeAll("tags:\n");
