@@ -1226,6 +1226,8 @@ pub const PortsMigrator = struct {
 
         // Set up custom environment if provided (includes Axiom store paths)
         var env_map: ?std.process.EnvMap = null;
+        defer if (env_map) |*em| em.deinit();
+
         if (build_env) |env| {
             // Create environment map with PATH and LD_LIBRARY_PATH from Axiom store
             env_map = std.process.EnvMap.init(self.allocator);
