@@ -141,7 +141,7 @@ pub const BootstrapManager = struct {
         const pkg_path = try std.fmt.allocPrint(self.allocator, "/axiom/store/pkg/{s}", .{name});
         defer self.allocator.free(pkg_path);
 
-        const dir = std.fs.openDirAbsolute(pkg_path, .{}) catch {
+        var dir = std.fs.openDirAbsolute(pkg_path, .{}) catch {
             return false;
         };
         dir.close();
