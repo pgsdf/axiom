@@ -1427,63 +1427,31 @@ pub const PortsMigrator = struct {
         // Pass Axiom store PATH, LDFLAGS, CPPFLAGS through MAKE_ENV and CONFIGURE_ENV
         // This is critical: the ports framework (bsd.port.mk) uses these variables
         // to set up the environment for configure and build phases, NOT the inherited PATH
-        // LDFLAGS and CPPFLAGS are needed for configure scripts to find libraries and headers
-        // Note: Avoid extra quotes around values - make handles spaces correctly
+        //
+        // IMPORTANT: Only pass variables WITHOUT SPACES via MAKE_ENV/CONFIGURE_ENV.
+        // Variables with spaces (like LDFLAGS with multiple -L flags) get shell-split
+        // when the ports framework runs: env ${MAKE_ENV} ./configure
+        // Instead, LDFLAGS/CPPFLAGS are set in the child process env_map below.
         if (build_env) |env| {
-            // For Perl modules (p5-*), also pass LIBS and INC via CONFIGURE_ENV
-            // Perl's ExtUtils::MakeMaker reads these as environment variables
-            // This is more reliable than CONFIGURE_ARGS for complex paths
-            const is_perl_module = std.mem.indexOf(u8, origin, "/p5-") != null;
+            // Only PATH goes through MAKE_ENV/CONFIGURE_ENV (no spaces in value)
+            make_env_arg = try std.fmt.allocPrint(
+                self.allocator,
+                "MAKE_ENV+=PATH={s}",
+                .{env.path},
+            );
+            try args.append(make_env_arg.?);
 
-            if (is_perl_module) {
-                // Build LIBS with -lintl for gettext support
-                const libs_value = try std.fmt.allocPrint(
-                    self.allocator,
-                    "{s} -lintl",
-                    .{env.ldflags},
-                );
-                defer self.allocator.free(libs_value);
-
-                make_env_arg = try std.fmt.allocPrint(
-                    self.allocator,
-                    "MAKE_ENV+=PATH={s} LD_LIBRARY_PATH={s} LDFLAGS={s} CPPFLAGS={s} LIBS={s} INC={s}",
-                    .{ env.path, env.ld_library_path, env.ldflags, env.cppflags, libs_value, env.cppflags },
-                );
-                try args.append(make_env_arg.?);
-
-                configure_env_arg = try std.fmt.allocPrint(
-                    self.allocator,
-                    "CONFIGURE_ENV+=PATH={s} LD_LIBRARY_PATH={s} LDFLAGS={s} CPPFLAGS={s} LIBS={s} INC={s}",
-                    .{ env.path, env.ld_library_path, env.ldflags, env.cppflags, libs_value, env.cppflags },
-                );
-                try args.append(configure_env_arg.?);
-
-                std.debug.print("    [DEBUG] Passing to ports framework (Perl module):\n", .{});
-                std.debug.print("    [DEBUG]   CONFIGURE_ENV+=LIBS={s}\n", .{libs_value});
-                std.debug.print("    [DEBUG]   CONFIGURE_ENV+=INC={s}\n", .{env.cppflags});
-            } else {
-                make_env_arg = try std.fmt.allocPrint(
-                    self.allocator,
-                    "MAKE_ENV+=PATH={s} LD_LIBRARY_PATH={s} LDFLAGS={s} CPPFLAGS={s}",
-                    .{ env.path, env.ld_library_path, env.ldflags, env.cppflags },
-                );
-                try args.append(make_env_arg.?);
-
-                configure_env_arg = try std.fmt.allocPrint(
-                    self.allocator,
-                    "CONFIGURE_ENV+=PATH={s} LD_LIBRARY_PATH={s} LDFLAGS={s} CPPFLAGS={s}",
-                    .{ env.path, env.ld_library_path, env.ldflags, env.cppflags },
-                );
-                try args.append(configure_env_arg.?);
-            }
+            configure_env_arg = try std.fmt.allocPrint(
+                self.allocator,
+                "CONFIGURE_ENV+=PATH={s}",
+                .{env.path},
+            );
+            try args.append(configure_env_arg.?);
 
             std.debug.print("    [DEBUG] Passing to ports framework:\n", .{});
             std.debug.print("    [DEBUG]   MAKE_ENV+=PATH={s}\n", .{env.path});
-            std.debug.print("    [DEBUG]   MAKE_ENV+=LDFLAGS={s}\n", .{env.ldflags});
-            std.debug.print("    [DEBUG]   MAKE_ENV+=CPPFLAGS={s}\n", .{env.cppflags});
             std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PATH={s}\n", .{env.path});
-            std.debug.print("    [DEBUG]   CONFIGURE_ENV+=LDFLAGS={s}\n", .{env.ldflags});
-            std.debug.print("    [DEBUG]   CONFIGURE_ENV+=CPPFLAGS={s}\n", .{env.cppflags});
+            std.debug.print("    [DEBUG]   (LDFLAGS/CPPFLAGS set via process environment)\n", .{});
         }
 
         // Add DESTDIR if provided
@@ -1541,8 +1509,25 @@ pub const PortsMigrator = struct {
 
             // Set LDFLAGS and CPPFLAGS in environment for configure-time detection
             // This helps Perl Makefile.PL and other detection scripts find libraries
+            // These MUST be set here (not via MAKE_ENV) because values contain spaces
             try env_map.?.put("LDFLAGS", env.ldflags);
             try env_map.?.put("CPPFLAGS", env.cppflags);
+
+            // For Perl modules, also set LIBS and INC which ExtUtils::MakeMaker reads
+            if (std.mem.indexOf(u8, origin, "/p5-") != null) {
+                // LIBS needs -lintl for gettext support
+                const libs_value = try std.fmt.allocPrint(
+                    self.allocator,
+                    "{s} -lintl",
+                    .{env.ldflags},
+                );
+                defer self.allocator.free(libs_value);
+                try env_map.?.put("LIBS", libs_value);
+                try env_map.?.put("INC", env.cppflags);
+
+                std.debug.print("    [DEBUG] Perl module env: LIBS={s}\n", .{libs_value});
+                std.debug.print("    [DEBUG] Perl module env: INC={s}\n", .{env.cppflags});
+            }
 
             // FreeBSD make needs these
             try env_map.?.put("MAKE", "make");
