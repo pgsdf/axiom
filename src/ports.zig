@@ -756,11 +756,15 @@ pub const PortsMigrator = struct {
     const BuildEnvironment = struct {
         path: []const u8,
         ld_library_path: []const u8,
+        ldflags: []const u8,
+        cppflags: []const u8,
         allocator: std.mem.Allocator,
 
         pub fn deinit(self: *BuildEnvironment) void {
             self.allocator.free(self.path);
             self.allocator.free(self.ld_library_path);
+            self.allocator.free(self.ldflags);
+            self.allocator.free(self.cppflags);
         }
     };
 
@@ -946,6 +950,20 @@ pub const PortsMigrator = struct {
             lib_parts.deinit();
         }
 
+        // LDFLAGS: -L<lib_path> for each library directory
+        var ldflags_parts = std.ArrayList([]const u8).init(self.allocator);
+        defer {
+            for (ldflags_parts.items) |p| self.allocator.free(p);
+            ldflags_parts.deinit();
+        }
+
+        // CPPFLAGS: -I<include_path> for each include directory
+        var cppflags_parts = std.ArrayList([]const u8).init(self.allocator);
+        defer {
+            for (cppflags_parts.items) |p| self.allocator.free(p);
+            cppflags_parts.deinit();
+        }
+
         // Get ALL transitive dependencies for this port (not just direct ones)
         // This is critical for cases like automake -> autoconf -> autoconf-switch
         // where autoconf-switch provides the 'autoconf' wrapper needed by automake
@@ -955,6 +973,8 @@ pub const PortsMigrator = struct {
             return BuildEnvironment{
                 .path = try self.allocator.dupe(u8, "/usr/local/bin:/usr/bin:/bin"),
                 .ld_library_path = try self.allocator.dupe(u8, "/usr/local/lib:/usr/lib:/lib"),
+                .ldflags = try self.allocator.dupe(u8, "-L/usr/local/lib"),
+                .cppflags = try self.allocator.dupe(u8, "-I/usr/local/include"),
                 .allocator = self.allocator,
             };
         };
@@ -1011,7 +1031,7 @@ pub const PortsMigrator = struct {
                     self.allocator.free(bin_path);
                 }
 
-                // Add lib/ to LD_LIBRARY_PATH
+                // Add lib/ to LD_LIBRARY_PATH and LDFLAGS
                 const lib_path = std.fs.path.join(self.allocator, &[_][]const u8{
                     root_path,
                     "lib",
@@ -1019,8 +1039,25 @@ pub const PortsMigrator = struct {
 
                 if (std.fs.cwd().access(lib_path, .{})) |_| {
                     try lib_parts.append(lib_path);
+                    // Also add -L flag for linker
+                    const ldflag = try std.fmt.allocPrint(self.allocator, "-L{s}", .{lib_path});
+                    try ldflags_parts.append(ldflag);
                 } else |_| {
                     self.allocator.free(lib_path);
+                }
+
+                // Add include/ to CPPFLAGS
+                const include_path = std.fs.path.join(self.allocator, &[_][]const u8{
+                    root_path,
+                    "include",
+                }) catch continue;
+
+                if (std.fs.cwd().access(include_path, .{})) |_| {
+                    const cppflag = try std.fmt.allocPrint(self.allocator, "-I{s}", .{include_path});
+                    try cppflags_parts.append(cppflag);
+                    self.allocator.free(include_path);
+                } else |_| {
+                    self.allocator.free(include_path);
                 }
 
                 // Also check usr/local/bin and usr/local/lib (FreeBSD ports layout)
@@ -1043,8 +1080,25 @@ pub const PortsMigrator = struct {
 
                 if (std.fs.cwd().access(usr_local_lib, .{})) |_| {
                     try lib_parts.append(usr_local_lib);
+                    // Also add -L flag for linker
+                    const ldflag = try std.fmt.allocPrint(self.allocator, "-L{s}", .{usr_local_lib});
+                    try ldflags_parts.append(ldflag);
                 } else |_| {
                     self.allocator.free(usr_local_lib);
+                }
+
+                // Add usr/local/include to CPPFLAGS
+                const usr_local_include = std.fs.path.join(self.allocator, &[_][]const u8{
+                    root_path,
+                    "usr/local/include",
+                }) catch continue;
+
+                if (std.fs.cwd().access(usr_local_include, .{})) |_| {
+                    const cppflag = try std.fmt.allocPrint(self.allocator, "-I{s}", .{usr_local_include});
+                    try cppflags_parts.append(cppflag);
+                    self.allocator.free(usr_local_include);
+                } else |_| {
+                    self.allocator.free(usr_local_include);
                 }
             }
         }
@@ -1058,14 +1112,24 @@ pub const PortsMigrator = struct {
         try lib_parts.append(try self.allocator.dupe(u8, "/usr/lib"));
         try lib_parts.append(try self.allocator.dupe(u8, "/lib"));
 
-        // Join paths with ':'
+        // Add system paths to LDFLAGS and CPPFLAGS
+        try ldflags_parts.append(try self.allocator.dupe(u8, "-L/usr/local/lib"));
+        try cppflags_parts.append(try self.allocator.dupe(u8, "-I/usr/local/include"));
+
+        // Join paths with ':' for PATH/LD_LIBRARY_PATH, ' ' for flags
         const path_joined = try std.mem.join(self.allocator, ":", path_parts.items);
         std.debug.print("    [DEBUG] Final PATH: {s}\n", .{path_joined});
         const lib_joined = try std.mem.join(self.allocator, ":", lib_parts.items);
+        const ldflags_joined = try std.mem.join(self.allocator, " ", ldflags_parts.items);
+        std.debug.print("    [DEBUG] Final LDFLAGS: {s}\n", .{ldflags_joined});
+        const cppflags_joined = try std.mem.join(self.allocator, " ", cppflags_parts.items);
+        std.debug.print("    [DEBUG] Final CPPFLAGS: {s}\n", .{cppflags_joined});
 
         return BuildEnvironment{
             .path = path_joined,
             .ld_library_path = lib_joined,
+            .ldflags = ldflags_joined,
+            .cppflags = cppflags_joined,
             .allocator = self.allocator,
         };
     }
@@ -1359,27 +1423,32 @@ pub const PortsMigrator = struct {
         // Don't chroot during install (DESTDIR is empty staging dir without /bin/sh)
         try args.append("NO_INSTALL_CHROOT=yes");
 
-        // Pass Axiom store PATH through MAKE_ENV and CONFIGURE_ENV
+        // Pass Axiom store PATH, LDFLAGS, CPPFLAGS through MAKE_ENV and CONFIGURE_ENV
         // This is critical: the ports framework (bsd.port.mk) uses these variables
         // to set up the environment for configure and build phases, NOT the inherited PATH
+        // LDFLAGS and CPPFLAGS are needed for configure scripts to find libraries and headers
         if (build_env) |env| {
             make_env_arg = try std.fmt.allocPrint(
                 self.allocator,
-                "MAKE_ENV+=PATH={s} LD_LIBRARY_PATH={s}",
-                .{ env.path, env.ld_library_path },
+                "MAKE_ENV+=PATH={s} LD_LIBRARY_PATH={s} LDFLAGS=\"{s}\" CPPFLAGS=\"{s}\"",
+                .{ env.path, env.ld_library_path, env.ldflags, env.cppflags },
             );
             try args.append(make_env_arg.?);
 
             configure_env_arg = try std.fmt.allocPrint(
                 self.allocator,
-                "CONFIGURE_ENV+=PATH={s} LD_LIBRARY_PATH={s}",
-                .{ env.path, env.ld_library_path },
+                "CONFIGURE_ENV+=PATH={s} LD_LIBRARY_PATH={s} LDFLAGS=\"{s}\" CPPFLAGS=\"{s}\"",
+                .{ env.path, env.ld_library_path, env.ldflags, env.cppflags },
             );
             try args.append(configure_env_arg.?);
 
             std.debug.print("    [DEBUG] Passing to ports framework:\n", .{});
             std.debug.print("    [DEBUG]   MAKE_ENV+=PATH={s}\n", .{env.path});
+            std.debug.print("    [DEBUG]   MAKE_ENV+=LDFLAGS={s}\n", .{env.ldflags});
+            std.debug.print("    [DEBUG]   MAKE_ENV+=CPPFLAGS={s}\n", .{env.cppflags});
             std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PATH={s}\n", .{env.path});
+            std.debug.print("    [DEBUG]   CONFIGURE_ENV+=LDFLAGS={s}\n", .{env.ldflags});
+            std.debug.print("    [DEBUG]   CONFIGURE_ENV+=CPPFLAGS={s}\n", .{env.cppflags});
         }
 
         // Add DESTDIR if provided
