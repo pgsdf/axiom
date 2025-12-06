@@ -217,7 +217,7 @@ pub const PortsMigrator = struct {
         }
 
         if (missing_minimal.items.len > 0) {
-            std.debug.print("\n");
+            std.debug.print("\n", .{});
             std.debug.print("╔══════════════════════════════════════════════════════════════╗\n", .{});
             std.debug.print("║                    BOOTSTRAP WARNING                         ║\n", .{});
             std.debug.print("╠══════════════════════════════════════════════════════════════╣\n", .{});
