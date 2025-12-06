@@ -1337,6 +1337,13 @@ pub const PortsMigrator = struct {
         var jobs_arg: ?[]const u8 = null;
         defer if (jobs_arg) |j| self.allocator.free(j);
 
+        // These are passed as make variables so ports framework respects them
+        var make_env_arg: ?[]const u8 = null;
+        defer if (make_env_arg) |m| self.allocator.free(m);
+
+        var configure_env_arg: ?[]const u8 = null;
+        defer if (configure_env_arg) |c| self.allocator.free(c);
+
         try args.append("make");
         try args.append("-C");
         try args.append(port_path);
@@ -1352,6 +1359,29 @@ pub const PortsMigrator = struct {
 
         // Don't chroot during install (DESTDIR is empty staging dir without /bin/sh)
         try args.append("NO_INSTALL_CHROOT=yes");
+
+        // Pass Axiom store PATH through MAKE_ENV and CONFIGURE_ENV
+        // This is critical: the ports framework (bsd.port.mk) uses these variables
+        // to set up the environment for configure and build phases, NOT the inherited PATH
+        if (build_env) |env| {
+            make_env_arg = try std.fmt.allocPrint(
+                self.allocator,
+                "MAKE_ENV+=PATH={s} LD_LIBRARY_PATH={s}",
+                .{ env.path, env.ld_library_path },
+            );
+            try args.append(make_env_arg.?);
+
+            configure_env_arg = try std.fmt.allocPrint(
+                self.allocator,
+                "CONFIGURE_ENV+=PATH={s} LD_LIBRARY_PATH={s}",
+                .{ env.path, env.ld_library_path },
+            );
+            try args.append(configure_env_arg.?);
+
+            std.debug.print("    [DEBUG] Passing to ports framework:\n", .{});
+            std.debug.print("    [DEBUG]   MAKE_ENV+=PATH={s}\n", .{env.path});
+            std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PATH={s}\n", .{env.path});
+        }
 
         // Add DESTDIR if provided
         if (destdir) |dir| {
