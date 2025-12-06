@@ -841,10 +841,17 @@ pub const PortsMigrator = struct {
                     try self.allocator.dupe(u8, root);
                 defer self.allocator.free(source_base);
 
-                // Symlink each standard directory
-                const dirs_to_link = [_][]const u8{ "bin", "lib", "include", "share", "libexec" };
+                // Link each standard directory
+                // bin/ and libexec/ are COPIED (not symlinked) so that $0 in scripts
+                // points to the sysroot path, allowing wrapper scripts to find siblings
+                // lib/, include/, share/ are symlinked since they don't have the $0 issue
+                const dirs_to_copy = [_][]const u8{ "bin", "libexec" };
+                for (dirs_to_copy) |dir| {
+                    try self.symlinkOrCopyDirectoryContents(source_base, sysroot, dir, true);
+                }
+                const dirs_to_link = [_][]const u8{ "lib", "include", "share" };
                 for (dirs_to_link) |dir| {
-                    try self.symlinkDirectoryContents(source_base, sysroot, dir);
+                    try self.symlinkOrCopyDirectoryContents(source_base, sysroot, dir, false);
                 }
             }
         }
@@ -852,12 +859,18 @@ pub const PortsMigrator = struct {
         return sysroot;
     }
 
-    /// Recursively symlink contents of a directory into the sysroot
-    fn symlinkDirectoryContents(
+    /// Recursively link/copy contents of a directory into the sysroot
+    /// For bin/ directories, we COPY files instead of symlinking because:
+    /// - When kernel executes a symlinked script, it passes the RESOLVED path to the interpreter
+    /// - This makes $0 point to the original package directory, not the sysroot
+    /// - Wrapper scripts like autoconf-switch use $0 to find related binaries
+    /// - By copying, $0 becomes the sysroot path, so ls -d "$0"[0-9]* works correctly
+    fn symlinkOrCopyDirectoryContents(
         self: *PortsMigrator,
         source_base: []const u8,
         dest_base: []const u8,
         subdir: []const u8,
+        copy_mode: bool, // true for bin/ directories, false for others
     ) !void {
         const source_dir_path = try std.fs.path.join(self.allocator, &[_][]const u8{ source_base, subdir });
         defer self.allocator.free(source_dir_path);
@@ -883,20 +896,29 @@ pub const PortsMigrator = struct {
             defer self.allocator.free(dest_path);
 
             if (entry.kind == .directory) {
-                // Recursively handle subdirectories
+                // Recursively handle subdirectories (keep same copy_mode for nested bin/ dirs)
                 const sub_subdir = try std.fs.path.join(self.allocator, &[_][]const u8{ subdir, entry.name });
                 defer self.allocator.free(sub_subdir);
-                try self.symlinkDirectoryContents(source_base, dest_base, sub_subdir);
+                try self.symlinkOrCopyDirectoryContents(source_base, dest_base, sub_subdir, copy_mode);
             } else {
-                // Create symlink for files (skip if already exists)
+                // Skip if destination already exists
                 std.fs.cwd().access(dest_path, .{}) catch {
-                    // Doesn't exist, create symlink
-                    std.fs.cwd().symLink(source_path, dest_path, .{}) catch |err| {
-                        // Ignore errors (e.g., permission issues, already exists as file)
-                        if (self.options.verbose) {
-                            std.debug.print("    [SYSROOT] Warning: could not symlink {s}: {}\n", .{ entry.name, err });
-                        }
-                    };
+                    // Doesn't exist, create link or copy
+                    if (copy_mode) {
+                        // Copy file for bin/ directories (preserves executable permissions)
+                        std.fs.copyFileAbsolute(source_path, dest_path, .{}) catch |err| {
+                            if (self.options.verbose) {
+                                std.debug.print("    [SYSROOT] Warning: could not copy {s}: {}\n", .{ entry.name, err });
+                            }
+                        };
+                    } else {
+                        // Symlink for lib/, include/, share/, etc.
+                        std.fs.cwd().symLink(source_path, dest_path, .{}) catch |err| {
+                            if (self.options.verbose) {
+                                std.debug.print("    [SYSROOT] Warning: could not symlink {s}: {}\n", .{ entry.name, err });
+                            }
+                        };
+                    }
                 };
             }
         }
