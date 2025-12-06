@@ -329,7 +329,6 @@ pub const BootstrapManager = struct {
 
         // Find the latest version directory
         var version_str: []const u8 = "0.0.0";
-        var version_dir: ?std.fs.Dir = null;
 
         var base_dir = try std.fs.openDirAbsolute(pkg_base, .{ .iterate = true });
         defer base_dir.close();
@@ -343,50 +342,48 @@ pub const BootstrapManager = struct {
             }
         }
 
-        if (version_dir == null) {
-            // Use the first version found
-            const version_path = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ pkg_base, version_str });
-            defer self.allocator.free(version_path);
+        // Use the first version found
+        const version_path = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ pkg_base, version_str });
+        defer self.allocator.free(version_path);
 
-            // Find revision directory
-            var rev_dir = try std.fs.openDirAbsolute(version_path, .{ .iterate = true });
-            defer rev_dir.close();
+        // Find revision directory
+        var rev_dir = try std.fs.openDirAbsolute(version_path, .{ .iterate = true });
+        defer rev_dir.close();
 
-            var rev_iter = rev_dir.iterate();
-            while (try rev_iter.next()) |rev_entry| {
-                if (rev_entry.kind == .directory) {
-                    // Found revision, now find build-id
-                    const rev_path = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ version_path, rev_entry.name });
-                    defer self.allocator.free(rev_path);
+        var rev_iter = rev_dir.iterate();
+        while (try rev_iter.next()) |rev_entry| {
+            if (rev_entry.kind == .directory) {
+                // Found revision, now find build-id
+                const rev_path = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ version_path, rev_entry.name });
+                defer self.allocator.free(rev_path);
 
-                    var build_dir = try std.fs.openDirAbsolute(rev_path, .{ .iterate = true });
-                    defer build_dir.close();
+                var build_dir = try std.fs.openDirAbsolute(rev_path, .{ .iterate = true });
+                defer build_dir.close();
 
-                    var build_iter = build_dir.iterate();
-                    while (try build_iter.next()) |build_entry| {
-                        if (build_entry.kind == .directory) {
-                            // Found the package root
-                            const full_pkg_path = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ rev_path, build_entry.name });
-                            defer self.allocator.free(full_pkg_path);
+                var build_iter = build_dir.iterate();
+                while (try build_iter.next()) |build_entry| {
+                    if (build_entry.kind == .directory) {
+                        // Found the package root
+                        const full_pkg_path = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ rev_path, build_entry.name });
+                        defer self.allocator.free(full_pkg_path);
 
-                            // Create destination directory
-                            const dest_dir = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ staging_dir, pkg_name });
-                            defer self.allocator.free(dest_dir);
+                        // Create destination directory
+                        const dest_dir = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ staging_dir, pkg_name });
+                        defer self.allocator.free(dest_dir);
 
-                            // Copy the package
-                            try self.copyDirectory(full_pkg_path, dest_dir);
+                        // Copy the package
+                        try self.copyDirectory(full_pkg_path, dest_dir);
 
-                            return BootstrapPackage{
-                                .name = try self.allocator.dupe(u8, pkg_name),
-                                .version = version_str,
-                                .origin = null,
-                                .description = null,
-                                .provides = null,
-                            };
-                        }
+                        return BootstrapPackage{
+                            .name = try self.allocator.dupe(u8, pkg_name),
+                            .version = version_str,
+                            .origin = null,
+                            .description = null,
+                            .provides = null,
+                        };
                     }
-                    break;
                 }
+                break;
             }
         }
 
