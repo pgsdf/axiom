@@ -866,6 +866,10 @@ pub const PortsMigrator = struct {
 
             // Find package root in store
             if (self.findPackageRootInStore(pkg_name)) |root_path| {
+                if (self.options.verbose) {
+                    std.debug.print("    Found {s} in store: {s}\n", .{ pkg_name, root_path });
+                }
+
                 // Add bin/ to PATH
                 const bin_path = std.fs.path.join(self.allocator, &[_][]const u8{
                     root_path,
@@ -877,6 +881,9 @@ pub const PortsMigrator = struct {
 
                 // Verify bin directory exists before adding
                 if (std.fs.cwd().access(bin_path, .{})) |_| {
+                    if (self.options.verbose) {
+                        std.debug.print("      Adding to PATH: {s}\n", .{bin_path});
+                    }
                     try path_parts.append(bin_path);
                 } else |_| {
                     self.allocator.free(bin_path);
@@ -908,6 +915,9 @@ pub const PortsMigrator = struct {
                 };
 
                 if (std.fs.cwd().access(usr_local_bin, .{})) |_| {
+                    if (self.options.verbose) {
+                        std.debug.print("      Adding to PATH: {s}\n", .{usr_local_bin});
+                    }
                     try path_parts.append(usr_local_bin);
                 } else |_| {
                     self.allocator.free(usr_local_bin);
@@ -928,6 +938,10 @@ pub const PortsMigrator = struct {
                 }
 
                 self.allocator.free(root_path);
+            } else {
+                if (self.options.verbose) {
+                    std.debug.print("    Package {s} not found in store\n", .{pkg_name});
+                }
             }
         }
 
