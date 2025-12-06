@@ -752,21 +752,155 @@ pub const PortsMigrator = struct {
         success: bool,
     };
 
-    /// Build environment with PATH and LD_LIBRARY_PATH from Axiom store dependencies
+    /// Build environment with sysroot containing symlinked dependencies
+    /// The sysroot approach merges all dependency packages into a single directory tree,
+    /// allowing wrapper scripts (like autoconf-switch) to find related binaries.
     const BuildEnvironment = struct {
+        /// Path to the sysroot directory (e.g., /tmp/axiom-sysroot-XXXX/usr/local)
+        /// All dependency binaries, libraries, headers are symlinked here
+        sysroot: []const u8,
+        /// PATH with sysroot bin/ first, then system paths
         path: []const u8,
+        /// LD_LIBRARY_PATH with sysroot lib/ first
         ld_library_path: []const u8,
+        /// LDFLAGS pointing to sysroot lib/
         ldflags: []const u8,
+        /// CPPFLAGS pointing to sysroot include/
         cppflags: []const u8,
         allocator: std.mem.Allocator,
 
         pub fn deinit(self: *BuildEnvironment) void {
+            // Clean up the sysroot directory
+            if (self.sysroot.len > 0) {
+                // Get parent of sysroot (the temp directory)
+                if (std.fs.path.dirname(self.sysroot)) |sysroot_parent| {
+                    if (std.fs.path.dirname(sysroot_parent)) |temp_dir| {
+                        std.fs.cwd().deleteTree(temp_dir) catch {};
+                    }
+                }
+            }
+            self.allocator.free(self.sysroot);
             self.allocator.free(self.path);
             self.allocator.free(self.ld_library_path);
             self.allocator.free(self.ldflags);
             self.allocator.free(self.cppflags);
         }
     };
+
+    /// Create a sysroot directory with symlinks to all dependency package files
+    /// This merges all packages into a single directory tree, solving the problem where
+    /// wrapper scripts (like autoconf-switch) need to find related binaries in the same directory.
+    ///
+    /// Structure created:
+    ///   /tmp/axiom-sysroot-XXXX/usr/local/
+    ///     ├── bin/      (symlinks to all dependency bin files)
+    ///     ├── lib/      (symlinks to all dependency lib files)
+    ///     ├── include/  (symlinks to all dependency include files)
+    ///     ├── share/    (symlinks to all dependency share files)
+    ///     └── libexec/  (symlinks to all dependency libexec files)
+    fn createBuildSysroot(self: *PortsMigrator, package_roots: []const []const u8) ![]const u8 {
+        // Generate unique sysroot path
+        const timestamp = std.time.timestamp();
+        var random_bytes: [4]u8 = undefined;
+        std.crypto.random.bytes(&random_bytes);
+
+        const sysroot_base = try std.fmt.allocPrint(
+            self.allocator,
+            "/tmp/axiom-sysroot-{d}-{x:0>2}{x:0>2}{x:0>2}{x:0>2}",
+            .{ timestamp, random_bytes[0], random_bytes[1], random_bytes[2], random_bytes[3] },
+        );
+        defer self.allocator.free(sysroot_base);
+
+        // Create sysroot/usr/local structure (FreeBSD standard layout)
+        const sysroot = try std.fs.path.join(self.allocator, &[_][]const u8{
+            sysroot_base,
+            "usr/local",
+        });
+        errdefer self.allocator.free(sysroot);
+
+        // Create all required directories
+        const subdirs = [_][]const u8{ "bin", "lib", "include", "share", "libexec", "lib/perl5", "share/aclocal" };
+        for (subdirs) |subdir| {
+            const full_path = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, subdir });
+            defer self.allocator.free(full_path);
+            try std.fs.cwd().makePath(full_path);
+        }
+
+        std.debug.print("    [SYSROOT] Creating sysroot at: {s}\n", .{sysroot});
+
+        // Symlink files from each package root into the sysroot
+        for (package_roots) |root| {
+            std.debug.print("    [SYSROOT]   Linking from: {s}\n", .{root});
+
+            // Try both direct layout (bin/, lib/) and FreeBSD layout (usr/local/bin/, usr/local/lib/)
+            const layouts = [_][]const u8{ "", "usr/local" };
+            for (layouts) |prefix| {
+                const source_base = if (prefix.len > 0)
+                    try std.fs.path.join(self.allocator, &[_][]const u8{ root, prefix })
+                else
+                    try self.allocator.dupe(u8, root);
+                defer self.allocator.free(source_base);
+
+                // Symlink each standard directory
+                const dirs_to_link = [_][]const u8{ "bin", "lib", "include", "share", "libexec" };
+                for (dirs_to_link) |dir| {
+                    try self.symlinkDirectoryContents(source_base, sysroot, dir);
+                }
+            }
+        }
+
+        return sysroot;
+    }
+
+    /// Recursively symlink contents of a directory into the sysroot
+    fn symlinkDirectoryContents(
+        self: *PortsMigrator,
+        source_base: []const u8,
+        dest_base: []const u8,
+        subdir: []const u8,
+    ) !void {
+        const source_dir_path = try std.fs.path.join(self.allocator, &[_][]const u8{ source_base, subdir });
+        defer self.allocator.free(source_dir_path);
+
+        const dest_dir_path = try std.fs.path.join(self.allocator, &[_][]const u8{ dest_base, subdir });
+        defer self.allocator.free(dest_dir_path);
+
+        var source_dir = std.fs.cwd().openDir(source_dir_path, .{ .iterate = true }) catch {
+            // Source directory doesn't exist, skip
+            return;
+        };
+        defer source_dir.close();
+
+        // Ensure destination directory exists
+        std.fs.cwd().makePath(dest_dir_path) catch {};
+
+        var iter = source_dir.iterate();
+        while (try iter.next()) |entry| {
+            const source_path = try std.fs.path.join(self.allocator, &[_][]const u8{ source_dir_path, entry.name });
+            defer self.allocator.free(source_path);
+
+            const dest_path = try std.fs.path.join(self.allocator, &[_][]const u8{ dest_dir_path, entry.name });
+            defer self.allocator.free(dest_path);
+
+            if (entry.kind == .directory) {
+                // Recursively handle subdirectories
+                const sub_subdir = try std.fs.path.join(self.allocator, &[_][]const u8{ subdir, entry.name });
+                defer self.allocator.free(sub_subdir);
+                try self.symlinkDirectoryContents(source_base, dest_base, sub_subdir);
+            } else {
+                // Create symlink for files (skip if already exists)
+                std.fs.cwd().access(dest_path, .{}) catch {
+                    // Doesn't exist, create symlink
+                    std.fs.cwd().symLink(source_path, dest_path, .{}) catch |err| {
+                        // Ignore errors (e.g., permission issues, already exists as file)
+                        if (self.options.verbose) {
+                            std.debug.print("    [SYSROOT] Warning: could not symlink {s}: {}\n", .{ entry.name, err });
+                        }
+                    };
+                };
+            }
+        }
+    }
 
     /// Find ALL root paths for a package in the Axiom store by name
     /// Returns paths to all versions' root/ directories (important for packages like autoconf
@@ -935,42 +1069,25 @@ pub const PortsMigrator = struct {
         return root_path;
     }
 
-    /// Build environment variables (PATH, LD_LIBRARY_PATH) from dependencies in the Axiom store
-    /// This allows built dependencies to be found during subsequent builds
+    /// Build environment using sysroot approach
+    /// Creates a unified sysroot directory where all dependency packages are symlinked together.
+    /// This solves the autoconf-switch problem where wrapper scripts need to find related binaries
+    /// in the same directory (e.g., autoconf wrapper looking for autoconf2.72 via ls -d "$0"[0-9]*).
     fn getBuildEnvironment(self: *PortsMigrator, origin: []const u8) !BuildEnvironment {
-        var path_parts = std.ArrayList([]const u8).init(self.allocator);
+        // Collect all package roots from dependencies
+        var all_roots = std.ArrayList([]const u8).init(self.allocator);
         defer {
-            for (path_parts.items) |p| self.allocator.free(p);
-            path_parts.deinit();
-        }
-
-        var lib_parts = std.ArrayList([]const u8).init(self.allocator);
-        defer {
-            for (lib_parts.items) |p| self.allocator.free(p);
-            lib_parts.deinit();
-        }
-
-        // LDFLAGS: -L<lib_path> for each library directory
-        var ldflags_parts = std.ArrayList([]const u8).init(self.allocator);
-        defer {
-            for (ldflags_parts.items) |p| self.allocator.free(p);
-            ldflags_parts.deinit();
-        }
-
-        // CPPFLAGS: -I<include_path> for each include directory
-        var cppflags_parts = std.ArrayList([]const u8).init(self.allocator);
-        defer {
-            for (cppflags_parts.items) |p| self.allocator.free(p);
-            cppflags_parts.deinit();
+            for (all_roots.items) |r| self.allocator.free(r);
+            all_roots.deinit();
         }
 
         // Get ALL transitive dependencies for this port (not just direct ones)
         // This is critical for cases like automake -> autoconf -> autoconf-switch
-        // where autoconf-switch provides the 'autoconf' wrapper needed by automake
         var deps = self.resolveDependencyTree(origin) catch {
-            // If we can't get dependencies, just return system defaults
+            // If we can't get dependencies, just return system defaults with empty sysroot
             std.debug.print("    [DEBUG] Failed to get dependencies for {s}, using system defaults\n", .{origin});
             return BuildEnvironment{
+                .sysroot = try self.allocator.dupe(u8, ""),
                 .path = try self.allocator.dupe(u8, "/usr/local/bin:/usr/bin:/bin"),
                 .ld_library_path = try self.allocator.dupe(u8, "/usr/local/lib:/usr/lib:/lib"),
                 .ldflags = try self.allocator.dupe(u8, "-L/usr/local/lib"),
@@ -983,153 +1100,101 @@ pub const PortsMigrator = struct {
             deps.deinit();
         }
 
-        std.debug.print("    [DEBUG] Processing {d} transitive dependencies for PATH\n", .{deps.items.len});
+        std.debug.print("    [DEBUG] Processing {d} transitive dependencies for sysroot\n", .{deps.items.len});
 
-        // For each dependency, check if it exists in the Axiom store
+        // For each dependency, collect ALL package roots from the Axiom store
         for (deps.items) |dep_origin| {
-            // Skip the package itself (it's included in the tree)
+            // Skip the package itself
             if (std.mem.eql(u8, dep_origin, origin)) continue;
 
             // Map port origin to Axiom package name
-            // Handles: lang/perl5.42 → perl, devel/p5-Locale-gettext → Locale-gettext, etc.
             const pkg_name = self.mapPortName(dep_origin);
-
             std.debug.print("    [DEBUG] Looking for {s} (from {s}) in store\n", .{ pkg_name, dep_origin });
 
-            // Find ALL versions of package in store (important for autoconf/autoconf-switch case)
+            // Find ALL versions of package in store
             var roots = self.findAllPackageRootsInStore(pkg_name) catch continue;
-            defer {
-                for (roots.items) |r| self.allocator.free(r);
-                roots.deinit();
-            }
+            defer roots.deinit();
 
             if (roots.items.len == 0) {
                 std.debug.print("    [DEBUG] Package {s} NOT found in store\n", .{pkg_name});
-                if (self.options.verbose) {
-                    std.debug.print("    Package {s} not found in store\n", .{pkg_name});
-                }
                 continue;
             }
 
             std.debug.print("    [DEBUG] Found {d} version(s) of {s}\n", .{ roots.items.len, pkg_name });
 
-            // Add paths from ALL versions
-            for (roots.items) |root_path| {
-                std.debug.print("    [DEBUG]   Version at: {s}\n", .{root_path});
-
-                // Add bin/ to PATH
-                const bin_path = std.fs.path.join(self.allocator, &[_][]const u8{
-                    root_path,
-                    "bin",
-                }) catch continue;
-
-                // Verify bin directory exists before adding
-                if (std.fs.cwd().access(bin_path, .{})) |_| {
-                    std.debug.print("    [DEBUG]     Adding to PATH: {s}\n", .{bin_path});
-                    try path_parts.append(bin_path);
-                } else |_| {
-                    self.allocator.free(bin_path);
-                }
-
-                // Add lib/ to LD_LIBRARY_PATH and LDFLAGS
-                const lib_path = std.fs.path.join(self.allocator, &[_][]const u8{
-                    root_path,
-                    "lib",
-                }) catch continue;
-
-                if (std.fs.cwd().access(lib_path, .{})) |_| {
-                    try lib_parts.append(lib_path);
-                    // Also add -L flag for linker
-                    const ldflag = try std.fmt.allocPrint(self.allocator, "-L{s}", .{lib_path});
-                    try ldflags_parts.append(ldflag);
-                } else |_| {
-                    self.allocator.free(lib_path);
-                }
-
-                // Add include/ to CPPFLAGS
-                const include_path = std.fs.path.join(self.allocator, &[_][]const u8{
-                    root_path,
-                    "include",
-                }) catch continue;
-
-                if (std.fs.cwd().access(include_path, .{})) |_| {
-                    const cppflag = try std.fmt.allocPrint(self.allocator, "-I{s}", .{include_path});
-                    try cppflags_parts.append(cppflag);
-                    self.allocator.free(include_path);
-                } else |_| {
-                    self.allocator.free(include_path);
-                }
-
-                // Also check usr/local/bin and usr/local/lib (FreeBSD ports layout)
-                const usr_local_bin = std.fs.path.join(self.allocator, &[_][]const u8{
-                    root_path,
-                    "usr/local/bin",
-                }) catch continue;
-
-                if (std.fs.cwd().access(usr_local_bin, .{})) |_| {
-                    std.debug.print("    [DEBUG]     Adding to PATH: {s}\n", .{usr_local_bin});
-                    try path_parts.append(usr_local_bin);
-                } else |_| {
-                    self.allocator.free(usr_local_bin);
-                }
-
-                const usr_local_lib = std.fs.path.join(self.allocator, &[_][]const u8{
-                    root_path,
-                    "usr/local/lib",
-                }) catch continue;
-
-                if (std.fs.cwd().access(usr_local_lib, .{})) |_| {
-                    try lib_parts.append(usr_local_lib);
-                    // Also add -L flag for linker
-                    const ldflag = try std.fmt.allocPrint(self.allocator, "-L{s}", .{usr_local_lib});
-                    try ldflags_parts.append(ldflag);
-                } else |_| {
-                    self.allocator.free(usr_local_lib);
-                }
-
-                // Add usr/local/include to CPPFLAGS
-                const usr_local_include = std.fs.path.join(self.allocator, &[_][]const u8{
-                    root_path,
-                    "usr/local/include",
-                }) catch continue;
-
-                if (std.fs.cwd().access(usr_local_include, .{})) |_| {
-                    const cppflag = try std.fmt.allocPrint(self.allocator, "-I{s}", .{usr_local_include});
-                    try cppflags_parts.append(cppflag);
-                    self.allocator.free(usr_local_include);
-                } else |_| {
-                    self.allocator.free(usr_local_include);
-                }
+            // Add all roots (transfer ownership to all_roots)
+            for (roots.items) |root| {
+                // Dupe to transfer ownership since roots will be cleaned up
+                const root_copy = try self.allocator.dupe(u8, root);
+                try all_roots.append(root_copy);
             }
         }
 
-        // Add system paths at the end
-        try path_parts.append(try self.allocator.dupe(u8, "/usr/local/bin"));
-        try path_parts.append(try self.allocator.dupe(u8, "/usr/bin"));
-        try path_parts.append(try self.allocator.dupe(u8, "/bin"));
+        // If no dependencies found, return system defaults
+        if (all_roots.items.len == 0) {
+            std.debug.print("    [DEBUG] No dependencies found in store, using system defaults\n", .{});
+            return BuildEnvironment{
+                .sysroot = try self.allocator.dupe(u8, ""),
+                .path = try self.allocator.dupe(u8, "/usr/local/bin:/usr/bin:/bin"),
+                .ld_library_path = try self.allocator.dupe(u8, "/usr/local/lib:/usr/lib:/lib"),
+                .ldflags = try self.allocator.dupe(u8, "-L/usr/local/lib"),
+                .cppflags = try self.allocator.dupe(u8, "-I/usr/local/include"),
+                .allocator = self.allocator,
+            };
+        }
 
-        try lib_parts.append(try self.allocator.dupe(u8, "/usr/local/lib"));
-        try lib_parts.append(try self.allocator.dupe(u8, "/usr/lib"));
-        try lib_parts.append(try self.allocator.dupe(u8, "/lib"));
+        // Create sysroot with all package roots symlinked
+        const sysroot = try self.createBuildSysroot(all_roots.items);
+        errdefer self.allocator.free(sysroot);
 
-        // Add system paths to LDFLAGS and CPPFLAGS
-        try ldflags_parts.append(try self.allocator.dupe(u8, "-L/usr/local/lib"));
-        try cppflags_parts.append(try self.allocator.dupe(u8, "-I/usr/local/include"));
+        // Build paths using the sysroot
+        const sysroot_bin = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "bin" });
+        defer self.allocator.free(sysroot_bin);
 
-        // Join paths with ':' for PATH/LD_LIBRARY_PATH, ' ' for flags
-        const path_joined = try std.mem.join(self.allocator, ":", path_parts.items);
-        std.debug.print("    [DEBUG] Final PATH: {s}\n", .{path_joined});
-        const lib_joined = try std.mem.join(self.allocator, ":", lib_parts.items);
-        const ldflags_joined = try std.mem.join(self.allocator, " ", ldflags_parts.items);
-        std.debug.print("    [DEBUG] Final LDFLAGS: {s}\n", .{ldflags_joined});
-        const cppflags_joined = try std.mem.join(self.allocator, " ", cppflags_parts.items);
-        std.debug.print("    [DEBUG] Final CPPFLAGS: {s}\n", .{cppflags_joined});
+        const sysroot_lib = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "lib" });
+        defer self.allocator.free(sysroot_lib);
+
+        const sysroot_include = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "include" });
+        defer self.allocator.free(sysroot_include);
+
+        // PATH: sysroot/bin first, then system paths
+        const path = try std.fmt.allocPrint(
+            self.allocator,
+            "{s}:/usr/local/bin:/usr/bin:/bin",
+            .{sysroot_bin},
+        );
+
+        // LD_LIBRARY_PATH: sysroot/lib first, then system paths
+        const ld_library_path = try std.fmt.allocPrint(
+            self.allocator,
+            "{s}:/usr/local/lib:/usr/lib:/lib",
+            .{sysroot_lib},
+        );
+
+        // LDFLAGS: -L pointing to sysroot/lib and /usr/local/lib
+        const ldflags = try std.fmt.allocPrint(
+            self.allocator,
+            "-L{s} -L/usr/local/lib",
+            .{sysroot_lib},
+        );
+
+        // CPPFLAGS: -I pointing to sysroot/include and /usr/local/include
+        const cppflags = try std.fmt.allocPrint(
+            self.allocator,
+            "-I{s} -I/usr/local/include",
+            .{sysroot_include},
+        );
+
+        std.debug.print("    [DEBUG] Sysroot created: {s}\n", .{sysroot});
+        std.debug.print("    [DEBUG] Final PATH: {s}\n", .{path});
+        std.debug.print("    [DEBUG] Final LDFLAGS: {s}\n", .{ldflags});
 
         return BuildEnvironment{
-            .path = path_joined,
-            .ld_library_path = lib_joined,
-            .ldflags = ldflags_joined,
-            .cppflags = cppflags_joined,
+            .sysroot = sysroot,
+            .path = path,
+            .ld_library_path = ld_library_path,
+            .ldflags = ldflags,
+            .cppflags = cppflags,
             .allocator = self.allocator,
         };
     }
@@ -1424,35 +1489,41 @@ pub const PortsMigrator = struct {
         // Don't chroot during install (DESTDIR is empty staging dir without /bin/sh)
         try args.append("NO_INSTALL_CHROOT=yes");
 
-        // Pass Axiom store PATH, LDFLAGS, CPPFLAGS through MAKE_ENV and CONFIGURE_ENV
+        // Pass Axiom sysroot PATH and LOCALBASE through MAKE_ENV and CONFIGURE_ENV
         // This is critical: the ports framework (bsd.port.mk) uses these variables
-        // to set up the environment for configure and build phases, NOT the inherited PATH
+        // to set up the environment for configure and build phases.
+        //
+        // The sysroot approach merges all dependency packages into a single directory,
+        // allowing wrapper scripts (like autoconf-switch) to find related binaries.
         //
         // IMPORTANT: Only pass variables WITHOUT SPACES via MAKE_ENV/CONFIGURE_ENV.
         // Variables with spaces (like LDFLAGS with multiple -L flags) get shell-split
         // when the ports framework runs: env ${MAKE_ENV} ./configure
         // Instead, LDFLAGS/CPPFLAGS are set in the child process env_map below.
         if (build_env) |env| {
+            // Use sysroot as LOCALBASE if available, otherwise fall back to /usr/local
+            const localbase = if (env.sysroot.len > 0) env.sysroot else "/usr/local";
+
             // Only pass variables WITHOUT SPACES via MAKE_ENV/CONFIGURE_ENV
             // PATH and LOCALBASE are safe (no spaces in values)
             // LOCALBASE is critical for FreeBSD ports - tells them where to find libs/headers
             make_env_arg = try std.fmt.allocPrint(
                 self.allocator,
-                "MAKE_ENV+=PATH={s} LOCALBASE=/usr/local",
-                .{env.path},
+                "MAKE_ENV+=PATH={s} LOCALBASE={s}",
+                .{ env.path, localbase },
             );
             try args.append(make_env_arg.?);
 
             configure_env_arg = try std.fmt.allocPrint(
                 self.allocator,
-                "CONFIGURE_ENV+=PATH={s} LOCALBASE=/usr/local",
-                .{env.path},
+                "CONFIGURE_ENV+=PATH={s} LOCALBASE={s}",
+                .{ env.path, localbase },
             );
             try args.append(configure_env_arg.?);
 
             std.debug.print("    [DEBUG] Passing to ports framework:\n", .{});
-            std.debug.print("    [DEBUG]   MAKE_ENV+=PATH={s} LOCALBASE=/usr/local\n", .{env.path});
-            std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PATH={s} LOCALBASE=/usr/local\n", .{env.path});
+            std.debug.print("    [DEBUG]   MAKE_ENV+=PATH={s} LOCALBASE={s}\n", .{ env.path, localbase });
+            std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PATH={s} LOCALBASE={s}\n", .{ env.path, localbase });
             std.debug.print("    [DEBUG]   (LDFLAGS/CPPFLAGS set via process environment)\n", .{});
         }
 
@@ -1497,15 +1568,13 @@ pub const PortsMigrator = struct {
             if (std.posix.getenv("LANG")) |lang| {
                 try env_map.?.put("LANG", lang);
             }
-            // LOCALBASE is critical for FreeBSD ports - it's where ports look for dependencies
-            // Default to /usr/local if not set
-            if (std.posix.getenv("LOCALBASE")) |localbase| {
-                try env_map.?.put("LOCALBASE", localbase);
-            } else {
-                try env_map.?.put("LOCALBASE", "/usr/local");
-            }
 
-            // Set custom PATH with Axiom store bin directories first
+            // LOCALBASE is critical for FreeBSD ports - it's where ports look for dependencies
+            // Use sysroot if available (contains all symlinked dependencies), otherwise /usr/local
+            const localbase = if (env.sysroot.len > 0) env.sysroot else "/usr/local";
+            try env_map.?.put("LOCALBASE", localbase);
+
+            // Set custom PATH with sysroot bin directory first
             try env_map.?.put("PATH", env.path);
             try env_map.?.put("LD_LIBRARY_PATH", env.ld_library_path);
 
@@ -1540,6 +1609,7 @@ pub const PortsMigrator = struct {
 
             if (self.options.verbose) {
                 std.debug.print("  Build environment:\n", .{});
+                std.debug.print("    LOCALBASE={s}\n", .{localbase});
                 std.debug.print("    PATH={s}\n", .{env.path});
                 std.debug.print("    LD_LIBRARY_PATH={s}\n", .{env.ld_library_path});
             }
