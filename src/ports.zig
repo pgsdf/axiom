@@ -772,7 +772,10 @@ pub const PortsMigrator = struct {
         // We need to find any version of this package and return its root path
 
         // Use ZFS to get proper mountpoint if store is available
-        const store = self.options.store orelse return null;
+        const store = self.options.store orelse {
+            std.debug.print("      [DEBUG findPkg] store is null\n", .{});
+            return null;
+        };
 
         // Build ZFS dataset path for this package name
         const pkg_dataset = std.fmt.allocPrint(
@@ -782,14 +785,22 @@ pub const PortsMigrator = struct {
         ) catch return null;
         defer self.allocator.free(pkg_dataset);
 
+        std.debug.print("      [DEBUG findPkg] Looking up dataset: {s}\n", .{pkg_dataset});
+
         // Get the actual mountpoint from ZFS
-        const mountpoint = store.zfs_handle.getMountpoint(self.allocator, pkg_dataset) catch {
+        const mountpoint = store.zfs_handle.getMountpoint(self.allocator, pkg_dataset) catch |err| {
+            std.debug.print("      [DEBUG findPkg] getMountpoint failed: {}\n", .{err});
             return null;
         };
         defer self.allocator.free(mountpoint);
 
+        std.debug.print("      [DEBUG findPkg] Mountpoint: {s}\n", .{mountpoint});
+
         // Open the package name directory (at the mountpoint)
-        var pkg_dir = std.fs.cwd().openDir(mountpoint, .{ .iterate = true }) catch return null;
+        var pkg_dir = std.fs.cwd().openDir(mountpoint, .{ .iterate = true }) catch |err| {
+            std.debug.print("      [DEBUG findPkg] openDir failed: {}\n", .{err});
+            return null;
+        };
         defer pkg_dir.close();
 
         // Find first version directory
@@ -859,6 +870,7 @@ pub const PortsMigrator = struct {
         // Get dependencies for this port
         var deps = self.getPortDependencies(origin) catch {
             // If we can't get dependencies, just return system defaults
+            std.debug.print("    [DEBUG] Failed to get dependencies for {s}, using system defaults\n", .{origin});
             return BuildEnvironment{
                 .path = try self.allocator.dupe(u8, "/usr/local/bin:/usr/bin:/bin"),
                 .ld_library_path = try self.allocator.dupe(u8, "/usr/local/lib:/usr/lib:/lib"),
@@ -870,13 +882,18 @@ pub const PortsMigrator = struct {
             deps.deinit();
         }
 
+        std.debug.print("    [DEBUG] Processing {d} dependencies for PATH\n", .{deps.items.len});
+
         // For each dependency, check if it exists in the Axiom store
         for (deps.items) |dep_origin| {
             // Extract package name from origin (e.g., "devel/m4" -> "m4")
             const pkg_name = std.fs.path.basename(dep_origin);
 
+            std.debug.print("    [DEBUG] Looking for {s} (from {s}) in store\n", .{ pkg_name, dep_origin });
+
             // Find package root in store
             if (self.findPackageRootInStore(pkg_name)) |root_path| {
+                std.debug.print("    [DEBUG] Found {s} at: {s}\n", .{ pkg_name, root_path });
                 if (self.options.verbose) {
                     std.debug.print("    Found {s} in store: {s}\n", .{ pkg_name, root_path });
                 }
@@ -950,6 +967,7 @@ pub const PortsMigrator = struct {
 
                 self.allocator.free(root_path);
             } else {
+                std.debug.print("    [DEBUG] Package {s} NOT found in store\n", .{pkg_name});
                 if (self.options.verbose) {
                     std.debug.print("    Package {s} not found in store\n", .{pkg_name});
                 }
@@ -967,6 +985,7 @@ pub const PortsMigrator = struct {
 
         // Join paths with ':'
         const path_joined = try std.mem.join(self.allocator, ":", path_parts.items);
+        std.debug.print("    [DEBUG] Final PATH: {s}\n", .{path_joined});
         const lib_joined = try std.mem.join(self.allocator, ":", lib_parts.items);
 
         return BuildEnvironment{
