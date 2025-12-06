@@ -72,13 +72,15 @@ pub const BootstrapStatus = struct {
 };
 
 /// Required bootstrap packages for building ports
+/// Note: Package names here must match the names produced by mapPortName in ports.zig
+/// e.g., lang/perl5.42 → "perl", devel/gmake → "make"
 pub const REQUIRED_BOOTSTRAP_PACKAGES = [_][]const u8{
-    "gmake",
+    "make", // from devel/gmake via mapPortName (gmake installs as 'make')
     "m4",
     "gettext-runtime",
     "gettext-tools",
     "libtextstyle",
-    "perl5",
+    "perl", // from lang/perl5.42 via mapPortName
     "autoconf",
     "automake",
     "libtool",
@@ -87,7 +89,7 @@ pub const REQUIRED_BOOTSTRAP_PACKAGES = [_][]const u8{
 
 /// Minimal bootstrap packages (absolute minimum to get started)
 pub const MINIMAL_BOOTSTRAP_PACKAGES = [_][]const u8{
-    "gmake",
+    "make", // from devel/gmake
     "m4",
 };
 
