@@ -29,7 +29,7 @@ pub fn main() !void {
         std.debug.print("Error: Failed to initialize ZFS: {}\n", .{err});
         std.debug.print("Axiom requires ZFS and root privileges.\n", .{});
         std.debug.print("\nTroubleshooting:\n", .{});
-        std.debug.print("  1. Ensure ZFS is installed: pkg install openzfs\n", .{});
+        std.debug.print("  1. Ensure ZFS/OpenZFS is installed (from FreeBSD base or ports)\n", .{});
         std.debug.print("  2. Run with root: sudo axiom <command>\n", .{});
         std.debug.print("  3. Verify datasets exist: zfs list zroot/axiom\n", .{});
         std.process.exit(1);

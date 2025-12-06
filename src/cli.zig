@@ -19,6 +19,7 @@ const closure_pkg = @import("closure.zig");
 const launcher_pkg = @import("launcher.zig");
 const bundle_pkg = @import("bundle.zig");
 const ports_pkg = @import("ports.zig");
+const bootstrap_pkg = @import("bootstrap.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageStore = store.PackageStore;
@@ -43,6 +44,7 @@ const Launcher = launcher_pkg.Launcher;
 const BundleBuilder = bundle_pkg.BundleBuilder;
 const BundleFormat = bundle_pkg.BundleFormat;
 const PortsMigrator = ports_pkg.PortsMigrator;
+const BootstrapManager = bootstrap_pkg.BootstrapManager;
 
 /// CLI command enumeration
 pub const Command = enum {
@@ -142,6 +144,11 @@ pub const Command = enum {
 
     // ZFS path validation (Phase 26)
     zfs_validate,
+
+    // Bootstrap operations (pkg independence)
+    bootstrap_status,
+    bootstrap_import,
+    bootstrap_export,
 
     unknown,
 };
@@ -252,6 +259,12 @@ pub fn parseCommand(cmd: []const u8) Command {
     // ZFS path validation (Phase 26)
     if (std.mem.eql(u8, cmd, "zfs-validate")) return .zfs_validate;
     if (std.mem.eql(u8, cmd, "validate-path")) return .zfs_validate;
+
+    // Bootstrap commands (pkg independence)
+    if (std.mem.eql(u8, cmd, "bootstrap")) return .bootstrap_status;
+    if (std.mem.eql(u8, cmd, "bootstrap-status")) return .bootstrap_status;
+    if (std.mem.eql(u8, cmd, "bootstrap-import")) return .bootstrap_import;
+    if (std.mem.eql(u8, cmd, "bootstrap-export")) return .bootstrap_export;
 
     return .unknown;
 }
@@ -426,6 +439,11 @@ pub const CLI = struct {
             // ZFS path validation (Phase 26)
             .zfs_validate => try self.zfsValidate(args[1..]),
 
+            // Bootstrap commands (pkg independence)
+            .bootstrap_status => try self.bootstrapStatus(args[1..]),
+            .bootstrap_import => try self.bootstrapImport(args[1..]),
+            .bootstrap_export => try self.bootstrapExport(args[1..]),
+
             .unknown => {
                 std.debug.print("Unknown command: {s}\n", .{args[0]});
                 std.debug.print("Run 'axiom help' for usage information.\n", .{});
@@ -549,6 +567,16 @@ pub const CLI = struct {
             \\  ports-build <origin>       Build port with Axiom builder
             \\  ports-import <origin>      Full migration: gen + build + import
             \\  ports-scan <category>      Scan category for migratable ports
+            \\
+            \\Bootstrap (pkg independence):
+            \\  bootstrap                  Check bootstrap status
+            \\  bootstrap-import <tar>     Import bootstrap tarball
+            \\    --force                    Overwrite existing packages
+            \\    --dry-run                  Show what would be imported
+            \\  bootstrap-export <tar>     Export packages to bootstrap tarball
+            \\    --minimal                  Include only minimal packages
+            \\    --packages <list>          Comma-separated package list
+            \\    --compression <c>          zstd, gzip, xz, none (default: zstd)
             \\
             \\Kernel Compatibility:
             \\  kernel                      Check kernel-bound package compatibility
@@ -3296,6 +3324,9 @@ pub const CLI = struct {
             .keep_sandbox = keep_sandbox,
         });
 
+        // Check bootstrap status and warn if packages are missing
+        try migrator.checkBootstrapStatus();
+
         var results = migrator.migrateWithDependencies(port_origin) catch |err| {
             std.debug.print("Migration failed: {s}\n", .{@errorName(err)});
             return;
@@ -3733,5 +3764,176 @@ pub const CLI = struct {
             std.debug.print("\n⚠ Warning: Incompatible kernel modules may fail to load.\n", .{});
             std.debug.print("Consider rebuilding these packages for your current kernel.\n", .{});
         }
+    }
+
+    // ==================== Bootstrap Commands ====================
+
+    fn bootstrapStatus(self: *CLI, args: []const []const u8) !void {
+        _ = args;
+
+        std.debug.print("Bootstrap Status\n", .{});
+        std.debug.print("================\n\n", .{});
+
+        var bootstrap_mgr = BootstrapManager.init(
+            self.allocator,
+            self.zfs_handle,
+            self.store,
+            self.importer,
+        );
+
+        const status = try bootstrap_mgr.checkStatus();
+        defer self.allocator.free(status.installed_packages);
+        defer self.allocator.free(status.missing_packages);
+
+        if (status.is_bootstrapped) {
+            std.debug.print("Status: BOOTSTRAPPED ✓\n\n", .{});
+            std.debug.print("All required bootstrap packages are installed.\n", .{});
+            std.debug.print("You can build ports without needing pkg.\n", .{});
+        } else {
+            std.debug.print("Status: NOT BOOTSTRAPPED\n\n", .{});
+            std.debug.print("Missing packages ({d}):\n", .{status.missing_packages.len});
+            for (status.missing_packages) |pkg| {
+                std.debug.print("  - {s}\n", .{pkg});
+            }
+            std.debug.print("\nTo bootstrap, either:\n", .{});
+            std.debug.print("  1. Import a bootstrap tarball:\n", .{});
+            std.debug.print("     axiom bootstrap-import axiom-bootstrap-14.2-amd64.tar.zst\n", .{});
+            std.debug.print("\n  2. Build from ports (requires pkg for initial tools):\n", .{});
+            std.debug.print("     pkg install gmake m4\n", .{});
+            std.debug.print("     axiom ports-import devel/gmake devel/m4 ...\n", .{});
+        }
+
+        std.debug.print("\nInstalled bootstrap packages ({d}):\n", .{status.installed_packages.len});
+        for (status.installed_packages) |pkg| {
+            std.debug.print("  ✓ {s}\n", .{pkg});
+        }
+
+        std.debug.print("\nRequired packages for full bootstrap:\n", .{});
+        for (bootstrap_pkg.REQUIRED_BOOTSTRAP_PACKAGES) |pkg| {
+            const installed = for (status.installed_packages) |inst| {
+                if (std.mem.eql(u8, inst, pkg)) break true;
+            } else false;
+            if (installed) {
+                std.debug.print("  ✓ {s}\n", .{pkg});
+            } else {
+                std.debug.print("  ✗ {s}\n", .{pkg});
+            }
+        }
+    }
+
+    fn bootstrapImport(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom bootstrap-import <tarball> [options]\n", .{});
+            std.debug.print("\nImport a bootstrap tarball to enable building ports without pkg.\n", .{});
+            std.debug.print("\nOptions:\n", .{});
+            std.debug.print("  --force      Overwrite existing packages\n", .{});
+            std.debug.print("  --dry-run    Show what would be imported without doing it\n", .{});
+            std.debug.print("  --verbose    Show detailed output\n", .{});
+            std.debug.print("\nExamples:\n", .{});
+            std.debug.print("  axiom bootstrap-import axiom-bootstrap-14.2-amd64.tar.zst\n", .{});
+            std.debug.print("  axiom bootstrap-import bootstrap.tar.gz --force\n", .{});
+            std.debug.print("\nBootstrap tarballs can be downloaded from:\n", .{});
+            std.debug.print("  https://axiom.pgsd.org/bootstrap/\n", .{});
+            return;
+        }
+
+        const tarball_path = args[0];
+
+        // Parse options
+        var options = bootstrap_pkg.ImportOptions{};
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--force")) {
+                options.force = true;
+            } else if (std.mem.eql(u8, args[i], "--dry-run")) {
+                options.dry_run = true;
+            } else if (std.mem.eql(u8, args[i], "--verbose")) {
+                options.verbose = true;
+            }
+        }
+
+        var bootstrap_mgr = BootstrapManager.init(
+            self.allocator,
+            self.zfs_handle,
+            self.store,
+            self.importer,
+        );
+
+        _ = try bootstrap_mgr.importBootstrap(tarball_path, options);
+
+        std.debug.print("\nRun 'axiom bootstrap' to check bootstrap status.\n", .{});
+    }
+
+    fn bootstrapExport(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom bootstrap-export <output.tar.zst> [options]\n", .{});
+            std.debug.print("\nCreate a bootstrap tarball from installed Axiom packages.\n", .{});
+            std.debug.print("\nOptions:\n", .{});
+            std.debug.print("  --minimal           Include only minimal packages (gmake, m4)\n", .{});
+            std.debug.print("  --packages <list>   Comma-separated list of packages to include\n", .{});
+            std.debug.print("  --os-version <ver>  FreeBSD version (default: auto-detect)\n", .{});
+            std.debug.print("  --arch <arch>       Architecture (default: auto-detect)\n", .{});
+            std.debug.print("  --description <d>   Description for the tarball\n", .{});
+            std.debug.print("  --compression <c>   Compression: zstd, gzip, xz, none (default: zstd)\n", .{});
+            std.debug.print("\nExamples:\n", .{});
+            std.debug.print("  axiom bootstrap-export axiom-bootstrap-14.2-amd64.tar.zst\n", .{});
+            std.debug.print("  axiom bootstrap-export minimal.tar.gz --minimal --compression gzip\n", .{});
+            std.debug.print("  axiom bootstrap-export custom.tar.zst --packages gmake,m4,perl5\n", .{});
+            return;
+        }
+
+        const output_path = args[0];
+
+        // Parse options
+        var options = bootstrap_pkg.ExportOptions{};
+        var custom_packages = std.ArrayList([]const u8).init(self.allocator);
+        defer custom_packages.deinit();
+
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--minimal")) {
+                options.minimal = true;
+            } else if (std.mem.eql(u8, args[i], "--packages") and i + 1 < args.len) {
+                i += 1;
+                // Parse comma-separated package list
+                var pkg_iter = std.mem.splitScalar(u8, args[i], ',');
+                while (pkg_iter.next()) |pkg| {
+                    try custom_packages.append(pkg);
+                }
+            } else if (std.mem.eql(u8, args[i], "--os-version") and i + 1 < args.len) {
+                i += 1;
+                options.os_version = args[i];
+            } else if (std.mem.eql(u8, args[i], "--arch") and i + 1 < args.len) {
+                i += 1;
+                options.arch = args[i];
+            } else if (std.mem.eql(u8, args[i], "--description") and i + 1 < args.len) {
+                i += 1;
+                options.description = args[i];
+            } else if (std.mem.eql(u8, args[i], "--compression") and i + 1 < args.len) {
+                i += 1;
+                if (std.mem.eql(u8, args[i], "zstd")) {
+                    options.compression = .zstd;
+                } else if (std.mem.eql(u8, args[i], "gzip")) {
+                    options.compression = .gzip;
+                } else if (std.mem.eql(u8, args[i], "xz")) {
+                    options.compression = .xz;
+                } else if (std.mem.eql(u8, args[i], "none")) {
+                    options.compression = .none;
+                }
+            }
+        }
+
+        if (custom_packages.items.len > 0) {
+            options.packages = custom_packages.items;
+        }
+
+        var bootstrap_mgr = BootstrapManager.init(
+            self.allocator,
+            self.zfs_handle,
+            self.store,
+            self.importer,
+        );
+
+        _ = try bootstrap_mgr.exportBootstrap(output_path, options);
     }
 };
