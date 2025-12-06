@@ -632,8 +632,9 @@ pub const PortsMigrator = struct {
                 const should_skip = if (existing_origin) |existing|
                     std.mem.eql(u8, existing, origin)
                 else
-                    // No origin recorded - legacy package, be conservative and skip
-                    true;
+                    // No origin recorded - legacy package built before origin tracking
+                    // Proceed with build to replace it with properly tracked package
+                    false;
 
                 if (should_skip) {
                     std.debug.print("  ✓ Package '{s}' already in store (same origin: {s}), skipping\n", .{ pkg_name, origin });
@@ -644,11 +645,17 @@ pub const PortsMigrator = struct {
                         .{pkg_name},
                     );
                     return result;
-                } else {
-                    // Different origin - warn and proceed (will overwrite/conflict)
+                } else if (existing_origin) |existing| {
+                    // Different origin - warn and proceed
                     std.debug.print("  ⚠ Package '{s}' exists from different origin ({s}), building from {s}\n", .{
                         pkg_name,
-                        existing_origin.?,
+                        existing,
+                        origin,
+                    });
+                } else {
+                    // Legacy package with no origin - will be replaced
+                    std.debug.print("  ⚠ Package '{s}' exists (no origin recorded), rebuilding from {s}\n", .{
+                        pkg_name,
                         origin,
                     });
                 }
