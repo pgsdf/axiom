@@ -203,17 +203,19 @@ pub const BootstrapManager = struct {
             defer self.allocator.free(pkg_dir);
 
             // Import using existing importer
-            const import_result = self.importer.importFromDirectory(pkg_dir, .{
-                .name = pkg.name,
-                .version = Version.parse(pkg.version) catch null,
-                .description = pkg.description,
-                .dry_run = options.dry_run,
-            }) catch |err| {
+            _ = self.importer.import(
+                import_pkg.ImportSource{ .directory = pkg_dir },
+                .{
+                    .name = pkg.name,
+                    .version = Version.parse(pkg.version) catch null,
+                    .description = pkg.description,
+                    .dry_run = options.dry_run,
+                },
+            ) catch |err| {
                 std.debug.print("    Failed: {}\n", .{err});
                 failed += 1;
                 continue;
             };
-            _ = import_result;
 
             std.debug.print("    Imported successfully\n", .{});
             imported += 1;
