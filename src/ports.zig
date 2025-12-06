@@ -1433,24 +1433,26 @@ pub const PortsMigrator = struct {
         // when the ports framework runs: env ${MAKE_ENV} ./configure
         // Instead, LDFLAGS/CPPFLAGS are set in the child process env_map below.
         if (build_env) |env| {
-            // Only PATH goes through MAKE_ENV/CONFIGURE_ENV (no spaces in value)
+            // Only pass variables WITHOUT SPACES via MAKE_ENV/CONFIGURE_ENV
+            // PATH and LOCALBASE are safe (no spaces in values)
+            // LOCALBASE is critical for FreeBSD ports - tells them where to find libs/headers
             make_env_arg = try std.fmt.allocPrint(
                 self.allocator,
-                "MAKE_ENV+=PATH={s}",
+                "MAKE_ENV+=PATH={s} LOCALBASE=/usr/local",
                 .{env.path},
             );
             try args.append(make_env_arg.?);
 
             configure_env_arg = try std.fmt.allocPrint(
                 self.allocator,
-                "CONFIGURE_ENV+=PATH={s}",
+                "CONFIGURE_ENV+=PATH={s} LOCALBASE=/usr/local",
                 .{env.path},
             );
             try args.append(configure_env_arg.?);
 
             std.debug.print("    [DEBUG] Passing to ports framework:\n", .{});
-            std.debug.print("    [DEBUG]   MAKE_ENV+=PATH={s}\n", .{env.path});
-            std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PATH={s}\n", .{env.path});
+            std.debug.print("    [DEBUG]   MAKE_ENV+=PATH={s} LOCALBASE=/usr/local\n", .{env.path});
+            std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PATH={s} LOCALBASE=/usr/local\n", .{env.path});
             std.debug.print("    [DEBUG]   (LDFLAGS/CPPFLAGS set via process environment)\n", .{});
         }
 
