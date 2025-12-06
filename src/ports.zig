@@ -675,7 +675,7 @@ pub const PortsMigrator = struct {
         }
 
         // Generate YAML files
-        const manifest_yaml = try self.generateManifestYaml(&metadata, origin);
+        const manifest_yaml = try self.generateManifestYaml(&metadata);
         defer self.allocator.free(manifest_yaml);
 
         const deps_yaml = try self.generateDepsYaml(&metadata);
@@ -2020,7 +2020,7 @@ pub const PortsMigrator = struct {
         return 1502000; // FreeBSD 15.0-CURRENT
     }
 
-    fn generateManifestYaml(self: *PortsMigrator, meta: *const PortMetadata, origin: []const u8) ![]const u8 {
+    fn generateManifestYaml(self: *PortsMigrator, meta: *const PortMetadata) ![]const u8 {
         var output = std.ArrayList(u8).init(self.allocator);
         const writer = output.writer();
 
@@ -2057,11 +2057,6 @@ pub const PortsMigrator = struct {
             try writer.writeAll(meta.maintainer);
             try writer.writeAll("\n");
         }
-
-        // Origin (port path) - used to distinguish packages with same name from different ports
-        try writer.writeAll("origin: ");
-        try writer.writeAll(origin);
-        try writer.writeAll("\n");
 
         // Provides
         try writer.writeAll("\nprovides:\n");
