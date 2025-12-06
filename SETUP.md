@@ -178,35 +178,66 @@ axiom ports-import devel/m4 --no-deps
 3. **Builds each port** - Uses `make build` and `make stage` with NO_DEPENDS=yes
 4. **Imports to store** - Copies staged files into Axiom's ZFS package store
 
-### Bootstrap Limitation
+### Bootstrapping (pkg-independent)
 
-**Important**: During initial bootstrap, `ports-import` cannot provide build-time dependencies (headers, libraries, Perl modules) to subsequent builds. This is because packages are imported to the Axiom store but not installed to system paths where compilers and interpreters look.
+Axiom can be fully independent of FreeBSD's pkg package manager. The bootstrap feature provides everything needed to build ports.
 
-**Workaround for initial bootstrap:**
+**Option 1: Import a bootstrap tarball (recommended)**
 
 ```bash
-# Install common build-time dependencies via pkg first
-pkg install gmake              # GNU make (required by many ports)
-pkg install gettext-tools      # msgfmt and gettext utilities
-pkg install p5-Locale-gettext  # Perl Locale::gettext module
-pkg install p5-Locale-libintl  # Perl Locale::Messages module
+# Download a pre-built bootstrap tarball
+curl -O https://axiom.pgsd.org/bootstrap/axiom-bootstrap-14.2-amd64.tar.zst
 
-# Then use ports-import for the final packages
+# Import the bootstrap packages
+axiom bootstrap-import axiom-bootstrap-14.2-amd64.tar.zst
+
+# Check bootstrap status
+axiom bootstrap
+
+# Now build ports without pkg
 axiom ports-import shells/bash
 ```
 
-**Common bootstrap packages by category:**
+**Option 2: Build bootstrap packages from ports**
+
+If you have a working FreeBSD system with build tools available (via ports or base):
+
+```bash
+# Build the minimal bootstrap packages first
+axiom ports-import devel/gmake
+axiom ports-import devel/m4
+
+# Then build the full bootstrap set
+axiom ports-import devel/autoconf
+axiom ports-import devel/automake
+axiom ports-import lang/perl5
+axiom ports-import devel/gettext-tools
+
+# Export your bootstrap for other systems
+axiom bootstrap-export axiom-bootstrap-14.2-amd64.tar.zst
+```
+
+**Bootstrap commands:**
+
+| Command | Description |
+|---------|-------------|
+| `axiom bootstrap` | Check bootstrap status |
+| `axiom bootstrap-import <tarball>` | Import bootstrap packages |
+| `axiom bootstrap-export <tarball>` | Create bootstrap tarball |
+
+**Required bootstrap packages:**
 
 | Package | Provides | Needed by |
 |---------|----------|-----------|
 | `gmake` | GNU make | Most GNU software |
+| `m4` | Macro processor | autoconf, bison |
+| `autoconf` | Configure scripts | GNU software |
+| `automake` | Makefile generation | GNU software |
+| `perl5` | Perl interpreter | build scripts |
 | `gettext-tools` | msgfmt, xgettext | i18n-enabled software |
-| `p5-Locale-gettext` | Perl Locale::gettext | help2man, texinfo |
-| `p5-Locale-libintl` | Perl Locale::Messages | texinfo |
-| `libtextstyle` | Text styling library | gettext-tools |
-| `libiconv` | Character conversion | Many ports |
+| `pkgconf` | pkg-config | library detection |
 
-This hybrid approach uses `pkg` to provide build-time headers/libraries while Axiom manages the final installed packages. Once bootstrapped, you can build Axiom packages that don't require these dependencies.
+Once bootstrapped, Axiom is completely self-hosting and doesn't require pkg.
 
 ### Example: Building bash
 

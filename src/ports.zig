@@ -14,6 +14,7 @@ const store_pkg = @import("store.zig");
 const build_pkg = @import("build.zig");
 const import_pkg = @import("import.zig");
 const zfs = @import("zfs.zig");
+const bootstrap_pkg = @import("bootstrap.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageStore = store_pkg.PackageStore;
@@ -196,6 +197,47 @@ pub const PortsMigrator = struct {
             .allocator = allocator,
             .options = options,
         };
+    }
+
+    /// Check if minimal bootstrap packages are available and warn if not
+    pub fn checkBootstrapStatus(self: *PortsMigrator) !void {
+        var missing_minimal = std.ArrayList([]const u8).init(self.allocator);
+        defer missing_minimal.deinit();
+
+        // Check for minimal bootstrap packages
+        for (bootstrap_pkg.MINIMAL_BOOTSTRAP_PACKAGES) |pkg_name| {
+            const pkg_path = try std.fmt.allocPrint(self.allocator, "/axiom/store/pkg/{s}", .{pkg_name});
+            defer self.allocator.free(pkg_path);
+
+            const dir = std.fs.openDirAbsolute(pkg_path, .{}) catch {
+                try missing_minimal.append(pkg_name);
+                continue;
+            };
+            dir.close();
+        }
+
+        if (missing_minimal.items.len > 0) {
+            std.debug.print("\n");
+            std.debug.print("╔══════════════════════════════════════════════════════════════╗\n", .{});
+            std.debug.print("║                    BOOTSTRAP WARNING                         ║\n", .{});
+            std.debug.print("╠══════════════════════════════════════════════════════════════╣\n", .{});
+            std.debug.print("║ Some bootstrap packages are missing from the Axiom store.    ║\n", .{});
+            std.debug.print("║ Building may fail if these tools are not available.          ║\n", .{});
+            std.debug.print("║                                                              ║\n", .{});
+            std.debug.print("║ Missing packages:                                            ║\n", .{});
+            for (missing_minimal.items) |pkg| {
+                std.debug.print("║   - {s:<54} ║\n", .{pkg});
+            }
+            std.debug.print("║                                                              ║\n", .{});
+            std.debug.print("║ To bootstrap without pkg:                                    ║\n", .{});
+            std.debug.print("║   axiom bootstrap-import axiom-bootstrap-14.2-amd64.tar.zst  ║\n", .{});
+            std.debug.print("║                                                              ║\n", .{});
+            std.debug.print("║ Or build the minimal packages first:                         ║\n", .{});
+            std.debug.print("║   axiom ports-import devel/gmake                             ║\n", .{});
+            std.debug.print("║   axiom ports-import devel/m4                                ║\n", .{});
+            std.debug.print("╚══════════════════════════════════════════════════════════════╝\n", .{});
+            std.debug.print("\n", .{});
+        }
     }
 
     /// Extract metadata from a port
