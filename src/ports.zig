@@ -620,38 +620,19 @@ pub const PortsMigrator = struct {
         };
         defer metadata.deinit();
 
-        // Check if package already exists in store (skip only if same origin)
+        // Check if package already exists in store (skip if so)
         if (self.options.store) |store| {
             const pkg_name = self.mapPortName(metadata.name);
             const exists = store.packageNameExists(pkg_name) catch false;
             if (exists) {
-                // Check if the existing package has the same origin
-                const existing_origin = store.getPackageOriginByName(pkg_name) catch null;
-                defer if (existing_origin) |o| self.allocator.free(o);
-
-                const should_skip = if (existing_origin) |existing|
-                    std.mem.eql(u8, existing, origin)
-                else
-                    // No origin recorded - legacy package, be conservative and skip
-                    true;
-
-                if (should_skip) {
-                    std.debug.print("  ✓ Package '{s}' already in store (same origin: {s}), skipping\n", .{ pkg_name, origin });
-                    result.status = .skipped;
-                    result.axiom_package = try std.fmt.allocPrint(
-                        self.allocator,
-                        "{s} (existing)",
-                        .{pkg_name},
-                    );
-                    return result;
-                } else {
-                    // Different origin - warn and proceed (will overwrite/conflict)
-                    std.debug.print("  ⚠ Package '{s}' exists from different origin ({s}), building from {s}\n", .{
-                        pkg_name,
-                        existing_origin.?,
-                        origin,
-                    });
-                }
+                std.debug.print("  ✓ Package '{s}' already in store, skipping\n", .{pkg_name});
+                result.status = .skipped;
+                result.axiom_package = try std.fmt.allocPrint(
+                    self.allocator,
+                    "{s} (existing)",
+                    .{pkg_name},
+                );
+                return result;
             }
         }
 
@@ -668,7 +649,7 @@ pub const PortsMigrator = struct {
         }
 
         // Generate YAML files
-        const manifest_yaml = try self.generateManifestYaml(&metadata, origin);
+        const manifest_yaml = try self.generateManifestYaml(&metadata);
         defer self.allocator.free(manifest_yaml);
 
         const deps_yaml = try self.generateDepsYaml(&metadata);
@@ -2013,7 +1994,7 @@ pub const PortsMigrator = struct {
         return 1502000; // FreeBSD 15.0-CURRENT
     }
 
-    fn generateManifestYaml(self: *PortsMigrator, meta: *const PortMetadata, origin: []const u8) ![]const u8 {
+    fn generateManifestYaml(self: *PortsMigrator, meta: *const PortMetadata) ![]const u8 {
         var output = std.ArrayList(u8).init(self.allocator);
         const writer = output.writer();
 
@@ -2050,11 +2031,6 @@ pub const PortsMigrator = struct {
             try writer.writeAll(meta.maintainer);
             try writer.writeAll("\n");
         }
-
-        // Origin (port path) - used to distinguish packages with same name from different ports
-        try writer.writeAll("origin: ");
-        try writer.writeAll(origin);
-        try writer.writeAll("\n");
 
         // Provides
         try writer.writeAll("\nprovides:\n");
