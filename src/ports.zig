@@ -900,16 +900,30 @@ pub const PortsMigrator = struct {
                 const sub_subdir = try std.fs.path.join(self.allocator, &[_][]const u8{ subdir, entry.name });
                 defer self.allocator.free(sub_subdir);
                 try self.symlinkOrCopyDirectoryContents(source_base, dest_base, sub_subdir, copy_mode);
+            } else if (entry.kind == .sym_link) {
+                // Handle symlinks: read the link target and create a new symlink
+                // This preserves symlinks as symlinks rather than copying their content
+                std.fs.cwd().access(dest_path, .{}) catch {
+                    // Read the symlink target
+                    var target_buf: [std.fs.max_path_bytes]u8 = undefined;
+                    const target = std.fs.cwd().readLink(source_path, &target_buf) catch |err| {
+                        std.debug.print("    [SYSROOT] Warning: could not read symlink {s}: {}\n", .{ entry.name, err });
+                        continue;
+                    };
+
+                    // Create symlink with same target
+                    std.fs.cwd().symLink(target, dest_path, .{}) catch |err| {
+                        std.debug.print("    [SYSROOT] Warning: could not create symlink {s}: {}\n", .{ entry.name, err });
+                    };
+                };
             } else {
-                // Skip if destination already exists
+                // Regular files
                 std.fs.cwd().access(dest_path, .{}) catch {
                     // Doesn't exist, create link or copy
                     if (copy_mode) {
                         // Copy file for bin/ directories (preserves executable permissions)
                         std.fs.copyFileAbsolute(source_path, dest_path, .{}) catch |err| {
-                            if (self.options.verbose) {
-                                std.debug.print("    [SYSROOT] Warning: could not copy {s}: {}\n", .{ entry.name, err });
-                            }
+                            std.debug.print("    [SYSROOT] Warning: could not copy {s}: {}\n", .{ entry.name, err });
                         };
                     } else {
                         // Symlink for lib/, include/, share/, etc.
