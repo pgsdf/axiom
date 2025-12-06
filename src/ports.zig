@@ -767,18 +767,29 @@ pub const PortsMigrator = struct {
     /// Find the root path for a package in the Axiom store by name
     /// Returns the path to the package's root/ directory, or null if not found
     fn findPackageRootInStore(self: *PortsMigrator, pkg_name: []const u8) ?[]const u8 {
-        // Axiom store structure: /axiom/store/pkg/<name>/<version>/<revision>/<build-id>/root/
+        // Axiom store structure: ZFS dataset at {store_root}/{name}/{version}/{revision}/{build-id}
+        // with files in the root/ subdirectory of the mountpoint
         // We need to find any version of this package and return its root path
-        const store_mountpoint = "/axiom/store/pkg";
 
-        const pkg_dir_path = std.fs.path.join(self.allocator, &[_][]const u8{
-            store_mountpoint,
-            pkg_name,
-        }) catch return null;
-        defer self.allocator.free(pkg_dir_path);
+        // Use ZFS to get proper mountpoint if store is available
+        const store = self.options.store orelse return null;
 
-        // Open the package name directory
-        var pkg_dir = std.fs.cwd().openDir(pkg_dir_path, .{ .iterate = true }) catch return null;
+        // Build ZFS dataset path for this package name
+        const pkg_dataset = std.fmt.allocPrint(
+            self.allocator,
+            "{s}/{s}",
+            .{ store.paths.store_root, pkg_name },
+        ) catch return null;
+        defer self.allocator.free(pkg_dataset);
+
+        // Get the actual mountpoint from ZFS
+        const mountpoint = store.zfs_handle.getMountpoint(self.allocator, pkg_dataset) catch {
+            return null;
+        };
+        defer self.allocator.free(mountpoint);
+
+        // Open the package name directory (at the mountpoint)
+        var pkg_dir = std.fs.cwd().openDir(mountpoint, .{ .iterate = true }) catch return null;
         defer pkg_dir.close();
 
         // Find first version directory
@@ -787,7 +798,7 @@ pub const PortsMigrator = struct {
         if (version_entry.kind != .directory) return null;
 
         const version_path = std.fs.path.join(self.allocator, &[_][]const u8{
-            pkg_dir_path,
+            mountpoint,
             version_entry.name,
         }) catch return null;
         defer self.allocator.free(version_path);
