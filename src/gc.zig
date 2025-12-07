@@ -9,6 +9,15 @@ const PackageId = types.PackageId;
 const PackageStore = store.PackageStore;
 const ProfileManager = profile.ProfileManager;
 
+// =============================================================================
+// Configuration Constants
+// =============================================================================
+
+/// Default grace period for garbage collection in seconds (24 hours)
+/// Packages newer than this will not be collected, even if unreferenced.
+/// This prevents accidental collection of recently imported packages.
+pub const DEFAULT_GC_GRACE_PERIOD_SECONDS: i64 = 24 * 60 * 60; // 24 hours
+
 /// Garbage collection errors
 pub const GCError = error{
     ScanFailed,
@@ -42,7 +51,7 @@ pub const GarbageCollector = struct {
     profile_mgr: *ProfileManager,
     
     /// Grace period in seconds - don't collect packages newer than this
-    grace_period: i64 = 86400, // 24 hours default
+    grace_period: i64 = DEFAULT_GC_GRACE_PERIOD_SECONDS,
 
     /// Initialize garbage collector
     pub fn init(

@@ -229,12 +229,15 @@ pub const RealizationEngine = struct {
     }
 
     /// Clone a package into the environment (legacy - no conflict detection)
+    /// Uses native file operations instead of shell commands for security
     fn clonePackage(
         self: *RealizationEngine,
         env_mountpoint: []const u8,
         pkg_dataset: []const u8,
         pkg_id: PackageId,
     ) !void {
+        _ = pkg_id; // Reserved for future metadata use
+
         // Get package mountpoint
         const pkg_mountpoint = try self.zfs_handle.getMountpoint(
             self.allocator,
@@ -249,29 +252,8 @@ pub const RealizationEngine = struct {
         );
         defer self.allocator.free(pkg_root);
 
-        // Copy files from package to environment
-        // Using rsync-like behavior: merge into environment
-        const cmd = try std.fmt.allocPrint(
-            self.allocator,
-            "cp -R -n {s}/. {s}/",
-            .{ pkg_root, env_mountpoint },
-        );
-        defer self.allocator.free(cmd);
-
-        var child = std.process.Child.init(&[_][]const u8{ "sh", "-c", cmd }, self.allocator);
-        child.stdout_behavior = .Ignore;
-        child.stderr_behavior = .Pipe;
-
-        try child.spawn();
-        const stderr = try child.stderr.?.readToEndAlloc(self.allocator, 1024 * 1024);
-        defer self.allocator.free(stderr);
-
-        const term = try child.wait();
-        if (term.Exited != 0 and stderr.len > 0) {
-            std.debug.print("    Warning: {s}\n", .{stderr});
-        }
-
-        _ = pkg_id; // May be used for metadata in future
+        // Use native file operations instead of shell execution
+        try copyDirRecursiveSimple(self.allocator, pkg_root, env_mountpoint);
     }
 
     /// Clone a package into the environment with conflict detection
@@ -597,6 +579,69 @@ fn copyDirRecursive(
     }
 
     return conflicts_found;
+}
+
+/// Copy a directory recursively without conflict tracking (simple merge)
+/// This is a simpler version of copyDirRecursive for legacy use
+fn copyDirRecursiveSimple(
+    allocator: std.mem.Allocator,
+    src_dir: []const u8,
+    dst_dir: []const u8,
+) !void {
+    // Open source directory
+    var dir = std.fs.cwd().openDir(src_dir, .{ .iterate = true }) catch |err| {
+        if (err == error.FileNotFound or err == error.NotDir) return;
+        return err;
+    };
+    defer dir.close();
+
+    // Create destination directory
+    std.fs.cwd().makePath(dst_dir) catch |err| {
+        if (err != error.PathAlreadyExists) return err;
+    };
+
+    var iter = dir.iterate();
+    while (try iter.next()) |entry| {
+        const src_path = try std.fs.path.join(allocator, &[_][]const u8{ src_dir, entry.name });
+        defer allocator.free(src_path);
+
+        const dst_path = try std.fs.path.join(allocator, &[_][]const u8{ dst_dir, entry.name });
+        defer allocator.free(dst_path);
+
+        switch (entry.kind) {
+            .directory => {
+                // Recurse into subdirectory
+                try copyDirRecursiveSimple(allocator, src_path, dst_path);
+            },
+            .file => {
+                // Check if destination exists - skip if it does (no-clobber behavior)
+                const dst_exists = std.fs.cwd().access(dst_path, .{}) catch |err| {
+                    if (err == error.FileNotFound) {
+                        // File doesn't exist, safe to copy
+                        try copyFile(src_path, dst_path);
+                    }
+                    // Other errors - skip this file
+                    continue;
+                };
+                _ = dst_exists;
+                // File exists, skip (no-clobber)
+            },
+            .sym_link => {
+                // Handle symlinks - skip if destination exists
+                const dst_exists = std.fs.cwd().access(dst_path, .{}) catch |err| {
+                    if (err == error.FileNotFound) {
+                        var target_buf: [std.fs.max_path_bytes]u8 = undefined;
+                        const target = dir.readLink(entry.name, &target_buf) catch continue;
+                        std.fs.cwd().symLink(target, dst_path, .{}) catch {};
+                    }
+                    continue;
+                };
+                _ = dst_exists;
+                // Symlink destination exists, skip
+            },
+            else => {},
+        }
+    }
 }
 
 /// Free environment memory
