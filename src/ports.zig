@@ -839,6 +839,17 @@ pub const PortsMigrator = struct {
         for (package_roots) |root| {
             std.debug.print("    [SYSROOT]   Linking from: {s}\n", .{root});
 
+            // First, check for broken layout (root/tmp/axiom-sysroot-*/usr/local)
+            // This happens when packages were built with LOCALBASE set to the sysroot path
+            const broken_content_path = try self.findBrokenLayoutContent(root);
+            if (broken_content_path) |content_path| {
+                defer self.allocator.free(content_path);
+                std.debug.print("    [SYSROOT]     Layout: BROKEN (found content at {s})\n", .{content_path});
+                std.debug.print("    [SYSROOT]     WARNING: Package has broken layout, linking from nested path\n", .{});
+                try self.linkTreeContents(content_path, sysroot_localbase);
+                continue;
+            }
+
             // Check if this package uses usr/local layout or direct layout
             const usr_local_path = try std.fs.path.join(self.allocator, &[_][]const u8{ root, "usr/local" });
             defer self.allocator.free(usr_local_path);
@@ -941,6 +952,45 @@ pub const PortsMigrator = struct {
         if (file_count == 0) {
             std.debug.print("    [SYSROOT] Warning: no files linked from {s}\n", .{src_root});
         }
+    }
+
+    /// Detect and return the content path for packages with broken layout
+    /// Broken packages have structure: root/tmp/axiom-sysroot-*/usr/local/...
+    /// This happens when LOCALBASE was incorrectly set to the sysroot path during build
+    fn findBrokenLayoutContent(self: *PortsMigrator, root: []const u8) !?[]const u8 {
+        // Check if root/tmp exists
+        const tmp_path = try std.fs.path.join(self.allocator, &[_][]const u8{ root, "tmp" });
+        defer self.allocator.free(tmp_path);
+
+        var tmp_dir = std.fs.cwd().openDir(tmp_path, .{ .iterate = true }) catch {
+            return null; // No tmp directory, not a broken layout
+        };
+        defer tmp_dir.close();
+
+        // Look for axiom-sysroot-* directories
+        var iter = tmp_dir.iterate();
+        while (iter.next() catch null) |entry| {
+            if (entry.kind != .directory) continue;
+            if (!std.mem.startsWith(u8, entry.name, "axiom-sysroot-")) continue;
+
+            // Found a sysroot directory, check for usr/local inside
+            const sysroot_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+                tmp_path,
+                entry.name,
+                "usr/local",
+            });
+
+            // Check if this path exists and has content
+            std.fs.cwd().access(sysroot_path, .{}) catch {
+                self.allocator.free(sysroot_path);
+                continue;
+            };
+
+            // Found valid content path
+            return sysroot_path;
+        }
+
+        return null;
     }
 
     /// Recursively link/copy contents of a directory into the sysroot
