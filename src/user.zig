@@ -55,17 +55,15 @@ pub const UserContext = struct {
 
         // Get username - prefer passwd database over environment for security
         // Environment variables can be spoofed, but getpwuid uses system auth
-        const username = getUsernameFromSystem(allocator, uid) catch |err| blk: {
+        const username = getUsernameFromSystem(allocator, uid) catch |_| blk: {
             // Fall back to environment variable if system lookup fails
-            _ = err;
             break :blk std.process.getEnvVarOwned(allocator, "USER") catch {
                 break :blk try allocator.dupe(u8, "unknown");
             };
         };
 
         // Get home directory - prefer passwd database over environment for consistency
-        const home_dir = getHomeDirFromSystem(allocator, uid) catch |err| blk: {
-            _ = err;
+        const home_dir = getHomeDirFromSystem(allocator, uid) catch |_| blk: {
             break :blk std.process.getEnvVarOwned(allocator, "HOME") catch {
                 const default_home = try std.fmt.allocPrint(allocator, "/home/{s}", .{username});
                 break :blk default_home;
