@@ -832,16 +832,35 @@ pub const PortsMigrator = struct {
         std.debug.print("    [SYSROOT] Creating sysroot at: {s}\n", .{sysroot_root});
         std.debug.print("    [SYSROOT] Sysroot localbase: {s}\n", .{sysroot_localbase});
 
-        // Link files from each package root into the sysroot ROOT (not localbase)
-        // This preserves the package's usr/local structure so that:
-        //   pkg_root/usr/local/bin/gmake -> sysroot_root/usr/local/bin/gmake
-        // And LOCALBASE=/tmp/.../usr/local will find it correctly
+        // Link files from each package root into the sysroot
+        // Detect package layout and link appropriately:
+        // - If package has usr/local/ structure, link root/* to sysroot_root/*
+        // - If package has direct layout (bin/, lib/), link root/* to sysroot_root/usr/local/*
         for (package_roots) |root| {
             std.debug.print("    [SYSROOT]   Linking from: {s}\n", .{root});
 
-            // Link the package root contents directly to sysroot_root
-            // This handles packages with usr/local layout (ports-style)
-            try self.linkTreeContents(root, sysroot_root);
+            // Check if this package uses usr/local layout or direct layout
+            const usr_local_path = try std.fs.path.join(self.allocator, &[_][]const u8{ root, "usr/local" });
+            defer self.allocator.free(usr_local_path);
+
+            const has_usr_local = blk: {
+                std.fs.cwd().access(usr_local_path, .{}) catch {
+                    break :blk false;
+                };
+                break :blk true;
+            };
+
+            if (has_usr_local) {
+                // Package uses usr/local layout (e.g., from broken LOCALBASE builds)
+                // Link root/* to sysroot_root/* to preserve the usr/local structure
+                std.debug.print("    [SYSROOT]     Layout: usr/local (preserving structure)\n", .{});
+                try self.linkTreeContents(root, sysroot_root);
+            } else {
+                // Package uses direct layout (bin/, lib/, share/ directly under root)
+                // Link root/* to sysroot_root/usr/local/* to match LOCALBASE
+                std.debug.print("    [SYSROOT]     Layout: direct (linking to usr/local)\n", .{});
+                try self.linkTreeContents(root, sysroot_localbase);
+            }
         }
 
         // Return sysroot_localbase (sysroot_root/usr/local) as that's what callers expect
@@ -1121,7 +1140,8 @@ pub const PortsMigrator = struct {
 
             std.fs.cwd().access(wrapper_path, .{}) catch {
                 // Wrapper doesn't exist, try to find a versioned binary
-                // Look for patterns like autoconf-2.72, autoconf-2.71, etc.
+                // FreeBSD autoconf installs as "autoconf2.72" (no hyphen)
+                // Some other systems use "autoconf-2.72" (with hyphen)
                 var best_version: ?[]const u8 = null;
                 var best_target: ?[]const u8 = null;
 
@@ -1130,21 +1150,25 @@ pub const PortsMigrator = struct {
                     if (entry.kind != .file and entry.kind != .sym_link) continue;
 
                     // Check if this is a versioned variant of the tool
-                    // e.g., "autoconf-2.72" starts with "autoconf-"
-                    const prefix_len = tool.len + 1; // "autoconf-"
-                    if (entry.name.len > prefix_len and
-                        std.mem.startsWith(u8, entry.name, tool) and
-                        entry.name[tool.len] == '-')
+                    // Patterns: "autoconf2.72" (FreeBSD) or "autoconf-2.72" (some Linux)
+                    if (entry.name.len > tool.len and
+                        std.mem.startsWith(u8, entry.name, tool))
                     {
-                        const version = entry.name[prefix_len..];
-                        // Simple version comparison: prefer higher versions
-                        // This is a basic comparison; works for most cases like 2.72 > 2.71
-                        if (best_version == null or
-                            std.mem.order(u8, version, best_version.?) == .gt)
+                        const suffix = entry.name[tool.len..];
+                        // Check if suffix starts with a digit (e.g., "2.72") or hyphen+digit
+                        const version_start: usize = if (suffix.len > 0 and suffix[0] == '-') 1 else 0;
+                        if (suffix.len > version_start and
+                            suffix[version_start] >= '0' and suffix[version_start] <= '9')
                         {
-                            if (best_target) |old| self.allocator.free(old);
-                            best_version = version;
-                            best_target = try self.allocator.dupe(u8, entry.name);
+                            const version = suffix[version_start..];
+                            // Simple version comparison: prefer higher versions
+                            if (best_version == null or
+                                std.mem.order(u8, version, best_version.?) == .gt)
+                            {
+                                if (best_target) |old| self.allocator.free(old);
+                                best_version = version;
+                                best_target = try self.allocator.dupe(u8, entry.name);
+                            }
                         }
                     }
                 }
