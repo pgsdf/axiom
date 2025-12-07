@@ -1334,6 +1334,7 @@ pub const PortsMigrator = struct {
                 build_entry.name,
                 "root",
             }) catch continue;
+            errdefer self.allocator.free(root_path);
 
             // Verify root directory exists
             std.fs.cwd().access(root_path, .{}) catch {
@@ -1341,7 +1342,10 @@ pub const PortsMigrator = struct {
                 continue;
             };
 
-            try roots.append(root_path);
+            roots.append(root_path) catch {
+                self.allocator.free(root_path);
+                continue;
+            };
         }
 
         return roots;
@@ -1492,7 +1496,11 @@ pub const PortsMigrator = struct {
 
             // Find ALL versions of package in store
             var roots = self.findAllPackageRootsInStore(pkg_name) catch continue;
-            defer roots.deinit();
+            defer {
+                // Free all strings in roots before deiniting
+                for (roots.items) |r| self.allocator.free(r);
+                roots.deinit();
+            }
 
             if (roots.items.len == 0) {
                 std.debug.print("    [DEBUG] Package {s} NOT found in store\n", .{pkg_name});
@@ -1504,8 +1512,11 @@ pub const PortsMigrator = struct {
             // Add all roots (transfer ownership to all_roots)
             for (roots.items) |root| {
                 // Dupe to transfer ownership since roots will be cleaned up
-                const root_copy = try self.allocator.dupe(u8, root);
-                try all_roots.append(root_copy);
+                const root_copy = self.allocator.dupe(u8, root) catch continue;
+                all_roots.append(root_copy) catch {
+                    self.allocator.free(root_copy);
+                    continue;
+                };
             }
         }
 
