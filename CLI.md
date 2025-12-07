@@ -1403,9 +1403,36 @@ Full migration: generate manifests, build, and import to store.
 
 ```bash
 axiom ports-import editors/vim
+axiom ports-import devel/automake --use-system-tools
 ```
 
+**Options:**
+- `--ports-tree <path>` - Path to ports tree (default: /usr/ports)
+- `--jobs <n>` - Number of parallel build jobs (default: 4)
+- `--verbose` - Show detailed build output
+- `--keep-sandbox` - Don't clean up build staging directory
+- `--dry-run` - Generate manifests only, don't build
+- `--no-deps` - Don't auto-resolve dependencies
+- `--use-system-tools` - Use /usr/local tools instead of sysroot (see Troubleshooting)
+
 This is equivalent to `axiom ports-gen <origin> --build --import`.
+
+**Troubleshooting: `--use-system-tools`**
+
+When building ports that depend on autotools (autoconf, automake) or other complex tool chains, you may encounter build failures due to wrapper script issues in the sysroot. The `--use-system-tools` flag bypasses sysroot creation and uses tools installed in `/usr/local` directly.
+
+```bash
+# First, ensure required tools are installed via pkg
+pkg install autoconf automake
+
+# Then build with system tools
+axiom ports-import devel/automake --use-system-tools
+```
+
+This is recommended when:
+- Configure scripts fail to find autoconf/automake
+- Wrapper scripts (like autoconf-switch) don't work in the sysroot
+- Old packages in the store have broken layouts
 
 #### `axiom ports-scan <category>`
 
