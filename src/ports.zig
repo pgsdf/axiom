@@ -970,8 +970,12 @@ pub const PortsMigrator = struct {
         const bin_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "bin" });
         defer self.allocator.free(bin_dir);
 
+        std.debug.print("    [DEBUG] createBinaryAliases: checking {d} origins, bin_dir={s}\n", .{ dep_origins.len, bin_dir });
+
         for (dep_origins) |origin| {
             if (alias_map.get(origin)) |alias_info| {
+                std.debug.print("    [DEBUG] Found alias mapping for {s}: {s} -> {s}\n", .{ origin, alias_info.alias, alias_info.target });
+
                 const target_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bin_dir, alias_info.target });
                 defer self.allocator.free(target_path);
 
@@ -981,8 +985,11 @@ pub const PortsMigrator = struct {
                 // Check if target binary exists
                 std.fs.cwd().access(target_path, .{}) catch {
                     // Target doesn't exist, skip
+                    std.debug.print("    [DEBUG] Target {s} does not exist, skipping\n", .{target_path});
                     continue;
                 };
+
+                std.debug.print("    [DEBUG] Target {s} exists\n", .{target_path});
 
                 // Check if alias already exists
                 std.fs.cwd().access(alias_path, .{}) catch {
