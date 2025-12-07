@@ -1058,6 +1058,88 @@ pub const PortsMigrator = struct {
         }
     }
 
+    /// Create unversioned wrapper symlinks for autotools in the sysroot.
+    ///
+    /// FreeBSD's devel/autoconf installs versioned binaries like:
+    ///   autoconf-2.72, autoheader-2.72, autoreconf-2.72, etc.
+    ///
+    /// But other ports (like automake) expect unversioned 'autoconf' on PATH.
+    /// Normally devel/autoconf-switch provides these wrappers via pkg.
+    ///
+    /// This function scans the sysroot bin directory for versioned autotools
+    /// and creates symlinks from the unversioned names to the highest version found.
+    fn createAutotoolsWrappers(self: *PortsMigrator, sysroot: []const u8) !void {
+        const bin_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "bin" });
+        defer self.allocator.free(bin_dir);
+
+        // Autotools that need unversioned wrappers
+        const autotools = [_][]const u8{
+            "autoconf",
+            "autoheader",
+            "autoreconf",
+            "autom4te",
+            "autoscan",
+            "autoupdate",
+            "ifnames",
+        };
+
+        var dir = std.fs.cwd().openDir(bin_dir, .{ .iterate = true }) catch {
+            return; // bin dir doesn't exist, nothing to do
+        };
+        defer dir.close();
+
+        for (autotools) |tool| {
+            // Check if unversioned wrapper already exists
+            const wrapper_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bin_dir, tool });
+            defer self.allocator.free(wrapper_path);
+
+            std.fs.cwd().access(wrapper_path, .{}) catch {
+                // Wrapper doesn't exist, try to find a versioned binary
+                // Look for patterns like autoconf-2.72, autoconf-2.71, etc.
+                var best_version: ?[]const u8 = null;
+                var best_target: ?[]const u8 = null;
+
+                var iter = dir.iterate();
+                while (iter.next() catch null) |entry| {
+                    if (entry.kind != .file and entry.kind != .sym_link) continue;
+
+                    // Check if this is a versioned variant of the tool
+                    // e.g., "autoconf-2.72" starts with "autoconf-"
+                    const prefix_len = tool.len + 1; // "autoconf-"
+                    if (entry.name.len > prefix_len and
+                        std.mem.startsWith(u8, entry.name, tool) and
+                        entry.name[tool.len] == '-')
+                    {
+                        const version = entry.name[prefix_len..];
+                        // Simple version comparison: prefer higher versions
+                        // This is a basic comparison; works for most cases like 2.72 > 2.71
+                        if (best_version == null or
+                            std.mem.order(u8, version, best_version.?) == .gt)
+                        {
+                            if (best_target) |old| self.allocator.free(old);
+                            best_version = version;
+                            best_target = try self.allocator.dupe(u8, entry.name);
+                        }
+                    }
+                }
+
+                if (best_target) |target| {
+                    defer self.allocator.free(target);
+
+                    // Create symlink: autoconf -> autoconf-2.72
+                    std.fs.cwd().symLink(target, wrapper_path, .{}) catch |err| {
+                        std.debug.print("    [SYSROOT] Warning: could not create autotools wrapper {s} -> {s}: {}\n", .{ tool, target, err });
+                        continue;
+                    };
+                    std.debug.print("    [SYSROOT] Created autotools wrapper: {s} -> {s}\n", .{ tool, target });
+                }
+
+                continue; // Move to next tool
+            };
+            // Wrapper already exists, nothing to do
+        }
+    }
+
     /// Find ALL root paths for a package in the Axiom store by name
     /// Returns paths to all versions' root/ directories (important for packages like autoconf
     /// where autoconf-switch and autoconf both provide different binaries under the same package name)
@@ -1306,6 +1388,10 @@ pub const PortsMigrator = struct {
         // Create binary aliases in sysroot for ports that install binaries with different names
         // than what FreeBSD ports expect (e.g., gmake package installs 'make' but ports expect 'gmake')
         try self.createBinaryAliases(sysroot, deps.items);
+
+        // Create unversioned wrappers for autotools (autoconf -> autoconf-2.72, etc.)
+        // FreeBSD's devel/autoconf installs versioned binaries, but other ports expect 'autoconf'
+        try self.createAutotoolsWrappers(sysroot);
 
         // Build paths using the sysroot
         const sysroot_bin = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "bin" });
