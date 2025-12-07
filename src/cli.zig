@@ -3259,6 +3259,7 @@ pub const CLI = struct {
             std.debug.print("  --keep-sandbox       Don't clean up build staging directory\n", .{});
             std.debug.print("  --dry-run            Generate manifests only, don't build\n", .{});
             std.debug.print("  --no-deps            Don't auto-resolve dependencies\n", .{});
+            std.debug.print("  --use-system-tools   Use /usr/local tools instead of sysroot\n", .{});
             std.debug.print("\nExamples:\n", .{});
             std.debug.print("  axiom ports-import shells/bash\n", .{});
             std.debug.print("  axiom ports-import editors/vim --jobs 8 --verbose\n", .{});
@@ -3274,6 +3275,7 @@ pub const CLI = struct {
         var keep_sandbox: bool = false;
         var dry_run: bool = false;
         var auto_deps: bool = true;
+        var use_system_tools: bool = false;
 
         var i: usize = 0;
         while (i < args.len) : (i += 1) {
@@ -3291,6 +3293,8 @@ pub const CLI = struct {
                 dry_run = true;
             } else if (std.mem.eql(u8, args[i], "--no-deps")) {
                 auto_deps = false;
+            } else if (std.mem.eql(u8, args[i], "--use-system-tools")) {
+                use_system_tools = true;
             } else if (origin == null and args[i][0] != '-') {
                 origin = args[i];
             }
@@ -3304,6 +3308,9 @@ pub const CLI = struct {
         std.debug.print("Full port migration: {s}\n", .{port_origin});
         if (auto_deps) {
             std.debug.print("(with automatic dependency resolution)\n", .{});
+        }
+        if (use_system_tools) {
+            std.debug.print("(using system tools from /usr/local)\n", .{});
         }
         std.debug.print("========================================\n\n", .{});
 
@@ -3322,6 +3329,7 @@ pub const CLI = struct {
             .importer = self.importer,
             .build_jobs = jobs,
             .keep_sandbox = keep_sandbox,
+            .use_system_tools = use_system_tools,
         });
 
         // Check bootstrap status and warn if packages are missing

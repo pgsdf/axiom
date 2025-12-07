@@ -185,6 +185,9 @@ pub const MigrateOptions = struct {
     // Build options
     build_jobs: u32 = 4,
     keep_sandbox: bool = false,
+
+    // Workaround options
+    use_system_tools: bool = false, // Skip sysroot creation, use /usr/local directly
 };
 
 /// Ports migration tool
@@ -1412,6 +1415,19 @@ pub const PortsMigrator = struct {
     /// This solves the autoconf-switch problem where wrapper scripts need to find related binaries
     /// in the same directory (e.g., autoconf wrapper looking for autoconf2.72 via ls -d "$0"[0-9]*).
     fn getBuildEnvironment(self: *PortsMigrator, origin: []const u8) !BuildEnvironment {
+        // If use_system_tools is enabled, skip sysroot creation and use /usr/local directly
+        if (self.options.use_system_tools) {
+            std.debug.print("    [SYSROOT] Using system tools (--use-system-tools)\n", .{});
+            return BuildEnvironment{
+                .sysroot = try self.allocator.dupe(u8, ""),
+                .path = try self.allocator.dupe(u8, "/usr/local/bin:/usr/bin:/bin"),
+                .ld_library_path = try self.allocator.dupe(u8, "/usr/local/lib:/usr/lib:/lib"),
+                .ldflags = try self.allocator.dupe(u8, "-L/usr/local/lib"),
+                .cppflags = try self.allocator.dupe(u8, "-I/usr/local/include"),
+                .allocator = self.allocator,
+            };
+        }
+
         // Collect all package roots from dependencies
         var all_roots = std.ArrayList([]const u8).init(self.allocator);
         defer {
