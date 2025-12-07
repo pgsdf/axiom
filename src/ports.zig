@@ -35,6 +35,27 @@ pub const PortsError = error{
     ProcessSpawnError,
 };
 
+/// Parsed port origin with optional flavor
+/// e.g., "devel/py-setuptools@py311" -> path="devel/py-setuptools", flavor="py311"
+pub const ParsedOrigin = struct {
+    path: []const u8,
+    flavor: ?[]const u8,
+
+    /// Parse an origin string that may contain a @flavor suffix
+    pub fn parse(origin: []const u8) ParsedOrigin {
+        if (std.mem.indexOf(u8, origin, "@")) |at_pos| {
+            return .{
+                .path = origin[0..at_pos],
+                .flavor = origin[at_pos + 1 ..],
+            };
+        }
+        return .{
+            .path = origin,
+            .flavor = null,
+        };
+    }
+};
+
 /// FreeBSD port metadata extracted from Makefile
 pub const PortMetadata = struct {
     // Identity
@@ -245,9 +266,12 @@ pub const PortsMigrator = struct {
 
     /// Extract metadata from a port
     pub fn extractMetadata(self: *PortsMigrator, origin: []const u8) !PortMetadata {
+        // Parse origin to extract optional flavor (e.g., "devel/py-setuptools@py311")
+        const parsed = ParsedOrigin.parse(origin);
+
         const port_path = try std.fs.path.join(self.allocator, &[_][]const u8{
             self.options.ports_tree,
-            origin,
+            parsed.path, // Use path without @flavor suffix
         });
         defer self.allocator.free(port_path);
 
@@ -256,16 +280,17 @@ pub const PortsMigrator = struct {
             return PortsError.PortNotFound;
         };
 
-        // Extract variables using make -V
+        // Extract variables using make -V (pass flavor if specified)
+        const flavor = parsed.flavor;
         var metadata: PortMetadata = undefined;
         metadata.allocator = self.allocator;
 
         // Core identity
-        metadata.name = try self.makeVar(port_path, "PORTNAME");
-        metadata.version = try self.makeVar(port_path, "PORTVERSION");
+        metadata.name = try self.makeVarWithFlavor(port_path, "PORTNAME", flavor);
+        metadata.version = try self.makeVarWithFlavor(port_path, "PORTVERSION", flavor);
 
         // Parse revision (free the string after parsing)
-        const revision_str = try self.makeVarOptional(port_path, "PORTREVISION");
+        const revision_str = try self.makeVarOptionalWithFlavor(port_path, "PORTREVISION", flavor);
         if (revision_str) |rev| {
             metadata.revision = std.fmt.parseInt(u32, rev, 10) catch 0;
             self.allocator.free(rev);
@@ -274,7 +299,7 @@ pub const PortsMigrator = struct {
         }
 
         // Parse epoch (free the string after parsing)
-        const epoch_str = try self.makeVarOptional(port_path, "PORTEPOCH");
+        const epoch_str = try self.makeVarOptionalWithFlavor(port_path, "PORTEPOCH", flavor);
         if (epoch_str) |ep| {
             metadata.epoch = std.fmt.parseInt(u32, ep, 10) catch 0;
             self.allocator.free(ep);
@@ -283,53 +308,53 @@ pub const PortsMigrator = struct {
         }
 
         // Categories
-        const cats_str = try self.makeVar(port_path, "CATEGORIES");
+        const cats_str = try self.makeVarWithFlavor(port_path, "CATEGORIES", flavor);
         metadata.categories = try self.splitWhitespace(cats_str);
         self.allocator.free(cats_str);
 
         // Descriptive
-        metadata.comment = try self.makeVarOptional(port_path, "COMMENT") orelse try self.allocator.dupe(u8, "");
+        metadata.comment = try self.makeVarOptionalWithFlavor(port_path, "COMMENT", flavor) orelse try self.allocator.dupe(u8, "");
         metadata.description = try self.readPkgDescr(port_path);
-        metadata.maintainer = try self.makeVarOptional(port_path, "MAINTAINER") orelse try self.allocator.dupe(u8, "ports@FreeBSD.org");
-        metadata.www = try self.makeVarOptional(port_path, "WWW") orelse try self.allocator.dupe(u8, "");
-        metadata.license = try self.makeVarOptional(port_path, "LICENSE") orelse try self.allocator.dupe(u8, "");
+        metadata.maintainer = try self.makeVarOptionalWithFlavor(port_path, "MAINTAINER", flavor) orelse try self.allocator.dupe(u8, "ports@FreeBSD.org");
+        metadata.www = try self.makeVarOptionalWithFlavor(port_path, "WWW", flavor) orelse try self.allocator.dupe(u8, "");
+        metadata.license = try self.makeVarOptionalWithFlavor(port_path, "LICENSE", flavor) orelse try self.allocator.dupe(u8, "");
 
         // Source
-        const sites_str = try self.makeVarOptional(port_path, "MASTER_SITES") orelse try self.allocator.dupe(u8, "");
+        const sites_str = try self.makeVarOptionalWithFlavor(port_path, "MASTER_SITES", flavor) orelse try self.allocator.dupe(u8, "");
         metadata.master_sites = try self.splitWhitespace(sites_str);
         self.allocator.free(sites_str);
 
-        const distfiles_str = try self.makeVarOptional(port_path, "DISTFILES") orelse try self.allocator.dupe(u8, "");
+        const distfiles_str = try self.makeVarOptionalWithFlavor(port_path, "DISTFILES", flavor) orelse try self.allocator.dupe(u8, "");
         metadata.distfiles = try self.splitWhitespace(distfiles_str);
         self.allocator.free(distfiles_str);
 
         metadata.distinfo_sha256 = try self.readDistinfoSha256(port_path);
 
-        // Dependencies
-        metadata.build_depends = try self.parseDependencies(port_path, "BUILD_DEPENDS");
-        metadata.lib_depends = try self.parseDependencies(port_path, "LIB_DEPENDS");
-        metadata.run_depends = try self.parseDependencies(port_path, "RUN_DEPENDS");
-        metadata.test_depends = try self.parseDependencies(port_path, "TEST_DEPENDS");
+        // Dependencies (these also need flavor for correct resolution)
+        metadata.build_depends = try self.parseDependenciesWithFlavor(port_path, "BUILD_DEPENDS", flavor);
+        metadata.lib_depends = try self.parseDependenciesWithFlavor(port_path, "LIB_DEPENDS", flavor);
+        metadata.run_depends = try self.parseDependenciesWithFlavor(port_path, "RUN_DEPENDS", flavor);
+        metadata.test_depends = try self.parseDependenciesWithFlavor(port_path, "TEST_DEPENDS", flavor);
 
         // Build configuration
-        const uses_str = try self.makeVarOptional(port_path, "USES") orelse try self.allocator.dupe(u8, "");
+        const uses_str = try self.makeVarOptionalWithFlavor(port_path, "USES", flavor) orelse try self.allocator.dupe(u8, "");
         metadata.uses = try self.splitWhitespace(uses_str);
         self.allocator.free(uses_str);
 
-        metadata.options = try self.parseOptions(port_path);
+        metadata.options = try self.parseOptionsWithFlavor(port_path, flavor);
 
-        const flavors_str = try self.makeVarOptional(port_path, "FLAVORS") orelse try self.allocator.dupe(u8, "");
+        const flavors_str = try self.makeVarOptionalWithFlavor(port_path, "FLAVORS", flavor) orelse try self.allocator.dupe(u8, "");
         metadata.flavors = try self.splitWhitespace(flavors_str);
         self.allocator.free(flavors_str);
 
-        const conflicts_str = try self.makeVarOptional(port_path, "CONFLICTS") orelse try self.allocator.dupe(u8, "");
+        const conflicts_str = try self.makeVarOptionalWithFlavor(port_path, "CONFLICTS", flavor) orelse try self.allocator.dupe(u8, "");
         metadata.conflicts = try self.splitWhitespace(conflicts_str);
         self.allocator.free(conflicts_str);
 
         // Detect configure style
         metadata.configure_style = self.detectConfigureStyle(metadata.uses);
-        metadata.make_jobs_unsafe = try self.hasMakeVar(port_path, "MAKE_JOBS_UNSAFE");
-        metadata.no_arch = try self.hasMakeVar(port_path, "NO_ARCH");
+        metadata.make_jobs_unsafe = try self.hasMakeVarWithFlavor(port_path, "MAKE_JOBS_UNSAFE", flavor);
+        metadata.no_arch = try self.hasMakeVarWithFlavor(port_path, "NO_ARCH", flavor);
 
         return metadata;
     }
@@ -1570,11 +1595,14 @@ pub const PortsMigrator = struct {
     ) !PortBuildResult {
         _ = manifest_path; // May be used in future for dependency resolution
 
+        // Parse origin to extract optional flavor (e.g., "devel/py-setuptools@py311")
+        const parsed = ParsedOrigin.parse(origin);
+
         std.debug.print("\n=== Building port: {s} ===\n", .{origin});
 
         const port_path = try std.fs.path.join(self.allocator, &[_][]const u8{
             self.options.ports_tree,
-            origin,
+            parsed.path, // Use path without @flavor suffix
         });
         defer self.allocator.free(port_path);
 
@@ -1856,12 +1884,23 @@ pub const PortsMigrator = struct {
         var make_ldflags_arg: ?[]const u8 = null;
         defer if (make_ldflags_arg) |f| self.allocator.free(f);
 
+        // FLAVOR argument for flavored ports (e.g., devel/py-setuptools@py311)
+        var flavor_arg: ?[]const u8 = null;
+        defer if (flavor_arg) |f| self.allocator.free(f);
+
         try args.append("make");
         try args.append("-C");
         try args.append(port_path);
 
         // Add BATCH=yes to prevent interactive prompts
         try args.append("BATCH=yes");
+
+        // Parse origin to check for flavor suffix (e.g., @py311)
+        const parsed = ParsedOrigin.parse(origin);
+        if (parsed.flavor) |flavor| {
+            flavor_arg = try std.fmt.allocPrint(self.allocator, "FLAVOR={s}", .{flavor});
+            try args.append(flavor_arg.?);
+        }
 
         // Disable interactive dialogs
         try args.append("DISABLE_VULNERABILITIES=yes");
@@ -2577,20 +2616,39 @@ pub const PortsMigrator = struct {
     // --- Internal helpers ---
 
     fn makeVar(self: *PortsMigrator, port_path: []const u8, varname: []const u8) ![]const u8 {
-        const result = try self.makeVarOptional(port_path, varname);
+        const result = try self.makeVarOptionalWithFlavor(port_path, varname, null);
+        return result orelse PortsError.MissingRequiredField;
+    }
+
+    fn makeVarWithFlavor(self: *PortsMigrator, port_path: []const u8, varname: []const u8, flavor: ?[]const u8) ![]const u8 {
+        const result = try self.makeVarOptionalWithFlavor(port_path, varname, flavor);
         return result orelse PortsError.MissingRequiredField;
     }
 
     fn makeVarOptional(self: *PortsMigrator, port_path: []const u8, varname: []const u8) !?[]const u8 {
-        const args = [_][]const u8{
-            "make",
-            "-C",
-            port_path,
-            "-V",
-            varname,
-        };
+        return self.makeVarOptionalWithFlavor(port_path, varname, null);
+    }
 
-        var child = std.process.Child.init(&args, self.allocator);
+    fn makeVarOptionalWithFlavor(self: *PortsMigrator, port_path: []const u8, varname: []const u8, flavor: ?[]const u8) !?[]const u8 {
+        var args = std.ArrayList([]const u8).init(self.allocator);
+        defer args.deinit();
+
+        try args.append("make");
+        try args.append("-C");
+        try args.append(port_path);
+
+        // Add FLAVOR if specified (for flavored ports like py-setuptools@py311)
+        var flavor_arg: ?[]const u8 = null;
+        defer if (flavor_arg) |f| self.allocator.free(f);
+        if (flavor) |flv| {
+            flavor_arg = try std.fmt.allocPrint(self.allocator, "FLAVOR={s}", .{flv});
+            try args.append(flavor_arg.?);
+        }
+
+        try args.append("-V");
+        try args.append(varname);
+
+        var child = std.process.Child.init(args.items, self.allocator);
         child.stdout_behavior = .Pipe;
         child.stderr_behavior = .Ignore;
 
@@ -2624,7 +2682,11 @@ pub const PortsMigrator = struct {
     }
 
     fn hasMakeVar(self: *PortsMigrator, port_path: []const u8, varname: []const u8) !bool {
-        const result = try self.makeVarOptional(port_path, varname);
+        return self.hasMakeVarWithFlavor(port_path, varname, null);
+    }
+
+    fn hasMakeVarWithFlavor(self: *PortsMigrator, port_path: []const u8, varname: []const u8, flavor: ?[]const u8) !bool {
+        const result = try self.makeVarOptionalWithFlavor(port_path, varname, flavor);
         if (result) |r| {
             self.allocator.free(r);
             return true;
@@ -2690,7 +2752,11 @@ pub const PortsMigrator = struct {
     }
 
     fn parseDependencies(self: *PortsMigrator, port_path: []const u8, depvar: []const u8) ![]const PortDependency {
-        const deps_str = try self.makeVarOptional(port_path, depvar) orelse return &[_]PortDependency{};
+        return self.parseDependenciesWithFlavor(port_path, depvar, null);
+    }
+
+    fn parseDependenciesWithFlavor(self: *PortsMigrator, port_path: []const u8, depvar: []const u8, flavor: ?[]const u8) ![]const PortDependency {
+        const deps_str = try self.makeVarOptionalWithFlavor(port_path, depvar, flavor) orelse return &[_]PortDependency{};
         defer self.allocator.free(deps_str);
 
         var deps = std.ArrayList(PortDependency).init(self.allocator);
@@ -2718,8 +2784,13 @@ pub const PortsMigrator = struct {
     }
 
     fn parseOptions(self: *PortsMigrator, port_path: []const u8) ![]const PortOption {
+        return self.parseOptionsWithFlavor(port_path, null);
+    }
+
+    fn parseOptionsWithFlavor(self: *PortsMigrator, port_path: []const u8, flavor: ?[]const u8) ![]const PortOption {
         _ = self;
         _ = port_path;
+        _ = flavor;
         // TODO: Parse OPTIONS_DEFINE, OPTIONS_DEFAULT, etc.
         return &[_]PortOption{};
     }
