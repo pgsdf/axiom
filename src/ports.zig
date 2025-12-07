@@ -1654,13 +1654,11 @@ pub const PortsMigrator = struct {
         }
         stage_result.deinit(self.allocator);
 
-        // Step 6: Copy staged files from work/stage to our staging directory
-        // The ports system stages to <port_path>/work/stage/usr/local
+        // Step 6: Copy staged files from STAGEDIR to our staging directory
+        // Query the actual STAGEDIR from the port - this handles flavored ports
+        // (e.g., vim uses work-default/stage instead of work/stage)
         std.debug.print("  Copying staged files...\n", .{});
-        const work_stage = try std.fs.path.join(self.allocator, &[_][]const u8{
-            port_path,
-            "work/stage",
-        });
+        const work_stage = try self.makeVar(port_path, "STAGEDIR");
         defer self.allocator.free(work_stage);
 
         // Use cp -a to preserve attributes and copy recursively
