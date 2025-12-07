@@ -804,59 +804,111 @@ pub const PortsMigrator = struct {
         var random_bytes: [4]u8 = undefined;
         std.crypto.random.bytes(&random_bytes);
 
-        const sysroot_base = try std.fmt.allocPrint(
+        // sysroot_root is the base directory (e.g., /tmp/axiom-sysroot-XXX)
+        // Packages are linked here, preserving their usr/local structure
+        const sysroot_root = try std.fmt.allocPrint(
             self.allocator,
             "/tmp/axiom-sysroot-{d}-{x:0>2}{x:0>2}{x:0>2}{x:0>2}",
             .{ timestamp, random_bytes[0], random_bytes[1], random_bytes[2], random_bytes[3] },
         );
-        defer self.allocator.free(sysroot_base);
+        errdefer self.allocator.free(sysroot_root);
 
-        // Create sysroot/usr/local structure (FreeBSD standard layout)
-        const sysroot = try std.fs.path.join(self.allocator, &[_][]const u8{
-            sysroot_base,
+        // localbase is what LOCALBASE will be set to (e.g., /tmp/axiom-sysroot-XXX/usr/local)
+        const localbase = try std.fs.path.join(self.allocator, &[_][]const u8{
+            sysroot_root,
             "usr/local",
         });
-        errdefer self.allocator.free(sysroot);
+        defer self.allocator.free(localbase);
 
-        // Create all required directories
+        // Create the localbase directory structure
         const subdirs = [_][]const u8{ "bin", "lib", "include", "share", "libexec", "lib/perl5", "share/aclocal" };
         for (subdirs) |subdir| {
-            const full_path = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, subdir });
+            const full_path = try std.fs.path.join(self.allocator, &[_][]const u8{ localbase, subdir });
             defer self.allocator.free(full_path);
             try std.fs.cwd().makePath(full_path);
         }
 
-        std.debug.print("    [SYSROOT] Creating sysroot at: {s}\n", .{sysroot});
+        std.debug.print("    [SYSROOT] Creating sysroot at: {s}\n", .{sysroot_root});
+        std.debug.print("    [SYSROOT] LOCALBASE will be: {s}\n", .{localbase});
 
-        // Symlink files from each package root into the sysroot
+        // Link files from each package root into the sysroot ROOT (not localbase)
+        // This preserves the package's usr/local structure so that:
+        //   pkg_root/usr/local/bin/gmake -> sysroot_root/usr/local/bin/gmake
+        // And LOCALBASE=/tmp/.../usr/local will find it correctly
         for (package_roots) |root| {
             std.debug.print("    [SYSROOT]   Linking from: {s}\n", .{root});
 
-            // Try both direct layout (bin/, lib/) and FreeBSD layout (usr/local/bin/, usr/local/lib/)
-            const layouts = [_][]const u8{ "", "usr/local" };
-            for (layouts) |prefix| {
-                const source_base = if (prefix.len > 0)
-                    try std.fs.path.join(self.allocator, &[_][]const u8{ root, prefix })
-                else
-                    try self.allocator.dupe(u8, root);
-                defer self.allocator.free(source_base);
-
-                // Link each standard directory
-                // bin/ and libexec/ are COPIED (not symlinked) so that $0 in scripts
-                // points to the sysroot path, allowing wrapper scripts to find siblings
-                // lib/, include/, share/ are symlinked since they don't have the $0 issue
-                const dirs_to_copy = [_][]const u8{ "bin", "libexec" };
-                for (dirs_to_copy) |dir| {
-                    try self.symlinkOrCopyDirectoryContents(source_base, sysroot, dir, true);
-                }
-                const dirs_to_link = [_][]const u8{ "lib", "include", "share" };
-                for (dirs_to_link) |dir| {
-                    try self.symlinkOrCopyDirectoryContents(source_base, sysroot, dir, false);
-                }
-            }
+            // Link the package root contents directly to sysroot_root
+            // This handles packages with usr/local layout (ports-style)
+            try self.linkTreeContents(root, sysroot_root);
         }
 
-        return sysroot;
+        // Return localbase (sysroot_root/usr/local) as that's what callers expect
+        // for setting LOCALBASE and building PATH
+        const result = try self.allocator.dupe(u8, localbase);
+        return result;
+    }
+
+    /// Recursively link/copy contents of a source directory tree into a destination
+    /// Preserves the directory structure from source
+    fn linkTreeContents(self: *PortsMigrator, src_root: []const u8, dst_root: []const u8) !void {
+        var src_dir = std.fs.cwd().openDir(src_root, .{ .iterate = true }) catch {
+            return; // Source doesn't exist, skip
+        };
+        defer src_dir.close();
+
+        var walker = src_dir.walk(self.allocator) catch return;
+        defer walker.deinit();
+
+        while (walker.next() catch null) |entry| {
+            const src_path = try std.fs.path.join(self.allocator, &[_][]const u8{ src_root, entry.path });
+            defer self.allocator.free(src_path);
+
+            const dst_path = try std.fs.path.join(self.allocator, &[_][]const u8{ dst_root, entry.path });
+            defer self.allocator.free(dst_path);
+
+            switch (entry.kind) {
+                .directory => {
+                    std.fs.cwd().makePath(dst_path) catch {};
+                },
+                .file => {
+                    // Ensure parent directory exists
+                    if (std.fs.path.dirname(dst_path)) |parent| {
+                        std.fs.cwd().makePath(parent) catch {};
+                    }
+
+                    // Check if destination already exists
+                    std.fs.cwd().access(dst_path, .{}) catch {
+                        // Doesn't exist - check if this is a bin/ file (copy) or other (symlink)
+                        const is_bin = std.mem.indexOf(u8, entry.path, "bin/") != null or
+                            std.mem.indexOf(u8, entry.path, "libexec/") != null;
+
+                        if (is_bin) {
+                            // Copy executables so $0 points to sysroot path
+                            std.fs.copyFileAbsolute(src_path, dst_path, .{}) catch |err| {
+                                std.debug.print("    [SYSROOT] Warning: could not copy {s}: {}\n", .{ entry.path, err });
+                            };
+                        } else {
+                            // Symlink libraries and other files
+                            std.fs.cwd().symLink(src_path, dst_path, .{}) catch |err| {
+                                if (self.options.verbose) {
+                                    std.debug.print("    [SYSROOT] Warning: could not symlink {s}: {}\n", .{ entry.path, err });
+                                }
+                            };
+                        }
+                    };
+                },
+                .sym_link => {
+                    // Preserve symlinks
+                    std.fs.cwd().access(dst_path, .{}) catch {
+                        var target_buf: [std.fs.max_path_bytes]u8 = undefined;
+                        const target = std.fs.cwd().readLink(src_path, &target_buf) catch continue;
+                        std.fs.cwd().symLink(target, dst_path, .{}) catch {};
+                    };
+                },
+                else => {},
+            }
+        }
     }
 
     /// Recursively link/copy contents of a directory into the sysroot
