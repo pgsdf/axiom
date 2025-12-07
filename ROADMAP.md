@@ -29,7 +29,7 @@ This document outlines the planned enhancements for Axiom beyond the core 8 phas
 | 27 | Build Sandboxing | High | High | Phase 10 | ✓ Complete |
 | 28 | Secure Bundle Verification | High | Medium | Phase 18 | ✓ Complete |
 | 29 | Resolver Resource Limits | Medium | Low | Phase 16 | ✓ Complete |
-| 30 | Thread-Safe libzfs | Medium | Medium | None | Planned |
+| 30 | Thread-Safe libzfs | Medium | Medium | None | ✓ Complete |
 
 ---
 

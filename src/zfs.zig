@@ -130,8 +130,11 @@ pub const DatasetProperties = struct {
 };
 
 /// Main ZFS handle for library operations
+/// Thread-safe wrapper around libzfs_handle_t using mutex synchronization
 pub const ZfsHandle = struct {
     handle: *c.libzfs_handle_t,
+    /// Mutex to protect libzfs operations which are not thread-safe
+    mutex: std.Thread.Mutex = .{},
 
     /// Initialize libzfs library
     pub fn init() !ZfsHandle {
@@ -141,6 +144,8 @@ pub const ZfsHandle = struct {
 
     /// Clean up libzfs library
     pub fn deinit(self: *ZfsHandle) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         c.libzfs_fini(self.handle);
     }
 
@@ -148,6 +153,9 @@ pub const ZfsHandle = struct {
     pub fn datasetExists(self: *ZfsHandle, allocator: std.mem.Allocator, path: []const u8, dataset_type: DatasetType) !bool {
         const c_path = try allocator.dupeZ(u8, path);
         defer allocator.free(c_path);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         const exists = c.zfs_dataset_exists(self.handle, c_path.ptr, @intFromEnum(dataset_type));
         return exists != 0;
@@ -168,6 +176,9 @@ pub const ZfsHandle = struct {
             nvlist = try p.toNvlist(allocator);
         }
         defer if (nvlist) |list| c.nvlist_free(list);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         const result = c.zfs_create(
             self.handle,
@@ -255,13 +266,14 @@ pub const ZfsHandle = struct {
             if (term.Exited != 0) {
                 return ZfsError.Unknown;
             }
-            // Access self.handle to avoid unused parameter error in recursive path
-            _ = self.handle;
             return;
         }
 
         const c_path = try allocator.dupeZ(u8, path);
         defer allocator.free(c_path);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         const zhp = c.zfs_open(self.handle, c_path.ptr, c.ZFS_TYPE_DATASET) orelse {
             const errno_val = c.libzfs_errno(self.handle);
@@ -299,6 +311,9 @@ pub const ZfsHandle = struct {
         _ = c.nvlist_alloc(&nvlist, c.NV_UNIQUE_NAME, 0);
         defer if (nvlist) |list| c.nvlist_free(list);
 
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         const flags: c_int = if (recursive) 1 else 0;
         const result = c.zfs_snapshot(self.handle, c_path.ptr, @intCast(flags), nvlist);
 
@@ -328,6 +343,9 @@ pub const ZfsHandle = struct {
         }
         defer if (nvlist) |list| c.nvlist_free(list);
 
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         const result = c.zfs_clone(self.handle, c_snap.ptr, c_target.ptr, nvlist);
 
         if (result != 0) {
@@ -347,17 +365,20 @@ pub const ZfsHandle = struct {
         const c_path = try allocator.dupeZ(u8, path);
         defer allocator.free(c_path);
 
-        const zhp = c.zfs_open(self.handle, c_path.ptr, c.ZFS_TYPE_DATASET) orelse {
-            const errno_val = c.libzfs_errno(self.handle);
-            return libzfsErrorToZig(errno_val);
-        };
-        defer c.zfs_close(zhp);
-
         const c_prop = try allocator.dupeZ(u8, property);
         defer allocator.free(c_prop);
 
         const c_value = try allocator.dupeZ(u8, value);
         defer allocator.free(c_value);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const zhp = c.zfs_open(self.handle, c_path.ptr, c.ZFS_TYPE_DATASET) orelse {
+            const errno_val = c.libzfs_errno(self.handle);
+            return libzfsErrorToZig(errno_val);
+        };
+        defer c.zfs_close(zhp);
 
         const result = c.zfs_prop_set(zhp, c_prop.ptr, c_value.ptr);
 
@@ -377,26 +398,31 @@ pub const ZfsHandle = struct {
         const c_path = try allocator.dupeZ(u8, path);
         defer allocator.free(c_path);
 
-        const zhp = c.zfs_open(self.handle, c_path.ptr, c.ZFS_TYPE_DATASET) orelse {
-            const errno_val = c.libzfs_errno(self.handle);
-            return libzfsErrorToZig(errno_val);
-        };
-        defer c.zfs_close(zhp);
-
         const c_prop = try allocator.dupeZ(u8, property);
         defer allocator.free(c_prop);
-        
-        // Try to get user properties first
-        const nvl = c.zfs_get_user_props(zhp);
-        
-        if (nvl != null) {
-            var prop_val: [*c]const u8 = undefined;
-            if (c.nvlist_lookup_string(nvl, c_prop.ptr, &prop_val) == 0) {
-                const value_len = std.mem.len(prop_val);
-                return try allocator.dupe(u8, prop_val[0..value_len]);
+
+        // Try to get user properties first using libzfs (with mutex protection)
+        {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            const zhp = c.zfs_open(self.handle, c_path.ptr, c.ZFS_TYPE_DATASET) orelse {
+                const errno_val = c.libzfs_errno(self.handle);
+                return libzfsErrorToZig(errno_val);
+            };
+            defer c.zfs_close(zhp);
+
+            const nvl = c.zfs_get_user_props(zhp);
+
+            if (nvl != null) {
+                var prop_val: [*c]const u8 = undefined;
+                if (c.nvlist_lookup_string(nvl, c_prop.ptr, &prop_val) == 0) {
+                    const value_len = std.mem.len(prop_val);
+                    return try allocator.dupe(u8, prop_val[0..value_len]);
+                }
             }
         }
-        
+
         // Fallback: use shell command for standard ZFS properties
         // This is more reliable than trying to navigate libzfs's property APIs
         const cmd = try std.fmt.allocPrint(
@@ -453,15 +479,18 @@ pub const ZfsHandle = struct {
         const c_path = try allocator.dupeZ(u8, path);
         defer allocator.free(c_path);
 
+        // Allocate options outside mutex block to ensure lifetime extends to zfs_mount call
+        const c_opts: ?[:0]u8 = if (options) |opts| try allocator.dupeZ(u8, opts) else null;
+        defer if (c_opts) |o| allocator.free(o);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         const zhp = c.zfs_open(self.handle, c_path.ptr, c.ZFS_TYPE_FILESYSTEM) orelse {
             const errno_val = c.libzfs_errno(self.handle);
             return libzfsErrorToZig(errno_val);
         };
         defer c.zfs_close(zhp);
-
-        // Allocate options outside if block to ensure lifetime extends to zfs_mount call
-        const c_opts: ?[:0]u8 = if (options) |opts| try allocator.dupeZ(u8, opts) else null;
-        defer if (c_opts) |o| allocator.free(o);
 
         const c_options: [*c]const u8 = if (c_opts) |o| o.ptr else null;
         const result = c.zfs_mount(zhp, c_options, 0);
@@ -481,6 +510,9 @@ pub const ZfsHandle = struct {
     ) !void {
         const c_path = try allocator.dupeZ(u8, path);
         defer allocator.free(c_path);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         const zhp = c.zfs_open(self.handle, c_path.ptr, c.ZFS_TYPE_FILESYSTEM) orelse {
             const errno_val = c.libzfs_errno(self.handle);
