@@ -956,15 +956,15 @@ pub const PortsMigrator = struct {
 
         const alias_map = std.StaticStringMap(BinaryAlias).initComptime(.{
             // GNU make: package installs 'make', ports expect 'gmake'
-            .{ "devel/gmake", .{ .alias = "gmake", .target = "make" } },
+            .{ "devel/gmake", BinaryAlias{ .alias = "gmake", .target = "make" } },
             // GNU sed: package installs 'sed', ports expect 'gsed'
-            .{ "devel/gsed", .{ .alias = "gsed", .target = "sed" } },
+            .{ "devel/gsed", BinaryAlias{ .alias = "gsed", .target = "sed" } },
             // GNU tar: package installs 'tar', ports expect 'gtar'
-            .{ "archivers/gtar", .{ .alias = "gtar", .target = "tar" } },
+            .{ "archivers/gtar", BinaryAlias{ .alias = "gtar", .target = "tar" } },
             // GNU grep: package installs 'grep', ports expect 'ggrep'
-            .{ "textproc/gnugrep", .{ .alias = "ggrep", .target = "grep" } },
+            .{ "textproc/gnugrep", BinaryAlias{ .alias = "ggrep", .target = "grep" } },
             // GNU awk: package installs 'awk', ports expect 'gawk'
-            .{ "lang/gawk", .{ .alias = "gawk", .target = "awk" } },
+            .{ "lang/gawk", BinaryAlias{ .alias = "gawk", .target = "awk" } },
         });
 
         const bin_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "bin" });
