@@ -853,14 +853,19 @@ pub const PortsMigrator = struct {
     /// Recursively link/copy contents of a source directory tree into a destination
     /// Preserves the directory structure from source
     fn linkTreeContents(self: *PortsMigrator, src_root: []const u8, dst_root: []const u8) !void {
-        var src_dir = std.fs.cwd().openDir(src_root, .{ .iterate = true }) catch {
+        var src_dir = std.fs.cwd().openDir(src_root, .{ .iterate = true }) catch |err| {
+            std.debug.print("    [SYSROOT] Warning: could not open {s}: {}\n", .{ src_root, err });
             return; // Source doesn't exist, skip
         };
         defer src_dir.close();
 
-        var walker = src_dir.walk(self.allocator) catch return;
+        var walker = src_dir.walk(self.allocator) catch |err| {
+            std.debug.print("    [SYSROOT] Warning: could not walk {s}: {}\n", .{ src_root, err });
+            return;
+        };
         defer walker.deinit();
 
+        var file_count: usize = 0;
         while (walker.next() catch null) |entry| {
             const src_path = try std.fs.path.join(self.allocator, &[_][]const u8{ src_root, entry.path });
             defer self.allocator.free(src_path);
@@ -889,6 +894,7 @@ pub const PortsMigrator = struct {
                             std.fs.copyFileAbsolute(src_path, dst_path, .{}) catch |err| {
                                 std.debug.print("    [SYSROOT] Warning: could not copy {s}: {}\n", .{ entry.path, err });
                             };
+                            file_count += 1;
                         } else {
                             // Symlink libraries and other files
                             std.fs.cwd().symLink(src_path, dst_path, .{}) catch |err| {
@@ -896,6 +902,7 @@ pub const PortsMigrator = struct {
                                     std.debug.print("    [SYSROOT] Warning: could not symlink {s}: {}\n", .{ entry.path, err });
                                 }
                             };
+                            file_count += 1;
                         }
                     };
                 },
@@ -905,10 +912,15 @@ pub const PortsMigrator = struct {
                         var target_buf: [std.fs.max_path_bytes]u8 = undefined;
                         const target = std.fs.cwd().readLink(src_path, &target_buf) catch continue;
                         std.fs.cwd().symLink(target, dst_path, .{}) catch {};
+                        file_count += 1;
                     };
                 },
                 else => {},
             }
+        }
+
+        if (file_count == 0) {
+            std.debug.print("    [SYSROOT] Warning: no files linked from {s}\n", .{src_root});
         }
     }
 
@@ -1072,6 +1084,8 @@ pub const PortsMigrator = struct {
         const bin_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "bin" });
         defer self.allocator.free(bin_dir);
 
+        std.debug.print("    [DEBUG] createAutotoolsWrappers: scanning {s}\n", .{bin_dir});
+
         // Autotools that need unversioned wrappers
         const autotools = [_][]const u8{
             "autoconf",
@@ -1083,10 +1097,22 @@ pub const PortsMigrator = struct {
             "ifnames",
         };
 
-        var dir = std.fs.cwd().openDir(bin_dir, .{ .iterate = true }) catch {
+        var dir = std.fs.cwd().openDir(bin_dir, .{ .iterate = true }) catch |err| {
+            std.debug.print("    [DEBUG] createAutotoolsWrappers: could not open bin dir: {}\n", .{err});
             return; // bin dir doesn't exist, nothing to do
         };
         defer dir.close();
+
+        // First, list what's in the bin directory
+        var count: usize = 0;
+        var list_iter = dir.iterate();
+        while (list_iter.next() catch null) |entry| {
+            if (std.mem.startsWith(u8, entry.name, "auto")) {
+                std.debug.print("    [DEBUG] Found in bin: {s}\n", .{entry.name});
+            }
+            count += 1;
+        }
+        std.debug.print("    [DEBUG] Total files in bin dir: {d}\n", .{count});
 
         for (autotools) |tool| {
             // Check if unversioned wrapper already exists
