@@ -818,6 +818,34 @@ This hybrid approach uses `pkg` to provide build-time headers/libraries while Ax
 | `--keep-sandbox` | Don't clean up staging directory |
 | `--dry-run` | Generate manifests only |
 | `--no-deps` | Don't auto-resolve dependencies |
+| `--use-system-tools` | Use /usr/local instead of sysroot (see below) |
+
+### Troubleshooting: Using System Tools
+
+When building ports with complex autotools dependencies (autoconf, automake, libtool), you may encounter build failures where configure scripts can't find required tools. This happens because:
+
+1. **Sysroot wrapper issues** - FreeBSD's autoconf-switch provides wrapper scripts that look for versioned binaries (e.g., `autoconf2.72`) using `$0`. When copied to the sysroot, these wrappers may fail.
+
+2. **Broken package layouts** - Packages built before certain fixes may have incorrect directory structures.
+
+**Solution: Use `--use-system-tools`**
+
+This flag bypasses sysroot creation entirely and uses tools from `/usr/local`:
+
+```bash
+# First, install required tools via pkg
+pkg install autoconf automake libtool
+
+# Then build with system tools
+axiom ports-import devel/automake --use-system-tools
+```
+
+**When to use this flag:**
+- Configure fails with "autoconf is installed... no"
+- Build errors mentioning missing autotools binaries
+- Wrapper script failures in the sysroot
+
+**Note:** This approach requires the build dependencies to be installed system-wide via `pkg`. Once the initial bootstrap is complete and packages are built with correct layouts, the sysroot approach should work without this flag.
 
 ### Advanced: Manual Manifest Generation
 
