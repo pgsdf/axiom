@@ -1835,6 +1835,15 @@ pub const PortsMigrator = struct {
         var configure_env_arg: ?[]const u8 = null;
         defer if (configure_env_arg) |c| self.allocator.free(c);
 
+        // CPPFLAGS and LDFLAGS must be passed as make variables
+        // Setting them in child process environment is not enough - they don't propagate
+        // to configure subprocesses. The ports framework needs them as make variable overrides.
+        var cppflags_arg: ?[]const u8 = null;
+        defer if (cppflags_arg) |f| self.allocator.free(f);
+
+        var ldflags_arg: ?[]const u8 = null;
+        defer if (ldflags_arg) |f| self.allocator.free(f);
+
         try args.append("make");
         try args.append("-C");
         try args.append(port_path);
@@ -1890,10 +1899,28 @@ pub const PortsMigrator = struct {
             );
             try args.append(configure_env_arg.?);
 
+            // Pass CPPFLAGS and LDFLAGS as make variable overrides
+            // Using += syntax ensures they're appended to existing values
+            // This is critical: environment variables don't propagate to configure subprocesses
+            cppflags_arg = try std.fmt.allocPrint(
+                self.allocator,
+                "CPPFLAGS+={s}",
+                .{env.cppflags},
+            );
+            try args.append(cppflags_arg.?);
+
+            ldflags_arg = try std.fmt.allocPrint(
+                self.allocator,
+                "LDFLAGS+={s}",
+                .{env.ldflags},
+            );
+            try args.append(ldflags_arg.?);
+
             std.debug.print("    [DEBUG] Passing to ports framework:\n", .{});
             std.debug.print("    [DEBUG]   MAKE_ENV+=PATH={s} LOCALBASE={s}\n", .{ env.path, localbase });
             std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PATH={s} LOCALBASE={s}\n", .{ env.path, localbase });
-            std.debug.print("    [DEBUG]   (LDFLAGS/CPPFLAGS set via process environment)\n", .{});
+            std.debug.print("    [DEBUG]   CPPFLAGS+={s}\n", .{env.cppflags});
+            std.debug.print("    [DEBUG]   LDFLAGS+={s}\n", .{env.ldflags});
         }
 
         // Add DESTDIR if provided
