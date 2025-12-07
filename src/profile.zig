@@ -419,12 +419,12 @@ pub const ProfileManager = struct {
         const mountpoint = try self.zfs_handle.getMountpoint(self.allocator, dataset_path);
         defer self.allocator.free(mountpoint);
 
-        // Snapshot before update
-        const timestamp = std.time.timestamp();
+        // Snapshot before update (use milliseconds to avoid collisions)
+        const timestamp_ms = std.time.milliTimestamp();
         const snap_name = try std.fmt.allocPrint(
             self.allocator,
             "pre-update-{d}",
-            .{timestamp},
+            .{timestamp_ms},
         );
         defer self.allocator.free(snap_name);
 

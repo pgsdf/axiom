@@ -1184,38 +1184,9 @@ pub const Resolver = struct {
         return candidates.toOwnedSlice();
     }
 
-    /// Pick the best candidate from available options
-    /// Current strategy: newest version
-    fn pickBest(self: *Resolver, candidates: []Candidate) Candidate {
-        _ = self;
-        
-        var best = candidates[0];
-        for (candidates[1..]) |candidate| {
-            if (candidate.id.version.greaterThan(best.id.version)) {
-                best = candidate;
-            }
-        }
-        return best;
-    }
-
     /// Print a constraint for debugging
-    fn printConstraint(self: *Resolver, constraint: VersionConstraint) void {
-        _ = self;
-        switch (constraint) {
-            .exact => |v| std.debug.print("={}", .{v}),
-            .tilde => |v| std.debug.print("~{}", .{v}),
-            .caret => |v| std.debug.print("^{}", .{v}),
-            .any => std.debug.print("*", .{}),
-            .range => |r| {
-                if (r.min) |min| {
-                    std.debug.print("{s}{}", .{ if (r.min_inclusive) ">=" else ">", min });
-                }
-                if (r.max) |max| {
-                    if (r.min != null) std.debug.print(",", .{});
-                    std.debug.print("{s}{}", .{ if (r.max_inclusive) "<=" else "<", max });
-                }
-            },
-        }
+    fn printConstraint(_: *Resolver, constraint: VersionConstraint) void {
+        printVersionConstraint(constraint);
     }
 
     /// Build a virtual package index from all packages in the store
@@ -1277,11 +1248,45 @@ pub const Resolver = struct {
     }
 
     /// Get list of conflicts detected during resolution
-    pub fn getConflicts(self: *Resolver, ctx: *ResolutionContext) []ConflictInfo {
-        _ = self;
+    pub fn getConflicts(_: *Resolver, ctx: *ResolutionContext) []ConflictInfo {
         return ctx.conflicts.items;
     }
 };
+
+// =============================================================================
+// Standalone Helper Functions
+// =============================================================================
+
+/// Pick the best candidate from available options
+/// Current strategy: select newest version
+fn pickBestCandidate(candidates: []Candidate) Candidate {
+    var best = candidates[0];
+    for (candidates[1..]) |candidate| {
+        if (candidate.id.version.greaterThan(best.id.version)) {
+            best = candidate;
+        }
+    }
+    return best;
+}
+
+/// Print a version constraint for debugging output
+fn printVersionConstraint(constraint: VersionConstraint) void {
+    switch (constraint) {
+        .exact => |v| std.debug.print("={}", .{v}),
+        .tilde => |v| std.debug.print("~{}", .{v}),
+        .caret => |v| std.debug.print("^{}", .{v}),
+        .any => std.debug.print("*", .{}),
+        .range => |r| {
+            if (r.min) |min| {
+                std.debug.print("{s}{}", .{ if (r.min_inclusive) ">=" else ">", min });
+            }
+            if (r.max) |max| {
+                if (r.min != null) std.debug.print(",", .{});
+                std.debug.print("{s}{}", .{ if (r.max_inclusive) "<=" else "<", max });
+            }
+        },
+    }
+}
 
 // Tests
 test "Resolver.constraint_satisfaction" {

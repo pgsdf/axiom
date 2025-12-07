@@ -6,9 +6,11 @@ const realization = @import("realization.zig");
 const store = @import("store.zig");
 const conflict = @import("conflict.zig");
 
-// POSIX getuid/getgid - works on FreeBSD, Linux, and other POSIX systems
+// POSIX getuid/getgid/getpwuid - works on FreeBSD, Linux, and other POSIX systems
 const c = @cImport({
     @cInclude("unistd.h");
+    @cInclude("pwd.h");
+    @cInclude("sys/types.h");
 });
 
 const ZfsHandle = zfs.ZfsHandle;
@@ -51,15 +53,23 @@ pub const UserContext = struct {
         // Determine access level based on UID
         const access_level: AccessLevel = if (uid == 0) .root else .user;
 
-        // Get username from environment or /etc/passwd
-        const username = std.process.getEnvVarOwned(allocator, "USER") catch blk: {
-            break :blk try allocator.dupe(u8, "unknown");
+        // Get username - prefer passwd database over environment for security
+        // Environment variables can be spoofed, but getpwuid uses system auth
+        const username = getUsernameFromSystem(allocator, uid) catch |err| blk: {
+            // Fall back to environment variable if system lookup fails
+            _ = err;
+            break :blk std.process.getEnvVarOwned(allocator, "USER") catch {
+                break :blk try allocator.dupe(u8, "unknown");
+            };
         };
 
-        // Get home directory
-        const home_dir = std.process.getEnvVarOwned(allocator, "HOME") catch blk: {
-            const default_home = try std.fmt.allocPrint(allocator, "/home/{s}", .{username});
-            break :blk default_home;
+        // Get home directory - prefer passwd database over environment for consistency
+        const home_dir = getHomeDirFromSystem(allocator, uid) catch |err| blk: {
+            _ = err;
+            break :blk std.process.getEnvVarOwned(allocator, "HOME") catch {
+                const default_home = try std.fmt.allocPrint(allocator, "/home/{s}", .{username});
+                break :blk default_home;
+            };
         };
 
         return UserContext{
@@ -71,6 +81,34 @@ pub const UserContext = struct {
             .access_level = access_level,
             .allocator = allocator,
         };
+    }
+
+    /// Get username from system password database (more secure than $USER)
+    fn getUsernameFromSystem(allocator: std.mem.Allocator, uid: u32) ![]const u8 {
+        const pw = c.getpwuid(uid);
+        if (pw == null) {
+            return error.UserNotFound;
+        }
+        const name_ptr = pw.*.pw_name;
+        if (name_ptr == null) {
+            return error.UserNotFound;
+        }
+        const name_len = std.mem.len(name_ptr);
+        return try allocator.dupe(u8, name_ptr[0..name_len]);
+    }
+
+    /// Get home directory from system password database
+    fn getHomeDirFromSystem(allocator: std.mem.Allocator, uid: u32) ![]const u8 {
+        const pw = c.getpwuid(uid);
+        if (pw == null) {
+            return error.UserNotFound;
+        }
+        const dir_ptr = pw.*.pw_dir;
+        if (dir_ptr == null) {
+            return error.UserNotFound;
+        }
+        const dir_len = std.mem.len(dir_ptr);
+        return try allocator.dupe(u8, dir_ptr[0..dir_len]);
     }
 
     /// Initialize user context with specific values (for testing or impersonation)
@@ -369,12 +407,12 @@ pub const UserProfileManager = struct {
         const mountpoint = try self.zfs_handle.getMountpoint(self.allocator, dataset_path);
         defer self.allocator.free(mountpoint);
 
-        // Snapshot before update
-        const timestamp = std.time.timestamp();
+        // Snapshot before update (use milliseconds to avoid collisions)
+        const timestamp_ms = std.time.milliTimestamp();
         const snap_name = try std.fmt.allocPrint(
             self.allocator,
             "pre-update-{d}",
-            .{timestamp},
+            .{timestamp_ms},
         );
         defer self.allocator.free(snap_name);
 

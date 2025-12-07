@@ -1,5 +1,24 @@
 const std = @import("std");
 
+// =============================================================================
+// Security Limits - Named constants for clarity and maintainability
+// =============================================================================
+
+/// Maximum path length for extracted files (prevents buffer overflows)
+pub const DEFAULT_MAX_PATH_LENGTH: usize = 1024;
+
+/// Maximum size for a single file (1 GB) - prevents zip bombs
+pub const DEFAULT_MAX_FILE_SIZE: u64 = 1 * 1024 * 1024 * 1024;
+
+/// Maximum total extraction size (10 GB) - prevents disk exhaustion
+pub const DEFAULT_MAX_TOTAL_SIZE: u64 = 10 * 1024 * 1024 * 1024;
+
+/// Default permission mask for directories
+pub const DEFAULT_DIR_PERMISSION_MASK: u32 = 0o755;
+
+/// Default permission mask for regular files
+pub const DEFAULT_FILE_PERMISSION_MASK: u32 = 0o644;
+
 /// Secure tar extraction with hardened defaults
 /// Prevents path traversal, symlink escapes, and other archive-based attacks
 pub const SecureTarExtractor = struct {
@@ -17,15 +36,16 @@ pub const SecureTarExtractor = struct {
         allow_absolute_paths: bool = false,
         /// Allow parent directory references (default: false - path traversal)
         allow_parent_refs: bool = false,
-        /// Maximum path length (default: 1024)
-        max_path_length: usize = 1024,
-        /// Maximum file size in bytes (default: 1GB)
-        max_file_size: u64 = 1024 * 1024 * 1024,
-        /// Maximum total extracted size in bytes (default: 10GB)
-        max_total_size: u64 = 10 * 1024 * 1024 * 1024,
-        /// Permission mask to apply (default: 0o755 for dirs, 0o644 for files)
-        dir_permission_mask: u32 = 0o755,
-        file_permission_mask: u32 = 0o644,
+        /// Maximum path length
+        max_path_length: usize = DEFAULT_MAX_PATH_LENGTH,
+        /// Maximum file size in bytes (prevents zip bombs)
+        max_file_size: u64 = DEFAULT_MAX_FILE_SIZE,
+        /// Maximum total extracted size in bytes (prevents disk exhaustion)
+        max_total_size: u64 = DEFAULT_MAX_TOTAL_SIZE,
+        /// Permission mask to apply for directories
+        dir_permission_mask: u32 = DEFAULT_DIR_PERMISSION_MASK,
+        /// Permission mask to apply for regular files
+        file_permission_mask: u32 = DEFAULT_FILE_PERMISSION_MASK,
         /// Strip setuid/setgid bits (default: true)
         strip_setuid: bool = true,
         /// Strip sticky bit (default: true)
