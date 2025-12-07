@@ -1844,6 +1844,20 @@ pub const PortsMigrator = struct {
         var ldflags_arg: ?[]const u8 = null;
         defer if (ldflags_arg) |f| self.allocator.free(f);
 
+        // Additional CONFIGURE_ENV and MAKE_ENV for CPPFLAGS/LDFLAGS
+        // These must be passed separately with shell quoting for values with spaces
+        var configure_cppflags_arg: ?[]const u8 = null;
+        defer if (configure_cppflags_arg) |f| self.allocator.free(f);
+
+        var configure_ldflags_arg: ?[]const u8 = null;
+        defer if (configure_ldflags_arg) |f| self.allocator.free(f);
+
+        var make_cppflags_arg: ?[]const u8 = null;
+        defer if (make_cppflags_arg) |f| self.allocator.free(f);
+
+        var make_ldflags_arg: ?[]const u8 = null;
+        defer if (make_ldflags_arg) |f| self.allocator.free(f);
+
         try args.append("make");
         try args.append("-C");
         try args.append(port_path);
@@ -1901,7 +1915,6 @@ pub const PortsMigrator = struct {
 
             // Pass CPPFLAGS and LDFLAGS as make variable overrides
             // Using += syntax ensures they're appended to existing values
-            // This is critical: environment variables don't propagate to configure subprocesses
             cppflags_arg = try std.fmt.allocPrint(
                 self.allocator,
                 "CPPFLAGS+={s}",
@@ -1916,11 +1929,46 @@ pub const PortsMigrator = struct {
             );
             try args.append(ldflags_arg.?);
 
+            // CRITICAL: Also pass CPPFLAGS and LDFLAGS via CONFIGURE_ENV and MAKE_ENV
+            // The ports framework runs: env ${CONFIGURE_ENV} ./configure
+            // Configure scripts read CPPFLAGS/LDFLAGS from environment to set up build
+            // Without this, configure won't find headers/libs and the build will fail
+            // Use shell quoting to protect values containing spaces
+            configure_cppflags_arg = try std.fmt.allocPrint(
+                self.allocator,
+                "CONFIGURE_ENV+=CPPFLAGS=\"{s}\"",
+                .{env.cppflags},
+            );
+            try args.append(configure_cppflags_arg.?);
+
+            configure_ldflags_arg = try std.fmt.allocPrint(
+                self.allocator,
+                "CONFIGURE_ENV+=LDFLAGS=\"{s}\"",
+                .{env.ldflags},
+            );
+            try args.append(configure_ldflags_arg.?);
+
+            make_cppflags_arg = try std.fmt.allocPrint(
+                self.allocator,
+                "MAKE_ENV+=CPPFLAGS=\"{s}\"",
+                .{env.cppflags},
+            );
+            try args.append(make_cppflags_arg.?);
+
+            make_ldflags_arg = try std.fmt.allocPrint(
+                self.allocator,
+                "MAKE_ENV+=LDFLAGS=\"{s}\"",
+                .{env.ldflags},
+            );
+            try args.append(make_ldflags_arg.?);
+
             std.debug.print("    [DEBUG] Passing to ports framework:\n", .{});
             std.debug.print("    [DEBUG]   MAKE_ENV+=PATH={s} LOCALBASE={s}\n", .{ env.path, localbase });
             std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PATH={s} LOCALBASE={s}\n", .{ env.path, localbase });
             std.debug.print("    [DEBUG]   CPPFLAGS+={s}\n", .{env.cppflags});
             std.debug.print("    [DEBUG]   LDFLAGS+={s}\n", .{env.ldflags});
+            std.debug.print("    [DEBUG]   CONFIGURE_ENV+=CPPFLAGS=\"{s}\"\n", .{env.cppflags});
+            std.debug.print("    [DEBUG]   CONFIGURE_ENV+=LDFLAGS=\"{s}\"\n", .{env.ldflags});
         }
 
         // Add DESTDIR if provided
