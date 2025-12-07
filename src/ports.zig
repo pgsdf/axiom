@@ -938,6 +938,66 @@ pub const PortsMigrator = struct {
         }
     }
 
+    /// Create binary aliases in the sysroot for ports where the installed binary name
+    /// differs from what FreeBSD ports expect.
+    ///
+    /// For example:
+    /// - devel/gmake: The GNU make package installs 'make', but ports expect 'gmake'
+    /// - devel/gsed: The GNU sed package installs 'sed', but ports expect 'gsed'
+    ///
+    /// This creates symlinks in sysroot/bin/ from the expected name to the actual binary.
+    fn createBinaryAliases(self: *PortsMigrator, sysroot: []const u8, dep_origins: []const []const u8) !void {
+        // Map of port origin -> (alias_name, target_name)
+        // alias_name is what ports expect, target_name is what the package actually installs
+        const BinaryAlias = struct {
+            alias: []const u8,
+            target: []const u8,
+        };
+
+        const alias_map = std.StaticStringMap(BinaryAlias).initComptime(.{
+            // GNU make: package installs 'make', ports expect 'gmake'
+            .{ "devel/gmake", .{ .alias = "gmake", .target = "make" } },
+            // GNU sed: package installs 'sed', ports expect 'gsed'
+            .{ "devel/gsed", .{ .alias = "gsed", .target = "sed" } },
+            // GNU tar: package installs 'tar', ports expect 'gtar'
+            .{ "archivers/gtar", .{ .alias = "gtar", .target = "tar" } },
+            // GNU grep: package installs 'grep', ports expect 'ggrep'
+            .{ "textproc/gnugrep", .{ .alias = "ggrep", .target = "grep" } },
+            // GNU awk: package installs 'awk', ports expect 'gawk'
+            .{ "lang/gawk", .{ .alias = "gawk", .target = "awk" } },
+        });
+
+        const bin_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "bin" });
+        defer self.allocator.free(bin_dir);
+
+        for (dep_origins) |origin| {
+            if (alias_map.get(origin)) |alias_info| {
+                const target_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bin_dir, alias_info.target });
+                defer self.allocator.free(target_path);
+
+                const alias_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bin_dir, alias_info.alias });
+                defer self.allocator.free(alias_path);
+
+                // Check if target binary exists
+                std.fs.cwd().access(target_path, .{}) catch {
+                    // Target doesn't exist, skip
+                    continue;
+                };
+
+                // Check if alias already exists
+                std.fs.cwd().access(alias_path, .{}) catch {
+                    // Alias doesn't exist, create symlink
+                    // Use relative symlink so it works regardless of sysroot location
+                    std.fs.cwd().symLink(alias_info.target, alias_path, .{}) catch |err| {
+                        std.debug.print("    [SYSROOT] Warning: could not create alias {s} -> {s}: {}\n", .{ alias_info.alias, alias_info.target, err });
+                        continue;
+                    };
+                    std.debug.print("    [SYSROOT] Created alias: {s} -> {s}\n", .{ alias_info.alias, alias_info.target });
+                };
+            }
+        }
+    }
+
     /// Find ALL root paths for a package in the Axiom store by name
     /// Returns paths to all versions' root/ directories (important for packages like autoconf
     /// where autoconf-switch and autoconf both provide different binaries under the same package name)
@@ -1182,6 +1242,10 @@ pub const PortsMigrator = struct {
         // Create sysroot with all package roots symlinked
         const sysroot = try self.createBuildSysroot(all_roots.items);
         errdefer self.allocator.free(sysroot);
+
+        // Create binary aliases in sysroot for ports that install binaries with different names
+        // than what FreeBSD ports expect (e.g., gmake package installs 'make' but ports expect 'gmake')
+        try self.createBinaryAliases(sysroot, deps.items);
 
         // Build paths using the sysroot
         const sysroot_bin = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "bin" });
