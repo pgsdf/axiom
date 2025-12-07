@@ -813,23 +813,24 @@ pub const PortsMigrator = struct {
         );
         errdefer self.allocator.free(sysroot_root);
 
-        // localbase is what LOCALBASE will be set to (e.g., /tmp/axiom-sysroot-XXX/usr/local)
-        const localbase = try std.fs.path.join(self.allocator, &[_][]const u8{
+        // sysroot_localbase is the path that will be used for search paths (PATH, LDFLAGS, CPPFLAGS)
+        // Note: LOCALBASE for ports is always /usr/local (the install prefix), NOT the sysroot
+        const sysroot_localbase = try std.fs.path.join(self.allocator, &[_][]const u8{
             sysroot_root,
             "usr/local",
         });
-        defer self.allocator.free(localbase);
+        defer self.allocator.free(sysroot_localbase);
 
-        // Create the localbase directory structure
+        // Create the sysroot_localbase directory structure
         const subdirs = [_][]const u8{ "bin", "lib", "include", "share", "libexec", "lib/perl5", "share/aclocal" };
         for (subdirs) |subdir| {
-            const full_path = try std.fs.path.join(self.allocator, &[_][]const u8{ localbase, subdir });
+            const full_path = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot_localbase, subdir });
             defer self.allocator.free(full_path);
             try std.fs.cwd().makePath(full_path);
         }
 
         std.debug.print("    [SYSROOT] Creating sysroot at: {s}\n", .{sysroot_root});
-        std.debug.print("    [SYSROOT] LOCALBASE will be: {s}\n", .{localbase});
+        std.debug.print("    [SYSROOT] Sysroot localbase: {s}\n", .{sysroot_localbase});
 
         // Link files from each package root into the sysroot ROOT (not localbase)
         // This preserves the package's usr/local structure so that:
@@ -843,9 +844,9 @@ pub const PortsMigrator = struct {
             try self.linkTreeContents(root, sysroot_root);
         }
 
-        // Return localbase (sysroot_root/usr/local) as that's what callers expect
-        // for setting LOCALBASE and building PATH
-        const result = try self.allocator.dupe(u8, localbase);
+        // Return sysroot_localbase (sysroot_root/usr/local) as that's what callers expect
+        // for building search paths (PATH, LDFLAGS, CPPFLAGS)
+        const result = try self.allocator.dupe(u8, sysroot_localbase);
         return result;
     }
 
@@ -1648,24 +1649,31 @@ pub const PortsMigrator = struct {
         // Don't chroot during install (DESTDIR is empty staging dir without /bin/sh)
         try args.append("NO_INSTALL_CHROOT=yes");
 
-        // Pass Axiom sysroot PATH and LOCALBASE through MAKE_ENV and CONFIGURE_ENV
+        // Pass Axiom sysroot PATH through MAKE_ENV and CONFIGURE_ENV
         // This is critical: the ports framework (bsd.port.mk) uses these variables
         // to set up the environment for configure and build phases.
         //
         // The sysroot approach merges all dependency packages into a single directory,
         // allowing wrapper scripts (like autoconf-switch) to find related binaries.
         //
+        // IMPORTANT:
+        // - LOCALBASE must ALWAYS be /usr/local (the install prefix in the stage dir)
+        // - Do NOT set LOCALBASE to the sysroot! That causes files to be installed
+        //   under stage/tmp/axiom-sysroot-.../usr/local instead of stage/usr/local
+        // - The sysroot only affects search paths (PATH, LDFLAGS, CPPFLAGS)
+        //
         // IMPORTANT: Only pass variables WITHOUT SPACES via MAKE_ENV/CONFIGURE_ENV.
         // Variables with spaces (like LDFLAGS with multiple -L flags) get shell-split
         // when the ports framework runs: env ${MAKE_ENV} ./configure
         // Instead, LDFLAGS/CPPFLAGS are set in the child process env_map below.
         if (build_env) |env| {
-            // Use sysroot as LOCALBASE if available, otherwise fall back to /usr/local
-            const localbase = if (env.sysroot.len > 0) env.sysroot else "/usr/local";
+            // LOCALBASE is always /usr/local - this is the install prefix
+            // The sysroot is only used for search paths, not for installation
+            const localbase = "/usr/local";
 
             // Only pass variables WITHOUT SPACES via MAKE_ENV/CONFIGURE_ENV
-            // PATH and LOCALBASE are safe (no spaces in values)
-            // LOCALBASE is critical for FreeBSD ports - tells them where to find libs/headers
+            // PATH includes sysroot/bin for finding dependency binaries
+            // LOCALBASE is /usr/local for correct installation prefix
             make_env_arg = try std.fmt.allocPrint(
                 self.allocator,
                 "MAKE_ENV+=PATH={s} LOCALBASE={s}",
@@ -1728,10 +1736,11 @@ pub const PortsMigrator = struct {
                 try env_map.?.put("LANG", lang);
             }
 
-            // LOCALBASE is critical for FreeBSD ports - it's where ports look for dependencies
-            // Use sysroot if available (contains all symlinked dependencies), otherwise /usr/local
-            const localbase = if (env.sysroot.len > 0) env.sysroot else "/usr/local";
-            try env_map.?.put("LOCALBASE", localbase);
+            // LOCALBASE must ALWAYS be /usr/local - this is the install prefix
+            // Do NOT set LOCALBASE to the sysroot! That would cause ports to install
+            // files to the wrong location (stage/tmp/axiom-sysroot-.../usr/local)
+            // The sysroot is only used for search paths (PATH, LDFLAGS, CPPFLAGS)
+            try env_map.?.put("LOCALBASE", "/usr/local");
 
             // Set custom PATH with sysroot bin directory first
             try env_map.?.put("PATH", env.path);
@@ -1768,7 +1777,7 @@ pub const PortsMigrator = struct {
 
             if (self.options.verbose) {
                 std.debug.print("  Build environment:\n", .{});
-                std.debug.print("    LOCALBASE={s}\n", .{localbase});
+                std.debug.print("    LOCALBASE=/usr/local\n", .{});
                 std.debug.print("    PATH={s}\n", .{env.path});
                 std.debug.print("    LD_LIBRARY_PATH={s}\n", .{env.ld_library_path});
             }
