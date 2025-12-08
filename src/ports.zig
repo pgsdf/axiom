@@ -2427,9 +2427,12 @@ pub const PortsMigrator = struct {
 
     /// Get direct dependencies for a port (returns list of port origins)
     fn getPortDependencies(self: *PortsMigrator, origin: []const u8) !std.ArrayList([]const u8) {
+        // Parse origin to extract flavor (e.g., "devel/py-wheel@py311" -> path="devel/py-wheel", flavor="py311")
+        const parsed = ParsedOrigin.parse(origin);
+
         const port_path = try std.fs.path.join(self.allocator, &[_][]const u8{
             self.options.ports_tree,
-            origin,
+            parsed.path, // Use path without @flavor suffix
         });
         defer self.allocator.free(port_path);
 
@@ -2442,9 +2445,27 @@ pub const PortsMigrator = struct {
         // Get BUILD_DEPENDS, LIB_DEPENDS, RUN_DEPENDS
         const dep_vars = [_][]const u8{ "BUILD_DEPENDS", "LIB_DEPENDS", "RUN_DEPENDS" };
 
+        // Build flavor argument if present
+        var flavor_arg: ?[]const u8 = null;
+        defer if (flavor_arg) |f| self.allocator.free(f);
+        if (parsed.flavor) |flv| {
+            flavor_arg = try std.fmt.allocPrint(self.allocator, "FLAVOR={s}", .{flv});
+        }
+
         for (dep_vars) |dep_var| {
-            var args = [_][]const u8{ "make", "-C", port_path, "-V", dep_var };
-            var child = std.process.Child.init(&args, self.allocator);
+            // Build args list with optional flavor
+            var args_list = std.ArrayList([]const u8).init(self.allocator);
+            defer args_list.deinit();
+            try args_list.append("make");
+            try args_list.append("-C");
+            try args_list.append(port_path);
+            if (flavor_arg) |f| {
+                try args_list.append(f);
+            }
+            try args_list.append("-V");
+            try args_list.append(dep_var);
+
+            var child = std.process.Child.init(args_list.items, self.allocator);
             child.stdout_behavior = .Pipe;
             child.stderr_behavior = .Ignore;
 
