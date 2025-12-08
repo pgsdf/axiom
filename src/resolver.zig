@@ -1217,8 +1217,8 @@ pub const Resolver = struct {
                     }
                     replaces = try repl.toOwnedSlice();
 
-                    // Copy kernel compat
-                    kernel_compat = pkg_meta.manifest.kernel_compat;
+                    // Copy kernel compat (field is named 'kernel' in Manifest)
+                    kernel_compat = pkg_meta.manifest.kernel;
 
                     // Clean up the metadata (but not the arrays we just copied)
                     pkg_meta.manifest.deinit(self.allocator);
