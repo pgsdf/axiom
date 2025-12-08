@@ -549,6 +549,9 @@ fn copyDirRecursive(
 
                 // Check if file already exists from another package
                 if (env_files.get(rel_path)) |existing_pkg| {
+                    // In this branch, rel_path is not stored in env_files, so we must free it
+                    defer allocator.free(rel_path);
+
                     // Potential conflict
                     if (try tracker.checkFileConflict(
                         rel_path,
@@ -592,7 +595,6 @@ fn copyDirRecursive(
                             },
                             .merge => {},
                         }
-                        allocator.free(rel_path);
                     }
                 } else {
                     // No conflict - copy file
