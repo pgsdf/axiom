@@ -1555,8 +1555,10 @@ pub const PortsMigrator = struct {
             if (std.mem.eql(u8, dep_origin, origin)) continue;
 
             // Map port origin to Axiom package name
-            // Note: @flavor suffix is stripped (e.g., py-flit-core@py311 → py-flit-core)
-            const pkg_name = self.mapPortName(dep_origin);
+            // For Python packages: py-flit-core@py311 → py311-flit-core
+            // For others: strips @flavor and applies standard mappings
+            const pkg_name = try self.mapPortNameAlloc(dep_origin);
+            defer self.allocator.free(pkg_name);
             if (!std.mem.eql(u8, pkg_name, dep_origin)) {
                 std.debug.print("    [DEBUG] Mapped {s} → {s}\n", .{ dep_origin, pkg_name });
             }
@@ -3019,17 +3021,19 @@ pub const PortsMigrator = struct {
     /// Rules in order:
     /// 0. Strip @flavor suffix if present (e.g., py-setuptools@py311 → py-setuptools)
     /// 1. Exact origin overrides (lang/perl5.42 → perl, devel/autoconf-switch → autoconf)
-    /// 2. Perl core ports: perl5* → perl
-    /// 3. Perl modules: p5-* → strip "p5-" prefix
-    /// 4. Fallback: use the port name (last path component) as-is
+    /// 2. Python packages with flavor: py-*@pyXXX → pyXXX-* (e.g., py-flit-core@py311 → py311-flit-core)
+    /// 3. Perl core ports: perl5* → perl
+    /// 4. Perl modules: p5-* → strip "p5-" prefix
+    /// 5. Fallback: use the port name (last path component) as-is
     fn mapPortName(self: *PortsMigrator, origin: []const u8) []const u8 {
         _ = self; // May use self.options.name_mappings for additional overrides later
 
-        // Strip @flavor suffix if present (e.g., "devel/py-setuptools@py311" → "devel/py-setuptools")
-        const origin_without_flavor = if (std.mem.indexOfScalar(u8, origin, '@')) |at_pos|
-            origin[0..at_pos]
-        else
-            origin;
+        // Extract flavor if present (e.g., "devel/py-setuptools@py311" → flavor="py311")
+        var flavor: ?[]const u8 = null;
+        const origin_without_flavor = if (std.mem.indexOfScalar(u8, origin, '@')) |at_pos| blk: {
+            flavor = origin[at_pos + 1 ..];
+            break :blk origin[0..at_pos];
+        } else origin;
 
         // Compile-time map for exact origin overrides
         const overrides = std.StaticStringMap([]const u8).initComptime(.{
@@ -3072,6 +3076,38 @@ pub const PortsMigrator = struct {
 
         // 5. Fallback: use the port name as-is
         return port_name;
+    }
+
+    /// Map port origin to Axiom package name (allocating version)
+    /// Handles Python packages: py-flit-core@py311 → py311-flit-core
+    /// Returns an allocated string that the caller must free.
+    fn mapPortNameAlloc(self: *PortsMigrator, origin: []const u8) ![]const u8 {
+        // Extract flavor if present
+        var flavor: ?[]const u8 = null;
+        const origin_without_flavor = if (std.mem.indexOfScalar(u8, origin, '@')) |at_pos| blk: {
+            flavor = origin[at_pos + 1 ..];
+            break :blk origin[0..at_pos];
+        } else origin;
+
+        // Extract port name (last path component)
+        const port_name = if (std.mem.lastIndexOfScalar(u8, origin_without_flavor, '/')) |idx|
+            origin_without_flavor[idx + 1 ..]
+        else
+            origin_without_flavor;
+
+        // Python packages with flavor: py-flit-core@py311 → py311-flit-core
+        if (flavor) |flv| {
+            if (std.mem.startsWith(u8, port_name, "py-") and port_name.len > 3) {
+                // Construct: flavor + "-" + (port_name without "py-")
+                // e.g., "py311" + "-" + "flit-core" = "py311-flit-core"
+                const name_without_prefix = port_name[3..]; // Skip "py-"
+                return try std.fmt.allocPrint(self.allocator, "{s}-{s}", .{ flv, name_without_prefix });
+            }
+        }
+
+        // For non-Python packages, use the existing mapping and dupe
+        const mapped = self.mapPortName(origin);
+        return try self.allocator.dupe(u8, mapped);
     }
 
     /// Check if a port is a kernel module based on USES and categories
