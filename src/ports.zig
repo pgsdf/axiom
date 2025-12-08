@@ -28,6 +28,44 @@ const manifest_pkg = @import("manifest.zig");
 const types = @import("types.zig");
 const store_pkg = @import("store.zig");
 const build_pkg = @import("build.zig");
+
+/// Progress indicator for long-running operations
+/// Prints dots periodically to show activity
+const ProgressIndicator = struct {
+    thread: ?std.Thread = null,
+    stop_flag: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    interval_ms: u64 = 5000, // Print a dot every 5 seconds
+    prefix: []const u8 = "",
+
+    /// Start the progress indicator in a background thread
+    pub fn start(self: *ProgressIndicator) void {
+        self.stop_flag.store(false, .release);
+        self.thread = std.Thread.spawn(.{}, progressThread, .{self}) catch null;
+    }
+
+    /// Stop the progress indicator and wait for thread to finish
+    pub fn stop(self: *ProgressIndicator) void {
+        self.stop_flag.store(true, .release);
+        if (self.thread) |t| {
+            t.join();
+            self.thread = null;
+        }
+        // Print newline after dots
+        std.debug.print("\n", .{});
+    }
+
+    fn progressThread(self: *ProgressIndicator) void {
+        var elapsed: u64 = 0;
+        while (!self.stop_flag.load(.acquire)) {
+            std.time.sleep(1000 * std.time.ns_per_ms); // Sleep 1 second
+            elapsed += 1000;
+            if (elapsed >= self.interval_ms) {
+                std.debug.print(".", .{});
+                elapsed = 0;
+            }
+        }
+    }
+};
 const import_pkg = @import("import.zig");
 const zfs = @import("zfs.zig");
 const bootstrap_pkg = @import("bootstrap.zig");
@@ -1681,10 +1719,18 @@ pub const PortsMigrator = struct {
 
         // Step 4: Build the port with NO_DEPENDS (skip ports dependency machinery)
         // Dependencies are now available via PATH from Axiom store
-        std.debug.print("  Building...\n", .{});
+        std.debug.print("  Building (may take a while)", .{});
+
+        // Start progress indicator for long-running build
+        var build_progress = ProgressIndicator{ .interval_ms = 10000 }; // Dot every 10 seconds
+        build_progress.start();
+
         var build_result = try self.runMakeTargetNoDeps(port_path, "build", null, &build_env, origin);
+
+        build_progress.stop();
+
         if (build_result.exit_code != 0) {
-            std.debug.print("  Build failed with exit code: {d}\n", .{build_result.exit_code});
+            std.debug.print("  Build FAILED (exit code: {d})\n", .{build_result.exit_code});
             // Show the last part of stdout (compiler errors are in stdout)
             if (build_result.stdout) |stdout| {
                 // Show last 4KB of output to catch the actual error
@@ -1698,13 +1744,22 @@ pub const PortsMigrator = struct {
             build_result.deinit(self.allocator);
             return PortsError.BuildFailed;
         }
+        std.debug.print("  Build OK\n", .{});
         build_result.deinit(self.allocator);
 
         // Step 5: Stage the port (uses internal staging in work/stage)
-        std.debug.print("  Staging...\n", .{});
+        std.debug.print("  Staging", .{});
+
+        // Start progress indicator for staging phase
+        var stage_progress = ProgressIndicator{ .interval_ms = 5000 }; // Dot every 5 seconds
+        stage_progress.start();
+
         var stage_result = try self.runMakeTargetNoDeps(port_path, "stage", null, &build_env, origin);
+
+        stage_progress.stop();
+
         if (stage_result.exit_code != 0) {
-            std.debug.print("  Stage failed with exit code: {d}\n", .{stage_result.exit_code});
+            std.debug.print("  Stage FAILED (exit code: {d})\n", .{stage_result.exit_code});
             if (stage_result.stdout) |stdout| {
                 const start = if (stdout.len > 4096) stdout.len - 4096 else 0;
                 std.debug.print("\n--- Stage output (last 4KB) ---\n{s}\n", .{stdout[start..]});
@@ -1716,6 +1771,7 @@ pub const PortsMigrator = struct {
             stage_result.deinit(self.allocator);
             return PortsError.BuildFailed;
         }
+        std.debug.print("  Stage OK\n", .{});
         stage_result.deinit(self.allocator);
 
         // Step 6: Copy staged files from STAGEDIR to our staging directory
