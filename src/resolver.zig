@@ -1190,10 +1190,10 @@ pub const Resolver = struct {
                     }
                     dependencies = try deps.toOwnedSlice();
 
-                    // Copy provides
+                    // Copy provides (provides is [][]const u8)
                     var prov = std.ArrayList([]const u8).init(self.allocator);
                     for (pkg_meta.manifest.provides) |p| {
-                        try prov.append(try self.allocator.dupe(u8, p.name));
+                        try prov.append(try self.allocator.dupe(u8, p));
                     }
                     provides = try prov.toOwnedSlice();
 
