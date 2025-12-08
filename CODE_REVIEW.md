@@ -103,9 +103,11 @@ Axiom is a well-designed ZFS-native package manager for the Pacific Grove Softwa
    - ✅ Added `log.zig` logging abstraction with configurable levels (debug/info/warn/err)
    - ✅ Supports scoped loggers, timestamps, and can be disabled for production
 
-3. **Magic Numbers**
-   - `secure_tar.zig:23-25` - File size limits (1GB, 10GB) should be named constants
-   - `gc.zig:45` - Grace period of 86400 should be a named constant
+3. **~~Magic Numbers~~ (ADDRESSED)**
+   - ~~`secure_tar.zig:23-25` - File size limits should be named constants~~
+   - ~~`gc.zig:45` - Grace period should be a named constant~~
+   - ✅ `secure_tar.zig` has `DEFAULT_MAX_FILE_SIZE` (1GB), `DEFAULT_MAX_TOTAL_SIZE` (10GB) at lines 9-13
+   - ✅ `gc.zig` has `DEFAULT_GC_GRACE_PERIOD_SECONDS` (24 hours) at line 19
 
 ---
 
