@@ -2,6 +2,7 @@ const std = @import("std");
 const zfs = @import("zfs.zig");
 const types = @import("types.zig");
 const manifest = @import("manifest.zig");
+const config = @import("config.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageId = types.PackageId;
@@ -24,10 +25,20 @@ pub const StoreError = error{
 };
 
 /// Dataset path configuration
+/// Paths can be customized via environment variables (see config.zig)
 pub const DatasetPaths = struct {
-    store_root: []const u8 = "zroot/axiom/store/pkg",
-    profile_root: []const u8 = "zroot/axiom/profiles",
-    env_root: []const u8 = "zroot/axiom/env",
+    store_root: []const u8 = config.DEFAULT_POOL ++ "/" ++ config.DEFAULT_DATASET ++ "/store/pkg",
+    profile_root: []const u8 = config.DEFAULT_POOL ++ "/" ++ config.DEFAULT_DATASET ++ "/profiles",
+    env_root: []const u8 = config.DEFAULT_POOL ++ "/" ++ config.DEFAULT_DATASET ++ "/env",
+
+    /// Initialize paths from global configuration
+    pub fn fromConfig(cfg: *const config.Config) DatasetPaths {
+        return DatasetPaths{
+            .store_root = cfg.store_dataset,
+            .profile_root = cfg.profile_dataset,
+            .env_root = cfg.env_dataset,
+        };
+    }
 
     /// Get the full dataset path for a package with validation (Phase 26)
     pub fn packageDataset(
@@ -115,7 +126,7 @@ pub const DatasetPaths = struct {
         pkg: PackageId,
     ) ![]u8 {
         _ = self; // May be used for custom mount roots in future
-        return std.fmt.allocPrint(allocator, "/axiom/store/pkg/{s}/{}/{d}/{s}", .{
+        return std.fmt.allocPrint(allocator, config.DEFAULT_MOUNTPOINT ++ "/store/pkg/{s}/{}/{d}/{s}", .{
             pkg.name,
             pkg.version,
             pkg.revision,

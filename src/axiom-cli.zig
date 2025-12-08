@@ -11,6 +11,7 @@ const cache = @import("cache.zig");
 const build = @import("build.zig");
 const cli = @import("cli.zig");
 const user = @import("user.zig");
+const config = @import("config.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -45,7 +46,7 @@ pub fn main() !void {
     var importer = import_pkg.Importer.init(allocator, &zfs_handle, &pkg_store);
     
     // Initialize signature subsystems
-    var trust_store = signature.TrustStore.init(allocator, "/etc/axiom/trust.toml");
+    var trust_store = signature.TrustStore.init(allocator, config.DEFAULT_CONFIG_DIR ++ "/trust.toml");
     defer trust_store.deinit();
     trust_store.load() catch {}; // Ignore error if file doesn't exist
 
@@ -59,7 +60,7 @@ pub fn main() !void {
     // Initialize cache subsystems
     var cache_config = cache.CacheConfig.init(allocator);
     defer cache_config.deinit();
-    cache_config.loadFromFile("/etc/axiom/cache.yaml") catch {}; // Ignore if doesn't exist
+    cache_config.loadFromFile(config.DEFAULT_CONFIG_DIR ++ "/cache.yaml") catch {}; // Ignore if doesn't exist
 
     var cache_client = cache.CacheClient.init(
         allocator,

@@ -31,6 +31,7 @@ const build_pkg = @import("build.zig");
 const import_pkg = @import("import.zig");
 const zfs = @import("zfs.zig");
 const bootstrap_pkg = @import("bootstrap.zig");
+const config = @import("config.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageStore = store_pkg.PackageStore;
@@ -248,7 +249,7 @@ pub const PortsMigrator = struct {
 
         // Check for minimal bootstrap packages
         for (bootstrap_pkg.MINIMAL_BOOTSTRAP_PACKAGES) |pkg_name| {
-            const pkg_path = try std.fmt.allocPrint(self.allocator, "/axiom/store/pkg/{s}", .{pkg_name});
+            const pkg_path = try std.fmt.allocPrint(self.allocator, config.DEFAULT_MOUNTPOINT ++ "/store/pkg/{s}", .{pkg_name});
             defer self.allocator.free(pkg_path);
 
             var dir = std.fs.openDirAbsolute(pkg_path, .{}) catch {

@@ -8,6 +8,7 @@ const types = @import("types.zig");
 const store = @import("store.zig");
 const zfs = @import("zfs.zig");
 const manifest = @import("manifest.zig");
+const config = @import("config.zig");
 
 const Version = types.Version;
 const PackageId = types.PackageId;
@@ -211,7 +212,7 @@ pub const RuntimeManager = struct {
             .allocator = allocator,
             .zfs_handle = zfs_handle,
             .pkg_store = pkg_store,
-            .runtime_base = "/axiom/runtimes",
+            .runtime_base = config.DEFAULT_MOUNTPOINT ++ "/runtimes",
         };
     }
 
@@ -362,7 +363,7 @@ pub const RuntimeManager = struct {
 
     /// Create a snapshot of a runtime
     pub fn snapshotRuntime(self: *RuntimeManager, name: []const u8, snapshot_name: []const u8) !void {
-        const dataset = try std.fmt.allocPrint(self.allocator, "zroot/axiom/runtimes/{s}", .{name});
+        const dataset = try std.fmt.allocPrint(self.allocator, config.DEFAULT_POOL ++ "/" ++ config.DEFAULT_DATASET ++ "/runtimes/{s}", .{name});
         defer self.allocator.free(dataset);
 
         const snapshot = try std.fmt.allocPrint(self.allocator, "{s}@{s}", .{ dataset, snapshot_name });
@@ -377,7 +378,7 @@ pub const RuntimeManager = struct {
 
     /// Rollback a runtime to a snapshot
     pub fn rollbackRuntime(self: *RuntimeManager, name: []const u8, snapshot_name: []const u8) !void {
-        const snapshot = try std.fmt.allocPrint(self.allocator, "zroot/axiom/runtimes/{s}@{s}", .{
+        const snapshot = try std.fmt.allocPrint(self.allocator, config.DEFAULT_POOL ++ "/" ++ config.DEFAULT_DATASET ++ "/runtimes/{s}@{s}", .{
             name,
             snapshot_name,
         });
