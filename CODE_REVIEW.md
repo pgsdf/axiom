@@ -279,6 +279,14 @@ The FreeBSD ports migration module (`ports.zig`) enables building ports and impo
    - ✅ Added mapping: `pythonXXX` → `python` (matches perl pattern: `perl5XX` → `perl`)
    - ✅ Now `lang/python311`, `lang/python39`, etc. all map to `python`
 
+7. **~~importPort Using Wrong Name Source~~ (FIXED)**
+   - `importPort()` used `mapPortName(metadata.name)` which gave base name (e.g., `flit-core`)
+   - Should use origin with flavor (e.g., `devel/py-flit-core@py311`) to get `py311-flit-core`
+   - The `generateManifestYaml()` fix wasn't enough - `ImportOptions.name` determines store path
+   - ✅ Added `origin` parameter to `importPort()` function
+   - ✅ Uses `mapPortNameAlloc(origin)` to derive correct package name
+   - ✅ Packages now stored with correct names matching lookup expectations
+
 ### Python Bootstrap Chain
 
 The fixes enable building the complete Python packaging bootstrap chain:
@@ -429,6 +437,7 @@ Axiom is a well-architected package manager with strong foundations. The ZFS-nat
 - ✅ Memory leak in conflict tracking fixed
 - ✅ Fail-fast when dependencies missing from store
 - ✅ Python interpreter mapping (`python311` → `python`)
+- ✅ importPort using origin for correct store path naming
 
 The codebase demonstrates professional software engineering practices and is **ready for production use**.
 
