@@ -93,10 +93,10 @@ Axiom is a well-designed ZFS-native package manager for the Pacific Grove Softwa
 
 ### Issues Found
 
-1. **Unused Self Parameters** (Minor)
-   - `resolver.zig:1189-1199` - `pickBest` has `_ = self`
-   - `resolver.zig:1202-1218` - `printConstraint` has `_ = self`
-   - Consider making these standalone functions or actually using self
+1. **~~Unused Self Parameters~~ (FIXED)**
+   - ~~`resolver.zig` - Methods with `_ = self` that don't use self~~
+   - ✅ Converted to standalone functions: `findProviders`, `checkPackageConflict`, `getConflicts`
+   - ✅ Removed `printConstraint` wrapper (was redundant with `printVersionConstraint`)
 
 2. **Inconsistent Debug Output**
    - Mixed use of `std.debug.print` throughout code
