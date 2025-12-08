@@ -29,8 +29,9 @@ zfs set mountpoint=/axiom zroot/axiom
 Now create the child datasets (they will inherit `/axiom` as their mountpoint base):
 
 ```bash
-# Package store
+# Package store (contains pkg/ subdataset for actual packages)
 zfs create zroot/axiom/store
+zfs create zroot/axiom/store/pkg
 
 # Profile storage
 zfs create zroot/axiom/profiles
@@ -55,6 +56,7 @@ Expected output:
 NAME                     USED  AVAIL  REFER  MOUNTPOINT
 zroot/axiom              XXX   XXX    96K    /axiom
 zroot/axiom/store        96K   XXX    96K    /axiom/store
+zroot/axiom/store/pkg    96K   XXX    96K    /axiom/store/pkg
 zroot/axiom/profiles     96K   XXX    96K    /axiom/profiles
 zroot/axiom/env          96K   XXX    96K    /axiom/env
 zroot/axiom/builds       96K   XXX    96K    /axiom/builds
@@ -66,11 +68,17 @@ After setup, you'll have:
 
 ```
 /axiom/
-├── store/              # Immutable package storage
-│   └── pkg/           # Package datasets will go here
-├── profiles/          # Profile definitions
-├── env/               # Realized environments
-└── builds/            # Build sandbox storage
+├── store/              # Package store root
+│   └── pkg/            # Individual package datasets (ZFS dataset per package)
+│       ├── bash/       # Example: bash package
+│       │   └── 5.2.0/  # Version directory
+│       │       └── 1/  # Revision
+│       │           └── <build_id>/
+│       │               └── root/  # Package contents
+│       └── python/     # Example: python package
+├── profiles/           # Profile definitions and locks
+├── env/                # Realized environments (cloned from packages)
+└── builds/             # Build sandbox storage
 ```
 
 ### 6. Permissions
