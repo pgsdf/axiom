@@ -801,7 +801,7 @@ pub const PortsMigrator = struct {
 
             // Phase 3: Import (optional)
             if (self.options.import_after_build) {
-                const pkg_id = self.importPort(&metadata, build_result.output_dir) catch |err| {
+                const pkg_id = self.importPort(&metadata, build_result.output_dir, origin) catch |err| {
                     try result.errors.append(try std.fmt.allocPrint(
                         self.allocator,
                         "Import failed: {s}",
@@ -2729,8 +2729,14 @@ pub const PortsMigrator = struct {
         self: *PortsMigrator,
         metadata: *const PortMetadata,
         stage_dir: []const u8,
+        origin: []const u8,
     ) !PackageId {
-        std.debug.print("\n=== Importing to store: {s} ===\n", .{metadata.name});
+        // Map the origin to the correct package name (handles Python flavors)
+        // e.g., devel/py-flit-core@py311 → py311-flit-core
+        const pkg_name = try self.mapPortNameAlloc(origin);
+        defer self.allocator.free(pkg_name);
+
+        std.debug.print("\n=== Importing to store: {s} ===\n", .{pkg_name});
 
         // Get the importer from options
         const importer = self.options.importer orelse {
@@ -2747,7 +2753,7 @@ pub const PortsMigrator = struct {
         // Create import options
         // Note: Ports builds are unsigned, so we allow unsigned imports
         const import_options = import_pkg.ImportOptions{
-            .name = self.mapPortName(metadata.name),
+            .name = pkg_name,
             .version = version,
             .revision = metadata.revision,
             .description = metadata.comment,
