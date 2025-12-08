@@ -176,20 +176,13 @@ None found.
 
 ### High Priority
 
-1. **Memory Leak in Conflict Tracking** (`realization.zig:534-581`)
-   - When `env_files.get(rel_path)` succeeds, `rel_path` is freed at line 581
-   - But if the conflict check fails or resolution doesn't use the new package, the entry isn't added to `env_files`
-   - The `rel_path` is also stored directly without duplication in `env_files.put()` at line 586
-
-   ```zig
-   // Line 534: allocated
-   const rel_path = try allocator.dupe(u8, entry.name);
-
-   // Line 586: stored without dupe - if iterator continues, same memory is reused
-   try env_files.put(rel_path, pkg_id);
-   ```
-
-   **Issue:** The `entry.name` slice comes from the iterator and is reused between iterations. The `rel_path` needs to be a full copy, which it is, but the logic around freeing and ownership is fragile.
+1. **~~Memory Leak in Conflict Tracking~~ (FIXED)** (`realization.zig:550-602`)
+   - ~~When `env_files.get(rel_path)` succeeds, `rel_path` is freed at line 581~~
+   - ~~But if the conflict check fails or resolution doesn't use the new package, the entry isn't added to `env_files`~~
+   - ✅ Fixed by adding `defer allocator.free(rel_path)` at the start of the conflict branch
+   - ✅ When `env_files.get(rel_path)` succeeds, `rel_path` is now always freed via defer
+   - ✅ When it doesn't match (else branch), ownership is transferred to `env_files.put()`
+   - ✅ Removed redundant manual `free()` call that was inside the inner if block
 
 2. **~~Process Exit Code Mischeck~~ (RESOLVED)**
    - ~~`realization.zig:270-271` - Should be `term == .Exited` check first~~
