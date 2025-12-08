@@ -260,6 +260,25 @@ The FreeBSD ports migration module (`ports.zig`) enables building ports and impo
    - ✅ Sets `PYTHONPATH` environment variable when running make
    - ✅ Enables Python bootstrap chain: flit-core → installer → build → wheel → setuptools
 
+5. **~~Fail-Fast for Missing Dependencies~~ (FIXED)**
+   - Previously, Axiom would warn about missing deps but proceed with the build
+   - This resulted in confusing errors (e.g., `ModuleNotFoundError: No module named 'flit_core'`)
+   - ✅ `displayDependencies()` now checks if each dependency exists in the store
+   - ✅ Returns `MissingDependencies` error with clear instructions if any are missing
+   - ✅ Example output:
+     ```
+     ERROR: Required dependencies not found in Axiom store:
+       - lang/python311
+     Please build these dependencies first:
+       axiom ports-import lang/python311
+     ```
+
+6. **~~Python Interpreter Mapping~~ (FIXED)**
+   - `lang/python311` was mapped to `python311` but installed as `python@3.11.x`
+   - Store lookups failed because package name didn't match
+   - ✅ Added mapping: `pythonXXX` → `python` (matches perl pattern: `perl5XX` → `perl`)
+   - ✅ Now `lang/python311`, `lang/python39`, etc. all map to `python`
+
 ### Python Bootstrap Chain
 
 The fixes enable building the complete Python packaging bootstrap chain:
@@ -408,6 +427,8 @@ Axiom is a well-architected package manager with strong foundations. The ZFS-nat
 - ✅ Python package name mapping (`py-*@pyXXX` → `pyXXX-*`)
 - ✅ PYTHONPATH support for Python bootstrap chain
 - ✅ Memory leak in conflict tracking fixed
+- ✅ Fail-fast when dependencies missing from store
+- ✅ Python interpreter mapping (`python311` → `python`)
 
 The codebase demonstrates professional software engineering practices and is **ready for production use**.
 
