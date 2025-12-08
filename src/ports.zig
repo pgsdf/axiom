@@ -858,7 +858,9 @@ pub const PortsMigrator = struct {
             "/tmp/axiom-sysroot-{d}-{x:0>2}{x:0>2}{x:0>2}{x:0>2}",
             .{ timestamp, random_bytes[0], random_bytes[1], random_bytes[2], random_bytes[3] },
         );
-        errdefer self.allocator.free(sysroot_root);
+        // sysroot_root is only needed during setup; free it when function exits
+        // (sysroot_localbase contains the full path that will be returned to caller)
+        defer self.allocator.free(sysroot_root);
 
         // sysroot_localbase is the path that will be used for search paths (PATH, LDFLAGS, CPPFLAGS)
         // Note: LOCALBASE for ports is always /usr/local (the install prefix), NOT the sysroot
@@ -866,7 +868,7 @@ pub const PortsMigrator = struct {
             sysroot_root,
             "usr/local",
         });
-        defer self.allocator.free(sysroot_localbase);
+        errdefer self.allocator.free(sysroot_localbase);
 
         // Create the sysroot_localbase directory structure
         const subdirs = [_][]const u8{ "bin", "lib", "include", "share", "libexec", "lib/perl5", "share/aclocal" };
@@ -923,8 +925,8 @@ pub const PortsMigrator = struct {
 
         // Return sysroot_localbase (sysroot_root/usr/local) as that's what callers expect
         // for building search paths (PATH, LDFLAGS, CPPFLAGS)
-        const result = try self.allocator.dupe(u8, sysroot_localbase);
-        return result;
+        // Note: sysroot_root is freed by defer above; sysroot_localbase ownership transfers to caller
+        return sysroot_localbase;
     }
 
     /// Recursively link/copy contents of a source directory tree into a destination
