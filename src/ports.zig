@@ -801,6 +801,10 @@ pub const PortsMigrator = struct {
 
             // Phase 3: Import (optional)
             if (self.options.import_after_build) {
+                // Get the mapped package name before import (importPort's copy is freed on return)
+                const display_name = try self.mapPortNameAlloc(origin);
+                defer self.allocator.free(display_name);
+
                 const pkg_id = self.importPort(&metadata, build_result.output_dir, origin) catch |err| {
                     try result.errors.append(try std.fmt.allocPrint(
                         self.allocator,
@@ -817,10 +821,11 @@ pub const PortsMigrator = struct {
                 };
 
                 result.status = .imported;
+                // Use display_name instead of pkg_id.name (which points to freed memory)
                 result.axiom_package = try std.fmt.allocPrint(
                     self.allocator,
                     "{s}@{}.{}.{}-r{d}",
-                    .{ pkg_id.name, pkg_id.version.major, pkg_id.version.minor, pkg_id.version.patch, pkg_id.revision },
+                    .{ display_name, pkg_id.version.major, pkg_id.version.minor, pkg_id.version.patch, pkg_id.revision },
                 );
             }
 
