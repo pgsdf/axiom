@@ -202,12 +202,12 @@ None found.
    - ~~Uses `std.time.timestamp()` (seconds precision) for snapshot names~~
    - ✅ `profile.zig` now uses `std.time.milliTimestamp()` for snapshot names
 
-2. **Incomplete YAML Parser Edge Cases** (`profile.zig`, `manifest.zig`)
-   - The custom YAML parser handles basic cases but may fail on:
-     - Multi-line strings
-     - Nested arrays
-     - Escaped quotes within values
-   - Consider documenting the exact YAML subset supported
+2. **~~Incomplete YAML Parser Edge Cases~~ (DOCUMENTED)**
+   - ~~The custom YAML parser handles basic cases but may fail on edge cases~~
+   - ✅ Added comprehensive documentation to both `manifest.zig` and `profile.zig`
+   - ✅ Documents supported features: single-line key:value, simple lists, one-level nesting
+   - ✅ Documents unsupported features: multi-line strings, nested arrays, escaped quotes, flow syntax
+   - ✅ Includes example YAML format in each parser's doc comments
 
 3. **Unused `pkg_id` Parameter** (`realization.zig:274`)
    ```zig

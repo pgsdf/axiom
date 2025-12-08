@@ -37,6 +37,38 @@ pub const Profile = struct {
     packages: []PackageRequest,
 
     /// Parse profile from YAML content
+    ///
+    /// YAML Subset Supported:
+    /// ----------------------
+    /// This is a minimal line-based YAML parser optimized for Axiom profiles.
+    /// It does NOT support the full YAML specification.
+    ///
+    /// Supported features:
+    /// - Single-line key: value pairs
+    /// - List items with "- " prefix for packages section
+    /// - Nested package attributes (name, version, constraint)
+    /// - Comments starting with #
+    /// - Quoted values (quotes are stripped)
+    ///
+    /// NOT supported:
+    /// - Multi-line strings (| or > syntax)
+    /// - Deeply nested structures
+    /// - Escaped quotes within values
+    /// - Flow syntax ({ } or [ ])
+    /// - Anchors and aliases
+    ///
+    /// Example of supported format:
+    /// ```yaml
+    /// name: my-profile
+    /// description: Development environment
+    /// packages:
+    ///   - name: gcc
+    ///     version: "13.2.0"
+    ///     constraint: exact
+    ///   - name: python
+    ///     version: "3.11"
+    ///     constraint: minimum
+    /// ```
     pub fn parse(allocator: std.mem.Allocator, yaml_content: []const u8) !Profile {
         var profile = Profile{
             .name = undefined,
