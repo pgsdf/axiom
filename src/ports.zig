@@ -418,10 +418,12 @@ pub const PortsMigrator = struct {
     }
 
     /// Generate Axiom manifest from port metadata
-    pub fn generateManifest(self: *PortsMigrator, meta: *const PortMetadata) !manifest_pkg.Manifest {
+    /// Uses origin to correctly handle Python package naming (e.g., py-flit-core@py311 → py311-flit-core)
+    pub fn generateManifest(self: *PortsMigrator, meta: *const PortMetadata, origin: []const u8) !manifest_pkg.Manifest {
         var manifest: manifest_pkg.Manifest = undefined;
 
-        manifest.name = try self.allocator.dupe(u8, self.mapPortName(meta.name));
+        // Use mapPortNameAlloc to get correct package name (handles Python flavors)
+        manifest.name = try self.mapPortNameAlloc(origin);
         manifest.version = try types.Version.parse(meta.version);
         manifest.revision = meta.revision;
         manifest.description = try self.allocator.dupe(u8, meta.comment);
@@ -3188,9 +3190,14 @@ pub const PortsMigrator = struct {
         var output = std.ArrayList(u8).init(self.allocator);
         const writer = output.writer();
 
+        // Use mapPortNameAlloc to get correct package name (handles Python flavors)
+        // e.g., devel/py-flit-core@py311 → py311-flit-core
+        const pkg_name = try self.mapPortNameAlloc(origin);
+        defer self.allocator.free(pkg_name);
+
         try writer.writeAll("# Generated from FreeBSD port\n");
         try writer.writeAll("name: ");
-        try writer.writeAll(self.mapPortName(meta.name));
+        try writer.writeAll(pkg_name);
         try writer.writeAll("\n");
 
         try writer.writeAll("version: \"");
