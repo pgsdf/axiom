@@ -160,9 +160,11 @@ Axiom is a well-designed ZFS-native package manager for the Pacific Grove Softwa
    - ✅ `$USER` is only used as fallback if system lookup fails
    - ✅ Same pattern for home directory via `getHomeDirFromSystem()`
 
-3. **Symlink Validation Edge Case** (Low Risk)
-   - `secure_tar.zig:437-444` - Absolute symlink targets are checked, but the check happens after path resolution
-   - The current logic is correct but could be clearer with explicit ordering
+3. **~~Symlink Validation Edge Case~~ (FIXED)**
+   - ~~`secure_tar.zig:437-444` - Absolute symlink targets are checked after path resolution~~
+   - ✅ Reordered to check absolute paths first (before any path resolution)
+   - ✅ Added clear step comments documenting the security check order
+   - ✅ Early return for allowed absolute paths (no unnecessary processing)
 
 ---
 

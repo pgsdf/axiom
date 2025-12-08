@@ -414,15 +414,33 @@ pub const SecureTarExtractor = struct {
     }
 
     /// Validate that a symlink target doesn't escape the extraction root
+    ///
+    /// Security checks performed (in order):
+    /// 1. Absolute path check - reject absolute symlinks unless explicitly allowed
+    /// 2. Relative path resolution - resolve target against link directory
+    /// 3. Escape detection - ensure resolved path stays within extraction root
     pub fn validateSymlinkTarget(
         self: *SecureTarExtractor,
         link_location: []const u8,
         target: []const u8,
     ) !void {
+        // STEP 1: Check absolute paths first (before any path resolution)
+        // Absolute symlinks like "/etc/passwd" bypass relative path resolution entirely
+        if (target.len > 0 and target[0] == '/') {
+            if (!self.options.allow_absolute_paths) {
+                self.stats.paths_rejected += 1;
+                std.debug.print("SecureTarExtractor: Absolute symlink target rejected: {s}\n", .{target});
+                return ExtractionError.SymlinkEscape;
+            }
+            // Absolute path allowed - no further validation needed since it doesn't
+            // reference the extraction directory at all
+            return;
+        }
+
+        // STEP 2: For relative symlinks, resolve against link directory
         // Get the directory containing the symlink
         const link_dir = std.fs.path.dirname(link_location) orelse "";
 
-        // Resolve the target relative to the link location
         var resolved_parts = std.ArrayList([]const u8).init(self.allocator);
         defer resolved_parts.deinit();
 
@@ -434,7 +452,7 @@ pub const SecureTarExtractor = struct {
             }
         }
 
-        // Process target path
+        // STEP 3: Process target path components, checking for escape attempts
         var target_iter = std.mem.splitScalar(u8, target, '/');
         while (target_iter.next()) |component| {
             if (component.len == 0 or std.mem.eql(u8, component, ".")) {
@@ -451,15 +469,6 @@ pub const SecureTarExtractor = struct {
                 _ = resolved_parts.pop();
             } else {
                 try resolved_parts.append(component);
-            }
-        }
-
-        // If target is absolute, reject unless allowed
-        if (target.len > 0 and target[0] == '/') {
-            if (!self.options.allow_absolute_paths) {
-                self.stats.paths_rejected += 1;
-                std.debug.print("SecureTarExtractor: Absolute symlink target rejected: {s}\n", .{target});
-                return ExtractionError.SymlinkEscape;
             }
         }
     }
