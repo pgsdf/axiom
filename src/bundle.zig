@@ -957,6 +957,7 @@ pub const SecureBundleManifest = struct {
 };
 
 /// Secure bundle launcher with pre-execution verification
+/// Thread-safe: Uses mutex protection for verification cache
 pub const SecureBundleLauncher = struct {
     allocator: std.mem.Allocator,
     temp_dir: []const u8,
@@ -965,7 +966,11 @@ pub const SecureBundleLauncher = struct {
     allow_untrusted: bool,
 
     /// Cache of verified bundles (path hash -> verification result)
+    /// Protected by cache_mutex for thread-safe access
     verification_cache: std.StringHashMap(BundleVerificationResult),
+
+    /// Mutex protecting verification_cache for thread-safe access
+    cache_mutex: std.Thread.Mutex = .{},
 
     /// Secure extraction options
     pub const ExtractionOptions = struct {
@@ -995,6 +1000,10 @@ pub const SecureBundleLauncher = struct {
     }
 
     pub fn deinit(self: *SecureBundleLauncher) void {
+        // Lock mutex during cleanup to ensure no concurrent access
+        self.cache_mutex.lock();
+        defer self.cache_mutex.unlock();
+
         var iter = self.verification_cache.iterator();
         while (iter.next()) |entry| {
             self.allocator.free(entry.key_ptr.*);
@@ -1005,11 +1014,15 @@ pub const SecureBundleLauncher = struct {
     }
 
     /// Verify a bundle without launching it
+    /// Thread-safe: Uses mutex protection for cache access
     pub fn verify(self: *SecureBundleLauncher, bundle_path: []const u8) !BundleVerificationResult {
-        // Check cache first
+        // Check cache first (with lock)
+        self.cache_mutex.lock();
         if (self.verification_cache.get(bundle_path)) |cached| {
+            self.cache_mutex.unlock();
             return cached;
         }
+        self.cache_mutex.unlock();
 
         // Open bundle file
         const bundle_file = std.fs.cwd().openFile(bundle_path, .{}) catch |err| {
@@ -1057,9 +1070,15 @@ pub const SecureBundleLauncher = struct {
             .verified_at = std.time.timestamp(),
         };
 
-        // Cache the result
+        // Cache the result (with lock)
         const path_copy = try self.allocator.dupe(u8, bundle_path);
-        try self.verification_cache.put(path_copy, result);
+        self.cache_mutex.lock();
+        self.verification_cache.put(path_copy, result) catch |err| {
+            self.cache_mutex.unlock();
+            self.allocator.free(path_copy);
+            return err;
+        };
+        self.cache_mutex.unlock();
 
         return result;
     }
@@ -1438,7 +1457,11 @@ pub const SecureBundleLauncher = struct {
     }
 
     /// Invalidate verification cache for a specific bundle
+    /// Thread-safe: Uses mutex protection for cache access
     pub fn invalidateCache(self: *SecureBundleLauncher, bundle_path: []const u8) void {
+        self.cache_mutex.lock();
+        defer self.cache_mutex.unlock();
+
         if (self.verification_cache.fetchRemove(bundle_path)) |entry| {
             self.allocator.free(entry.key);
             var result = entry.value;
@@ -1447,7 +1470,11 @@ pub const SecureBundleLauncher = struct {
     }
 
     /// Clear entire verification cache
+    /// Thread-safe: Uses mutex protection for cache access
     pub fn clearCache(self: *SecureBundleLauncher) void {
+        self.cache_mutex.lock();
+        defer self.cache_mutex.unlock();
+
         var iter = self.verification_cache.iterator();
         while (iter.next()) |entry| {
             self.allocator.free(entry.key_ptr.*);

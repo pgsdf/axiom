@@ -1755,13 +1755,16 @@ pub const ThreadSafeZfs = struct {
 
 /// Global thread-safe ZFS instance
 /// Use this singleton for all ZFS operations in multi-threaded contexts
-var global_thread_safe_zfs: ?*ThreadSafeZfs = null;
+/// Thread-safe: Uses atomic operations with proper memory ordering for the
+/// double-checked locking pattern to work correctly on all architectures.
+var global_thread_safe_zfs: std.atomic.Value(?*ThreadSafeZfs) = std.atomic.Value(?*ThreadSafeZfs).init(null);
 var global_zfs_init_lock: std.Thread.Mutex = .{};
 
 /// Get the global thread-safe ZFS instance
+/// Thread-safe: Uses double-checked locking with proper atomic memory ordering
 pub fn getGlobalThreadSafeZfs(allocator: std.mem.Allocator) !*ThreadSafeZfs {
-    // Fast path: already initialized
-    if (global_thread_safe_zfs) |zfs| {
+    // Fast path: already initialized (acquire semantics ensure we see fully initialized object)
+    if (global_thread_safe_zfs.load(.acquire)) |zfs| {
         return zfs;
     }
 
@@ -1770,28 +1773,31 @@ pub fn getGlobalThreadSafeZfs(allocator: std.mem.Allocator) !*ThreadSafeZfs {
     defer global_zfs_init_lock.unlock();
 
     // Double-check after acquiring lock
-    if (global_thread_safe_zfs) |zfs| {
+    if (global_thread_safe_zfs.load(.acquire)) |zfs| {
         return zfs;
     }
 
     // Allocate and initialize
     const zfs = try allocator.create(ThreadSafeZfs);
     zfs.* = ThreadSafeZfs.init(allocator);
-    global_thread_safe_zfs = zfs;
+
+    // Release semantics ensure all initialization is visible before the pointer
+    global_thread_safe_zfs.store(zfs, .release);
 
     return zfs;
 }
 
 /// Clean up the global thread-safe ZFS instance
 /// Call this during program shutdown
+/// Thread-safe: Uses atomic operations with proper memory ordering
 pub fn deinitGlobalThreadSafeZfs(allocator: std.mem.Allocator) void {
     global_zfs_init_lock.lock();
     defer global_zfs_init_lock.unlock();
 
-    if (global_thread_safe_zfs) |zfs| {
+    if (global_thread_safe_zfs.load(.acquire)) |zfs| {
         zfs.deinit();
         allocator.destroy(zfs);
-        global_thread_safe_zfs = null;
+        global_thread_safe_zfs.store(null, .release);
     }
 }
 

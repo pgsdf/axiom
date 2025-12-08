@@ -6,6 +6,22 @@
 // Phase 1: Metadata extraction and manifest generation
 // Phase 2: Happy-path builds for clean ports
 // Phase 3: Options and variants mapping
+//
+// THREAD SAFETY WARNING:
+// ----------------------
+// PortsMigrator is NOT thread-safe. Each PortsMigrator instance should only
+// be used from a single thread. The following operations are particularly
+// sensitive to concurrent modifications:
+//
+// - findAllPackageRootsInStore(): Iterates filesystem directories that may
+//   change if packages are added/removed concurrently
+// - findPackageRootInStore(): Same issue as above
+// - resolveDependencyTree(): Uses internal hashmaps for tracking visited nodes
+// - getBuildEnvironment(): Creates symlinks that could conflict if called
+//   concurrently for the same dependencies
+//
+// If concurrent ports operations are needed, create separate PortsMigrator
+// instances for each thread, or serialize access with an external mutex.
 
 const std = @import("std");
 const manifest_pkg = @import("manifest.zig");
@@ -212,6 +228,8 @@ pub const MigrateOptions = struct {
 };
 
 /// Ports migration tool
+/// WARNING: NOT thread-safe. See module-level documentation for details.
+/// Each instance should only be accessed from a single thread.
 pub const PortsMigrator = struct {
     allocator: std.mem.Allocator,
     options: MigrateOptions,
