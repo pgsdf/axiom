@@ -1249,11 +1249,6 @@ pub const Resolver = struct {
         return candidates.toOwnedSlice();
     }
 
-    /// Print a constraint for debugging
-    fn printConstraint(_: *Resolver, constraint: VersionConstraint) void {
-        printVersionConstraint(constraint);
-    }
-
     /// Build a virtual package index from all packages in the store
     /// Returns a mapping of virtual names to providers
     pub fn buildVirtualIndex(self: *Resolver) !VirtualPackageIndex {
@@ -1264,57 +1259,6 @@ pub const Resolver = struct {
         // or integrate with the package store's manifest loading
 
         return index;
-    }
-
-    /// Query packages that provide a virtual package
-    pub fn findProviders(
-        self: *Resolver,
-        virtual_index: *VirtualPackageIndex,
-        virtual_name: []const u8,
-    ) ?[][]const u8 {
-        _ = self;
-        return virtual_index.getProviders(virtual_name);
-    }
-
-    /// Check if two packages conflict
-    pub fn checkPackageConflict(
-        self: *Resolver,
-        pkg_a: Candidate,
-        pkg_b: Candidate,
-    ) bool {
-        _ = self;
-        // Check if A conflicts with B
-        for (pkg_a.conflicts) |conflict| {
-            if (std.mem.eql(u8, conflict.name, pkg_b.id.name)) {
-                if (conflict.constraint) |constraint| {
-                    if (constraint.satisfies(pkg_b.id.version)) {
-                        return true;
-                    }
-                } else {
-                    return true;
-                }
-            }
-        }
-
-        // Check if B conflicts with A
-        for (pkg_b.conflicts) |conflict| {
-            if (std.mem.eql(u8, conflict.name, pkg_a.id.name)) {
-                if (conflict.constraint) |constraint| {
-                    if (constraint.satisfies(pkg_a.id.version)) {
-                        return true;
-                    }
-                } else {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    /// Get list of conflicts detected during resolution
-    pub fn getConflicts(_: *Resolver, ctx: *ResolutionContext) []ConflictInfo {
-        return ctx.conflicts.items;
     }
 };
 
@@ -1351,6 +1295,50 @@ fn printVersionConstraint(constraint: VersionConstraint) void {
             }
         },
     }
+}
+
+/// Query packages that provide a virtual package
+pub fn findProviders(
+    virtual_index: *VirtualPackageIndex,
+    virtual_name: []const u8,
+) ?[][]const u8 {
+    return virtual_index.getProviders(virtual_name);
+}
+
+/// Check if two packages conflict
+pub fn checkPackageConflict(pkg_a: Candidate, pkg_b: Candidate) bool {
+    // Check if A conflicts with B
+    for (pkg_a.conflicts) |conflict| {
+        if (std.mem.eql(u8, conflict.name, pkg_b.id.name)) {
+            if (conflict.constraint) |constraint| {
+                if (constraint.satisfies(pkg_b.id.version)) {
+                    return true;
+                }
+            } else {
+                return true;
+            }
+        }
+    }
+
+    // Check if B conflicts with A
+    for (pkg_b.conflicts) |conflict| {
+        if (std.mem.eql(u8, conflict.name, pkg_a.id.name)) {
+            if (conflict.constraint) |constraint| {
+                if (constraint.satisfies(pkg_a.id.version)) {
+                    return true;
+                }
+            } else {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+/// Get list of conflicts detected during resolution
+pub fn getConflicts(ctx: *ResolutionContext) []ConflictInfo {
+    return ctx.conflicts.items;
 }
 
 // Tests
