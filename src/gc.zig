@@ -300,51 +300,147 @@ pub const GarbageCollector = struct {
     }
 
     /// Scan package store for all packages
+    /// Uses PackageStore.listPackages() to enumerate all packages in the store
     fn scanStore(self: *GarbageCollector) ![]PackageId {
-        // TODO: Implement by querying ZFS datasets under store_root
-        // For now, return empty list as placeholder
-        
-        // This would use: zfs list -H -o name -r zroot/axiom/store/pkg
-        // Parse dataset paths to extract package IDs
-        
-        var packages = std.ArrayList(PackageId).init(self.allocator);
-        defer packages.deinit();
-
-        // Placeholder: Would scan actual datasets
-        // Example dataset: zroot/axiom/store/pkg/bash/5.2.0/1/abc123
-        
-        return packages.toOwnedSlice();
+        // Use the store's listPackages function to get all packages
+        return try self.store.listPackages();
     }
 
     /// Scan profiles for referenced packages
+    /// Reads all profile.lock.yaml files to find referenced packages
     fn scanProfiles(self: *GarbageCollector) ![]PackageId {
-        // TODO: Implement by reading all profile.lock.yaml files
-        // For now, return empty list as placeholder
-        
         var packages = std.ArrayList(PackageId).init(self.allocator);
-        defer packages.deinit();
+        errdefer {
+            for (packages.items) |pkg| {
+                self.allocator.free(pkg.name);
+                self.allocator.free(pkg.build_id);
+            }
+            packages.deinit();
+        }
 
-        // This would:
-        // 1. List all datasets under zroot/axiom/profiles
-        // 2. Read profile.lock.yaml from each
-        // 3. Extract referenced package IDs
-        
+        // Get mountpoint for the profile root
+        const profile_mountpoint = self.zfs_handle.getMountpoint(
+            self.allocator,
+            self.profile_mgr.profile_root,
+        ) catch {
+            // Profile root doesn't exist
+            return packages.toOwnedSlice();
+        };
+        defer self.allocator.free(profile_mountpoint);
+
+        // Open the profiles directory
+        var profiles_dir = std.fs.cwd().openDir(profile_mountpoint, .{ .iterate = true }) catch {
+            return packages.toOwnedSlice();
+        };
+        defer profiles_dir.close();
+
+        // Iterate through profiles
+        var iter = profiles_dir.iterate();
+        while (try iter.next()) |entry| {
+            if (entry.kind != .directory) continue;
+
+            // Build path to profile.lock.yaml
+            const lock_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+                profile_mountpoint,
+                entry.name,
+                "profile.lock.yaml",
+            });
+            defer self.allocator.free(lock_path);
+
+            // Read and parse lock file
+            const content = std.fs.cwd().readFileAlloc(
+                self.allocator,
+                lock_path,
+                1024 * 1024,
+            ) catch continue; // Skip profiles without lock files
+            defer self.allocator.free(content);
+
+            var lock = profile.ProfileLock.parse(self.allocator, content) catch continue;
+            defer lock.deinit(self.allocator);
+
+            // Add all resolved packages
+            for (lock.resolved) |pkg| {
+                try packages.append(.{
+                    .name = try self.allocator.dupe(u8, pkg.id.name),
+                    .version = pkg.id.version,
+                    .revision = pkg.id.revision,
+                    .build_id = try self.allocator.dupe(u8, pkg.id.build_id),
+                });
+            }
+        }
+
         return packages.toOwnedSlice();
     }
 
     /// Scan environments for referenced packages
+    /// Reads environment metadata to find referenced packages
     fn scanEnvironments(self: *GarbageCollector) ![]PackageId {
-        // TODO: Implement by reading environment metadata
-        // For now, return empty list as placeholder
-        
         var packages = std.ArrayList(PackageId).init(self.allocator);
-        defer packages.deinit();
+        errdefer {
+            for (packages.items) |pkg| {
+                self.allocator.free(pkg.name);
+                self.allocator.free(pkg.build_id);
+            }
+            packages.deinit();
+        }
 
-        // This would:
-        // 1. List all datasets under zroot/axiom/env
-        // 2. Read environment metadata or package manifests
-        // 3. Extract referenced package IDs
-        
+        // Get mountpoint for the env root (zroot/axiom/env)
+        const env_root = "zroot/axiom/env";
+        const env_mountpoint = self.zfs_handle.getMountpoint(
+            self.allocator,
+            env_root,
+        ) catch {
+            // Env root doesn't exist
+            return packages.toOwnedSlice();
+        };
+        defer self.allocator.free(env_mountpoint);
+
+        // Open the environments directory
+        var envs_dir = std.fs.cwd().openDir(env_mountpoint, .{ .iterate = true }) catch {
+            return packages.toOwnedSlice();
+        };
+        defer envs_dir.close();
+
+        // Iterate through environments
+        var iter = envs_dir.iterate();
+        while (try iter.next()) |entry| {
+            if (entry.kind != .directory) continue;
+
+            // Environments are realized from profiles - find the corresponding lock file
+            // by reading the environment's metadata or checking the profile name
+            // For now, scan the environment's bin/lib/share dirs to find package origins
+            // by checking symlinks or manifest files
+
+            // Try reading an environment manifest if it exists
+            const manifest_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+                env_mountpoint,
+                entry.name,
+                ".axiom-env.yaml",
+            });
+            defer self.allocator.free(manifest_path);
+
+            const content = std.fs.cwd().readFileAlloc(
+                self.allocator,
+                manifest_path,
+                1024 * 1024,
+            ) catch continue;
+            defer self.allocator.free(content);
+
+            // Parse the environment manifest to get package list
+            // The format is similar to profile.lock.yaml
+            var lock = profile.ProfileLock.parse(self.allocator, content) catch continue;
+            defer lock.deinit(self.allocator);
+
+            for (lock.resolved) |pkg| {
+                try packages.append(.{
+                    .name = try self.allocator.dupe(u8, pkg.id.name),
+                    .version = pkg.id.version,
+                    .revision = pkg.id.revision,
+                    .build_id = try self.allocator.dupe(u8, pkg.id.build_id),
+                });
+            }
+        }
+
         return packages.toOwnedSlice();
     }
 
