@@ -3108,12 +3108,18 @@ pub const PortsMigrator = struct {
             return "perl";
         }
 
-        // 4. Perl modules: p5-* → strip "p5-" prefix
+        // 4. Python interpreter: python311, python39, python3XX → "python"
+        // FreeBSD python ports (lang/python311, lang/python39) all install as "python"
+        if (std.mem.startsWith(u8, port_name, "python3") or std.mem.startsWith(u8, port_name, "python2")) {
+            return "python";
+        }
+
+        // 5. Perl modules: p5-* → strip "p5-" prefix
         if (std.mem.startsWith(u8, port_name, "p5-") and port_name.len > 3) {
             return port_name[3..]; // Skip "p5-"
         }
 
-        // 5. Fallback: use the port name as-is
+        // 6. Fallback: use the port name as-is
         return port_name;
     }
 
