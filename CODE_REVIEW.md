@@ -287,6 +287,12 @@ The FreeBSD ports migration module (`ports.zig`) enables building ports and impo
    - ✅ Uses `mapPortNameAlloc(origin)` to derive correct package name
    - ✅ Packages now stored with correct names matching lookup expectations
 
+8. **~~Use-After-Free in axiom_package Display~~ (FIXED)**
+   - `importPort()` returns `pkg_id` whose `.name` points to memory freed by `defer`
+   - Result: garbled text like `Package: ���������������@3.12.0-r0` in success message
+   - ✅ Compute `display_name` before calling `importPort()` to have valid copy
+   - ✅ Use `display_name` instead of `pkg_id.name` for `result.axiom_package` formatting
+
 ### Python Bootstrap Chain
 
 The fixes enable building the complete Python packaging bootstrap chain:
@@ -438,6 +444,7 @@ Axiom is a well-architected package manager with strong foundations. The ZFS-nat
 - ✅ Fail-fast when dependencies missing from store
 - ✅ Python interpreter mapping (`python311` → `python`)
 - ✅ importPort using origin for correct store path naming
+- ✅ Use-after-free bug in axiom_package display fixed
 
 The codebase demonstrates professional software engineering practices and is **ready for production use**.
 
