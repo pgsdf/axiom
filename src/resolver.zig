@@ -787,7 +787,7 @@ pub const Resolver = struct {
         // Add all requested packages to constraints
         for (prof.packages) |pkg_req| {
             std.debug.print("  Request: {s} ", .{pkg_req.name});
-            self.printConstraint(pkg_req.constraint);
+            printVersionConstraint(pkg_req.constraint);
             std.debug.print("\n", .{});
 
             try self.addConstraint(&ctx, pkg_req.name, pkg_req.constraint);
