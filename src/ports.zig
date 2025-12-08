@@ -1512,8 +1512,12 @@ pub const PortsMigrator = struct {
             if (std.mem.eql(u8, dep_origin, origin)) continue;
 
             // Map port origin to Axiom package name
+            // Note: @flavor suffix is stripped (e.g., py-flit-core@py311 → py-flit-core)
             const pkg_name = self.mapPortName(dep_origin);
-            std.debug.print("    [DEBUG] Looking for {s} (from {s}) in store\n", .{ pkg_name, dep_origin });
+            if (!std.mem.eql(u8, pkg_name, dep_origin)) {
+                std.debug.print("    [DEBUG] Mapped {s} → {s}\n", .{ dep_origin, pkg_name });
+            }
+            std.debug.print("    [DEBUG] Looking for {s} in store\n", .{pkg_name});
 
             // Find ALL versions of package in store
             var roots = self.findAllPackageRootsInStore(pkg_name) catch continue;
@@ -2854,12 +2858,19 @@ pub const PortsMigrator = struct {
     /// to the canonical Axiom package name used in the store.
     ///
     /// Rules in order:
+    /// 0. Strip @flavor suffix if present (e.g., py-setuptools@py311 → py-setuptools)
     /// 1. Exact origin overrides (lang/perl5.42 → perl, devel/autoconf-switch → autoconf)
     /// 2. Perl core ports: perl5* → perl
     /// 3. Perl modules: p5-* → strip "p5-" prefix
     /// 4. Fallback: use the port name (last path component) as-is
     fn mapPortName(self: *PortsMigrator, origin: []const u8) []const u8 {
         _ = self; // May use self.options.name_mappings for additional overrides later
+
+        // Strip @flavor suffix if present (e.g., "devel/py-setuptools@py311" → "devel/py-setuptools")
+        const origin_without_flavor = if (std.mem.indexOfScalar(u8, origin, '@')) |at_pos|
+            origin[0..at_pos]
+        else
+            origin;
 
         // Compile-time map for exact origin overrides
         const overrides = std.StaticStringMap([]const u8).initComptime(.{
@@ -2876,31 +2887,31 @@ pub const PortsMigrator = struct {
             .{ "devel/gmake", "make" },
         });
 
-        // 0. Check exact origin overrides
-        if (overrides.get(origin)) |name| {
+        // 1. Check exact origin overrides (using origin without flavor)
+        if (overrides.get(origin_without_flavor)) |name| {
             return name;
         }
 
-        // 1. Extract last path component: "category/name" → "name"
+        // 2. Extract last path component: "category/name" → "name"
         const port_name = blk: {
-            if (std.mem.lastIndexOfScalar(u8, origin, '/')) |idx| {
-                break :blk origin[idx + 1 ..];
+            if (std.mem.lastIndexOfScalar(u8, origin_without_flavor, '/')) |idx| {
+                break :blk origin_without_flavor[idx + 1 ..];
             } else {
-                break :blk origin;
+                break :blk origin_without_flavor;
             }
         };
 
-        // 2. Perl core ports: perl5, perl5.42, perl5XX → "perl"
+        // 3. Perl core ports: perl5, perl5.42, perl5XX → "perl"
         if (std.mem.startsWith(u8, port_name, "perl5")) {
             return "perl";
         }
 
-        // 3. Perl modules: p5-* → strip "p5-" prefix
+        // 4. Perl modules: p5-* → strip "p5-" prefix
         if (std.mem.startsWith(u8, port_name, "p5-") and port_name.len > 3) {
             return port_name[3..]; // Skip "p5-"
         }
 
-        // 4. Fallback: use the port name as-is
+        // 5. Fallback: use the port name as-is
         return port_name;
     }
 
