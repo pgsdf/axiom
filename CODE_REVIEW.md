@@ -153,10 +153,12 @@ Axiom is a well-designed ZFS-native package manager for the Pacific Grove Softwa
    - ✅ Now uses native file operations (`copyDirRecursiveSimple`) instead of shell execution
    - ✅ `store.zig` also updated to use native `copyDirectory` and `copyFile` functions
 
-2. **Environment Variable Trust** (Low Risk)
-   - `user.zig:55-63` - Gets username from `$USER` environment variable
-   - An attacker with environment control could potentially spoof identity
-   - **Recommendation:** Fall back to `/etc/passwd` lookup for sensitive operations
+2. **~~Environment Variable Trust~~ (ALREADY ADDRESSED)**
+   - ~~`user.zig:55-63` - Gets username from `$USER` environment variable~~
+   - ~~An attacker with environment control could potentially spoof identity~~
+   - ✅ Code already uses `getpwuid()` system call as primary source (lines 84-95)
+   - ✅ `$USER` is only used as fallback if system lookup fails
+   - ✅ Same pattern for home directory via `getHomeDirFromSystem()`
 
 3. **Symlink Validation Edge Case** (Low Risk)
    - `secure_tar.zig:437-444` - Absolute symlink targets are checked, but the check happens after path resolution
