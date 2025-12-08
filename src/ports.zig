@@ -86,6 +86,7 @@ pub const PortsError = error{
     ImportFailed,
     InvalidPortsTree,
     MissingRequiredField,
+    MissingDependencies,
     OutOfMemory,
     ProcessSpawnError,
 };
@@ -2423,8 +2424,46 @@ pub const PortsMigrator = struct {
         for (origins.items) |origin| {
             std.debug.print("    - {s}\n", .{origin});
         }
-        std.debug.print("  Note: Build these first if not already available on the system.\n", .{});
-        std.debug.print("        e.g., axiom ports-import {s}\n", .{origins.items[0]});
+
+        // Check which dependencies are missing from the Axiom store
+        var missing = std.ArrayList([]const u8).init(self.allocator);
+        defer missing.deinit();
+        // Note: we don't free the strings in missing since they're borrowed from origins
+
+        for (origins.items) |dep_origin| {
+            // Map port origin to package name (handles Python flavors, etc.)
+            const pkg_name = try self.mapPortNameAlloc(dep_origin);
+            defer self.allocator.free(pkg_name);
+
+            // Check if package exists in store
+            var roots = self.findAllPackageRootsInStore(pkg_name) catch {
+                try missing.append(dep_origin);
+                continue;
+            };
+
+            if (roots.items.len == 0) {
+                try missing.append(dep_origin);
+            }
+
+            // Clean up roots
+            for (roots.items) |r| self.allocator.free(r);
+            roots.deinit();
+        }
+
+        if (missing.items.len > 0) {
+            std.debug.print("\n  ERROR: Required dependencies not found in Axiom store:\n", .{});
+            for (missing.items) |dep| {
+                std.debug.print("    - {s}\n", .{dep});
+            }
+            std.debug.print("\n  Please build these dependencies first:\n", .{});
+            for (missing.items) |dep| {
+                std.debug.print("    axiom ports-import {s}\n", .{dep});
+            }
+            std.debug.print("\n", .{});
+            return error.MissingDependencies;
+        }
+
+        std.debug.print("  Note: All dependencies found in store.\n", .{});
     }
 
     /// Get direct dependencies for a port (returns list of port origins)
