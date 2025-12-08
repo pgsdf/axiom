@@ -108,6 +108,40 @@ pub const Manifest = struct {
     kernel: ?KernelCompat = null,
 
     /// Parse manifest from YAML content
+    ///
+    /// YAML Subset Supported:
+    /// ----------------------
+    /// This is a minimal line-based YAML parser optimized for Axiom manifests.
+    /// It does NOT support the full YAML specification.
+    ///
+    /// Supported features:
+    /// - Single-line key: value pairs
+    /// - Simple list items with "- item" syntax
+    /// - One level of nesting (e.g., kernel: section)
+    /// - Comments starting with #
+    /// - Quoted values (quotes are stripped)
+    ///
+    /// NOT supported:
+    /// - Multi-line strings (| or > syntax)
+    /// - Nested arrays or complex structures
+    /// - Escaped quotes within values
+    /// - Flow syntax ({ } or [ ])
+    /// - Anchors and aliases (&anchor, *alias)
+    /// - Multiple documents (---)
+    /// - Tags (!tag)
+    ///
+    /// Example of supported format:
+    /// ```yaml
+    /// name: mypackage
+    /// version: 1.2.3
+    /// description: A simple package
+    /// tags:
+    ///   - utility
+    ///   - cli
+    /// kernel:
+    ///   kmod: true
+    ///   freebsd_version_min: 1400000
+    /// ```
     pub fn parse(allocator: std.mem.Allocator, yaml_content: []const u8) !Manifest {
         // Simple line-based YAML parser for our specific format
         // This is a minimal implementation - we can replace with proper YAML library later
