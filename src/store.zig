@@ -447,12 +447,95 @@ pub const PackageStore = struct {
     }
 
     /// List all packages in the store
+    /// Traverses the ZFS-backed directory structure to find all packages
     pub fn listPackages(
         self: *PackageStore,
     ) ![]PackageId {
-        // TODO: Implement by traversing ZFS datasets or querying index
-        _ = self;
-        return &[_]PackageId{};
+        var packages = std.ArrayList(PackageId).init(self.allocator);
+        errdefer {
+            for (packages.items) |pkg| {
+                self.allocator.free(pkg.name);
+                self.allocator.free(pkg.build_id);
+            }
+            packages.deinit();
+        }
+
+        // Get mountpoint for the store root
+        const store_mountpoint = self.zfs_handle.getMountpoint(
+            self.allocator,
+            self.paths.store_root,
+        ) catch {
+            // Store root doesn't exist or isn't mounted
+            return packages.toOwnedSlice();
+        };
+        defer self.allocator.free(store_mountpoint);
+
+        // Open the store directory
+        var store_dir = std.fs.cwd().openDir(store_mountpoint, .{ .iterate = true }) catch {
+            return packages.toOwnedSlice();
+        };
+        defer store_dir.close();
+
+        // Iterate through package names
+        var name_iter = store_dir.iterate();
+        while (try name_iter.next()) |name_entry| {
+            if (name_entry.kind != .directory) continue;
+
+            const name_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+                store_mountpoint, name_entry.name,
+            });
+            defer self.allocator.free(name_path);
+
+            var name_dir = std.fs.cwd().openDir(name_path, .{ .iterate = true }) catch continue;
+            defer name_dir.close();
+
+            // Iterate through versions
+            var version_iter = name_dir.iterate();
+            while (try version_iter.next()) |version_entry| {
+                if (version_entry.kind != .directory) continue;
+
+                const version = Version.parse(version_entry.name) catch continue;
+
+                const version_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+                    name_path, version_entry.name,
+                });
+                defer self.allocator.free(version_path);
+
+                var version_dir = std.fs.cwd().openDir(version_path, .{ .iterate = true }) catch continue;
+                defer version_dir.close();
+
+                // Iterate through revisions
+                var revision_iter = version_dir.iterate();
+                while (try revision_iter.next()) |revision_entry| {
+                    if (revision_entry.kind != .directory) continue;
+
+                    const revision = std.fmt.parseInt(u32, revision_entry.name, 10) catch continue;
+
+                    const revision_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+                        version_path, revision_entry.name,
+                    });
+                    defer self.allocator.free(revision_path);
+
+                    var revision_dir = std.fs.cwd().openDir(revision_path, .{ .iterate = true }) catch continue;
+                    defer revision_dir.close();
+
+                    // Iterate through build IDs
+                    var build_iter = revision_dir.iterate();
+                    while (try build_iter.next()) |build_entry| {
+                        if (build_entry.kind != .directory) continue;
+
+                        try packages.append(.{
+                            .name = try self.allocator.dupe(u8, name_entry.name),
+                            .version = version,
+                            .revision = revision,
+                            .build_id = try self.allocator.dupe(u8, build_entry.name),
+                        });
+                    }
+                }
+            }
+        }
+
+        return packages.toOwnedSlice();
     }
 
     // Private helper methods
@@ -492,28 +575,77 @@ pub const PackageStore = struct {
         try std.fs.cwd().rename(temp_path, path);
     }
 
-    /// Copy directory recursively
+    /// Copy directory recursively using native file operations
+    /// This avoids shell injection vulnerabilities from using sh -c
     fn copyDirectory(self: *PackageStore, source: []const u8, dest: []const u8) !void {
         // Create destination directory
         try std.fs.cwd().makePath(dest);
 
-        // Use system cp command for now (more efficient than Zig file-by-file)
-        const cmd = try std.fmt.allocPrint(
-            self.allocator,
-            "cp -R {s}/. {s}/",
-            .{ source, dest },
-        );
-        defer self.allocator.free(cmd);
+        // Open source directory
+        var src_dir = std.fs.cwd().openDir(source, .{ .iterate = true }) catch |err| {
+            if (err == error.FileNotFound or err == error.NotDir) {
+                return StoreError.StorageError;
+            }
+            return err;
+        };
+        defer src_dir.close();
 
-        var child = std.process.Child.init(&[_][]const u8{ "sh", "-c", cmd }, self.allocator);
-        child.stdout_behavior = .Ignore;
-        child.stderr_behavior = .Ignore;
+        // Iterate and copy all entries
+        var iter = src_dir.iterate();
+        while (try iter.next()) |entry| {
+            const src_path = try std.fs.path.join(self.allocator, &[_][]const u8{ source, entry.name });
+            defer self.allocator.free(src_path);
 
-        try child.spawn();
-        const term = try child.wait();
+            const dst_path = try std.fs.path.join(self.allocator, &[_][]const u8{ dest, entry.name });
+            defer self.allocator.free(dst_path);
 
-        if (term.Exited != 0) {
-            return StoreError.StorageError;
+            switch (entry.kind) {
+                .directory => {
+                    // Recursively copy subdirectory
+                    try self.copyDirectory(src_path, dst_path);
+                },
+                .file => {
+                    // Copy file with permissions preserved
+                    try self.copyFile(src_path, dst_path);
+                },
+                .sym_link => {
+                    // Read and recreate symlink
+                    var target_buf: [std.fs.max_path_bytes]u8 = undefined;
+                    const target = try src_dir.readLink(entry.name, &target_buf);
+                    std.fs.cwd().symLink(target, dst_path, .{}) catch |err| {
+                        if (err != error.PathAlreadyExists) return err;
+                    };
+                },
+                else => {
+                    // Skip other file types (devices, sockets, etc.)
+                },
+            }
+        }
+    }
+
+    /// Copy a single file preserving permissions
+    fn copyFile(self: *PackageStore, src_path: []const u8, dst_path: []const u8) !void {
+        _ = self;
+
+        // Open source file
+        const src_file = try std.fs.cwd().openFile(src_path, .{});
+        defer src_file.close();
+
+        // Get source file stats for permissions
+        const stat = try src_file.stat();
+
+        // Create destination file with same permissions
+        const dst_file = try std.fs.cwd().createFile(dst_path, .{
+            .mode = @intCast(stat.mode & 0o7777),
+        });
+        defer dst_file.close();
+
+        // Copy content in chunks
+        var buffer: [8192]u8 = undefined;
+        while (true) {
+            const bytes_read = try src_file.read(&buffer);
+            if (bytes_read == 0) break;
+            try dst_file.writeAll(buffer[0..bytes_read]);
         }
     }
 

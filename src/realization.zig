@@ -395,12 +395,43 @@ pub const RealizationEngine = struct {
     }
 
     /// List all environments
+    /// Queries ZFS datasets under env_root to enumerate all realized environments
     pub fn listEnvironments(
         self: *RealizationEngine,
     ) ![][]const u8 {
-        // TODO: Implement by querying ZFS datasets under env_root
-        _ = self;
-        return &[_][]const u8{};
+        var envs = std.ArrayList([]const u8).init(self.allocator);
+        errdefer {
+            for (envs.items) |env| {
+                self.allocator.free(env);
+            }
+            envs.deinit();
+        }
+
+        // Get mountpoint for the env root
+        const env_mountpoint = self.zfs_handle.getMountpoint(
+            self.allocator,
+            self.env_root,
+        ) catch {
+            // Env root doesn't exist or isn't mounted
+            return envs.toOwnedSlice();
+        };
+        defer self.allocator.free(env_mountpoint);
+
+        // Open the environments directory
+        var env_dir = std.fs.cwd().openDir(env_mountpoint, .{ .iterate = true }) catch {
+            return envs.toOwnedSlice();
+        };
+        defer env_dir.close();
+
+        // Iterate through environments
+        var iter = env_dir.iterate();
+        while (try iter.next()) |entry| {
+            if (entry.kind != .directory) continue;
+
+            try envs.append(try self.allocator.dupe(u8, entry.name));
+        }
+
+        return envs.toOwnedSlice();
     }
 
     /// Get environment information

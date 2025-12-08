@@ -1127,6 +1127,8 @@ pub const Resolver = struct {
     }
 
     /// Find all package versions that satisfy the given constraints
+    /// Queries the package store for all versions of the given package
+    /// and filters them by the version constraints
     fn findCandidates(
         self: *Resolver,
         ctx: *ResolutionContext,
@@ -1134,49 +1136,109 @@ pub const Resolver = struct {
         constraints: []VersionConstraint,
     ) ![]Candidate {
         _ = ctx;
-        
-        // For now, we'll simulate finding candidates
-        // In a real implementation, this would query the package store index
-        
-        // TODO: Query store.listPackages() filtered by name
-        // For demonstration, we'll create mock candidates
-        
+
         var candidates = std.ArrayList(Candidate).init(self.allocator);
-        defer candidates.deinit();
+        errdefer {
+            for (candidates.items) |c| {
+                self.allocator.free(c.id.name);
+                self.allocator.free(c.id.build_id);
+            }
+            candidates.deinit();
+        }
 
-        // Mock: Create a few versions that might satisfy constraints
-        const test_versions = [_]Version{
-            Version{ .major = 5, .minor = 2, .patch = 0 },
-            Version{ .major = 5, .minor = 1, .patch = 0 },
-            Version{ .major = 5, .minor = 0, .patch = 0 },
-            Version{ .major = 4, .minor = 9, .patch = 0 },
-        };
+        // Query the store for all packages
+        const all_packages = try self.store.listPackages();
+        defer {
+            for (all_packages) |pkg| {
+                self.allocator.free(pkg.name);
+                self.allocator.free(pkg.build_id);
+            }
+            self.allocator.free(all_packages);
+        }
 
-        for (test_versions) |ver| {
+        // Filter packages by name and constraints
+        for (all_packages) |pkg| {
+            // Check if this package matches the name we're looking for
+            if (!std.mem.eql(u8, pkg.name, pkg_name)) continue;
+
+            // Check if the version satisfies all constraints
             var satisfies_all = true;
             for (constraints) |constraint| {
-                if (!constraint.satisfies(ver)) {
+                if (!constraint.satisfies(pkg.version)) {
                     satisfies_all = false;
                     break;
                 }
             }
 
             if (satisfies_all) {
-                // Create mock package ID
-                const build_id = try std.fmt.allocPrint(
-                    self.allocator,
-                    "mock{d}{d}{d}",
-                    .{ ver.major, ver.minor, ver.patch },
-                );
-                
+                // Load package metadata to get dependencies
+                var dependencies: []Dependency = &[_]Dependency{};
+                var provides: [][]const u8 = &[_][]const u8{};
+                var conflicts: []VirtualPackage = &[_]VirtualPackage{};
+                var replaces: []VirtualPackage = &[_]VirtualPackage{};
+                var kernel_compat: ?KernelCompat = null;
+
+                // Try to load package metadata for dependencies
+                if (self.store.getPackage(pkg)) |pkg_meta| {
+                    // Copy dependencies
+                    var deps = std.ArrayList(Dependency).init(self.allocator);
+                    for (pkg_meta.dependencies) |dep| {
+                        try deps.append(.{
+                            .name = try self.allocator.dupe(u8, dep.name),
+                            .constraint = dep.constraint,
+                        });
+                    }
+                    dependencies = try deps.toOwnedSlice();
+
+                    // Copy provides
+                    var prov = std.ArrayList([]const u8).init(self.allocator);
+                    for (pkg_meta.manifest.provides) |p| {
+                        try prov.append(try self.allocator.dupe(u8, p.name));
+                    }
+                    provides = try prov.toOwnedSlice();
+
+                    // Copy conflicts
+                    var conf = std.ArrayList(VirtualPackage).init(self.allocator);
+                    for (pkg_meta.manifest.conflicts) |c| {
+                        try conf.append(.{
+                            .name = try self.allocator.dupe(u8, c.name),
+                            .constraint = c.constraint,
+                        });
+                    }
+                    conflicts = try conf.toOwnedSlice();
+
+                    // Copy replaces
+                    var repl = std.ArrayList(VirtualPackage).init(self.allocator);
+                    for (pkg_meta.manifest.replaces) |r| {
+                        try repl.append(.{
+                            .name = try self.allocator.dupe(u8, r.name),
+                            .constraint = r.constraint,
+                        });
+                    }
+                    replaces = try repl.toOwnedSlice();
+
+                    // Copy kernel compat
+                    kernel_compat = pkg_meta.manifest.kernel_compat;
+
+                    // Clean up the metadata (but not the arrays we just copied)
+                    pkg_meta.manifest.deinit(self.allocator);
+                    self.allocator.free(pkg_meta.dataset_path);
+                } else |_| {
+                    // Failed to load metadata - use empty dependencies
+                }
+
                 try candidates.append(.{
                     .id = .{
-                        .name = try self.allocator.dupe(u8, pkg_name),
-                        .version = ver,
-                        .revision = 1,
-                        .build_id = build_id,
+                        .name = try self.allocator.dupe(u8, pkg.name),
+                        .version = pkg.version,
+                        .revision = pkg.revision,
+                        .build_id = try self.allocator.dupe(u8, pkg.build_id),
                     },
-                    .dependencies = &[_]Dependency{},
+                    .dependencies = dependencies,
+                    .provides = provides,
+                    .conflicts = conflicts,
+                    .replaces = replaces,
+                    .kernel_compat = kernel_compat,
                 });
             }
         }
