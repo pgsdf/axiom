@@ -852,6 +852,8 @@ pub const PortsMigrator = struct {
         ldflags: []const u8,
         /// CPPFLAGS pointing to sysroot include/
         cppflags: []const u8,
+        /// PYTHONPATH for Python packages in sysroot lib/python*/site-packages
+        pythonpath: []const u8,
         allocator: std.mem.Allocator,
 
         pub fn deinit(self: *BuildEnvironment) void {
@@ -869,6 +871,7 @@ pub const PortsMigrator = struct {
             self.allocator.free(self.ld_library_path);
             self.allocator.free(self.ldflags);
             self.allocator.free(self.cppflags);
+            if (self.pythonpath.len > 0) self.allocator.free(self.pythonpath);
         }
     };
 
@@ -1512,6 +1515,7 @@ pub const PortsMigrator = struct {
                 .ld_library_path = try self.allocator.dupe(u8, "/usr/local/lib:/usr/lib:/lib"),
                 .ldflags = try self.allocator.dupe(u8, "-L/usr/local/lib"),
                 .cppflags = try self.allocator.dupe(u8, "-I/usr/local/include"),
+                .pythonpath = "",
                 .allocator = self.allocator,
             };
         }
@@ -1534,6 +1538,7 @@ pub const PortsMigrator = struct {
                 .ld_library_path = try self.allocator.dupe(u8, "/usr/local/lib:/usr/lib:/lib"),
                 .ldflags = try self.allocator.dupe(u8, "-L/usr/local/lib"),
                 .cppflags = try self.allocator.dupe(u8, "-I/usr/local/include"),
+                .pythonpath = "",
                 .allocator = self.allocator,
             };
         };
@@ -1592,6 +1597,7 @@ pub const PortsMigrator = struct {
                 .ld_library_path = try self.allocator.dupe(u8, "/usr/local/lib:/usr/lib:/lib"),
                 .ldflags = try self.allocator.dupe(u8, "-L/usr/local/lib"),
                 .cppflags = try self.allocator.dupe(u8, "-I/usr/local/include"),
+                .pythonpath = "",
                 .allocator = self.allocator,
             };
         }
@@ -1646,9 +1652,16 @@ pub const PortsMigrator = struct {
             .{sysroot_include},
         );
 
+        // PYTHONPATH: scan sysroot/lib for python*/site-packages directories
+        // Python packages (py-flit-core, py-setuptools, etc.) install to lib/pythonX.Y/site-packages
+        const pythonpath = try self.buildPythonPath(sysroot_lib);
+
         std.debug.print("    [DEBUG] Sysroot created: {s}\n", .{sysroot});
         std.debug.print("    [DEBUG] Final PATH: {s}\n", .{path});
         std.debug.print("    [DEBUG] Final LDFLAGS: {s}\n", .{ldflags});
+        if (pythonpath.len > 0) {
+            std.debug.print("    [DEBUG] Final PYTHONPATH: {s}\n", .{pythonpath});
+        }
 
         return BuildEnvironment{
             .sysroot = sysroot,
@@ -1656,8 +1669,69 @@ pub const PortsMigrator = struct {
             .ld_library_path = ld_library_path,
             .ldflags = ldflags,
             .cppflags = cppflags,
+            .pythonpath = pythonpath,
             .allocator = self.allocator,
         };
+    }
+
+    /// Build PYTHONPATH by scanning lib directory for python*/site-packages
+    fn buildPythonPath(self: *PortsMigrator, lib_dir: []const u8) ![]const u8 {
+        var paths = std.ArrayList([]const u8).init(self.allocator);
+        defer {
+            for (paths.items) |p| self.allocator.free(p);
+            paths.deinit();
+        }
+
+        // Open lib directory and scan for python* subdirectories
+        var dir = std.fs.cwd().openDir(lib_dir, .{ .iterate = true }) catch |err| {
+            if (err == error.FileNotFound) return "";
+            return err;
+        };
+        defer dir.close();
+
+        var iter = dir.iterate();
+        while (try iter.next()) |entry| {
+            // Look for directories starting with "python"
+            if (entry.kind != .directory) continue;
+            if (!std.mem.startsWith(u8, entry.name, "python")) continue;
+
+            // Check for site-packages subdirectory
+            const site_packages = try std.fs.path.join(self.allocator, &[_][]const u8{
+                lib_dir,
+                entry.name,
+                "site-packages",
+            });
+
+            // Verify it exists
+            std.fs.cwd().access(site_packages, .{}) catch {
+                self.allocator.free(site_packages);
+                continue;
+            };
+
+            try paths.append(site_packages);
+        }
+
+        if (paths.items.len == 0) return "";
+
+        // Join all paths with ":"
+        var total_len: usize = 0;
+        for (paths.items, 0..) |p, i| {
+            total_len += p.len;
+            if (i < paths.items.len - 1) total_len += 1; // for ':'
+        }
+
+        const result = try self.allocator.alloc(u8, total_len);
+        var pos: usize = 0;
+        for (paths.items, 0..) |p, i| {
+            @memcpy(result[pos..][0..p.len], p);
+            pos += p.len;
+            if (i < paths.items.len - 1) {
+                result[pos] = ':';
+                pos += 1;
+            }
+        }
+
+        return result;
     }
 
     /// Build a port using the FreeBSD ports build system
@@ -2152,6 +2226,11 @@ pub const PortsMigrator = struct {
             try env_map.?.put("PATH", env.path);
             try env_map.?.put("LD_LIBRARY_PATH", env.ld_library_path);
 
+            // Set PYTHONPATH for Python packages in sysroot (py-flit-core, py-setuptools, etc.)
+            if (env.pythonpath.len > 0) {
+                try env_map.?.put("PYTHONPATH", env.pythonpath);
+            }
+
             // Set LDFLAGS and CPPFLAGS in environment for configure-time detection
             // This helps Perl Makefile.PL and other detection scripts find libraries
             // These MUST be set here (not via MAKE_ENV) because values contain spaces
@@ -2186,6 +2265,9 @@ pub const PortsMigrator = struct {
                 std.debug.print("    LOCALBASE=/usr/local\n", .{});
                 std.debug.print("    PATH={s}\n", .{env.path});
                 std.debug.print("    LD_LIBRARY_PATH={s}\n", .{env.ld_library_path});
+                if (env.pythonpath.len > 0) {
+                    std.debug.print("    PYTHONPATH={s}\n", .{env.pythonpath});
+                }
             }
         }
 
