@@ -5,6 +5,7 @@ const store = @import("store.zig");
 const manifest = @import("manifest.zig");
 const import_pkg = @import("import.zig");
 const secure_tar = @import("secure_tar.zig");
+const config = @import("config.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageStore = store.PackageStore;
@@ -133,14 +134,14 @@ pub const BootstrapManager = struct {
             .is_bootstrapped = missing.items.len == 0,
             .installed_packages = try installed.toOwnedSlice(),
             .missing_packages = try missing.toOwnedSlice(),
-            .bootstrap_path = "/axiom/store/pkg",
+            .bootstrap_path = config.DEFAULT_MOUNTPOINT ++ "/store/pkg",
         };
     }
 
     /// Check if a package is installed in the Axiom store
     fn isPackageInstalled(self: *Self, name: []const u8) !bool {
         // Check if package directory exists in store
-        const pkg_path = try std.fmt.allocPrint(self.allocator, "/axiom/store/pkg/{s}", .{name});
+        const pkg_path = try std.fmt.allocPrint(self.allocator, config.DEFAULT_MOUNTPOINT ++ "/store/pkg/{s}", .{name});
         defer self.allocator.free(pkg_path);
 
         var dir = std.fs.openDirAbsolute(pkg_path, .{}) catch {
@@ -328,7 +329,7 @@ pub const BootstrapManager = struct {
     /// Stage a package from the Axiom store to the staging directory
     fn stagePackage(self: *Self, pkg_name: []const u8, staging_dir: []const u8) !BootstrapPackage {
         // Find the package in the store
-        const pkg_base = try std.fmt.allocPrint(self.allocator, "/axiom/store/pkg/{s}", .{pkg_name});
+        const pkg_base = try std.fmt.allocPrint(self.allocator, config.DEFAULT_MOUNTPOINT ++ "/store/pkg/{s}", .{pkg_name});
         defer self.allocator.free(pkg_base);
 
         // Find the latest version directory

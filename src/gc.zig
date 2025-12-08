@@ -3,6 +3,7 @@ const zfs = @import("zfs.zig");
 const types = @import("types.zig");
 const store = @import("store.zig");
 const profile = @import("profile.zig");
+const config = @import("config.zig");
 const posix = std.posix;
 
 const ZfsHandle = zfs.ZfsHandle;
@@ -384,8 +385,8 @@ pub const GarbageCollector = struct {
             packages.deinit();
         }
 
-        // Get mountpoint for the env root (zroot/axiom/env)
-        const env_root = "zroot/axiom/env";
+        // Get mountpoint for the env root
+        const env_root = config.DEFAULT_POOL ++ "/" ++ config.DEFAULT_DATASET ++ "/env";
         const env_mountpoint = self.zfs_handle.getMountpoint(
             self.allocator,
             env_root,

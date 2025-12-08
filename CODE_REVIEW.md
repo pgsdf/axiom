@@ -61,9 +61,16 @@ Axiom is a well-designed ZFS-native package manager for the Pacific Grove Softwa
    - ~~`scanStore()`, `scanProfiles()`, `scanEnvironments()` in gc.zig return empty lists~~
    - ✅ All placeholder functions now have real implementations (fixed in commit 86a3eb7)
 
-2. **Hardcoded Dataset Paths**
-   - Multiple hardcoded paths like `"zroot/axiom/store"`, `"zroot/axiom/profiles"`
-   - Consider making the pool name configurable via environment variable or config file
+2. **~~Hardcoded Dataset Paths~~ (ADDRESSED)**
+   - ~~Multiple hardcoded paths like `"zroot/axiom/store"`, `"zroot/axiom/profiles"`~~
+   - ✅ Created `config.zig` with centralized configuration
+   - ✅ Paths configurable via environment variables:
+     - `AXIOM_POOL` (default: "zroot")
+     - `AXIOM_DATASET` (default: "axiom")
+     - `AXIOM_MOUNTPOINT` (default: "/axiom")
+     - `AXIOM_CONFIG_DIR` (default: "/etc/axiom")
+     - `AXIOM_CACHE_DIR` (default: "/var/cache/axiom")
+   - ✅ Updated all files to use config constants
 
 ---
 

@@ -4,6 +4,7 @@ const types = @import("types.zig");
 const store = @import("store.zig");
 const profile = @import("profile.zig");
 const conflict = @import("conflict.zig");
+const config = @import("config.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageId = types.PackageId;
@@ -40,7 +41,7 @@ pub const RealizationEngine = struct {
     allocator: std.mem.Allocator,
     zfs_handle: *ZfsHandle,
     store: *PackageStore,
-    env_root: []const u8 = "zroot/axiom/env",
+    env_root: []const u8 = config.DEFAULT_POOL ++ "/" ++ config.DEFAULT_DATASET ++ "/env",
     conflict_policy: ConflictPolicy = .error_on_conflict,
 
     /// Initialize realization engine
