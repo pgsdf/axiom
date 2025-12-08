@@ -184,6 +184,7 @@ pub const PackageStore = struct {
     }
 
     /// Add a package to the store
+    /// Thread-safe: Uses atomic dataset creation to avoid TOCTOU race conditions
     pub fn addPackage(
         self: *PackageStore,
         pkg_id: PackageId,
@@ -198,23 +199,29 @@ pub const PackageStore = struct {
 
         std.debug.print("Adding package {s} to store...\n", .{dataset_path});
 
-        // 2. Check if package already exists
-        const exists = try self.zfs_handle.datasetExists(
-            self.allocator,
-            dataset_path,
-            .filesystem,
-        );
-
-        if (exists) {
-            return StoreError.PackageExists;
-        }
-
-        // 3. Create immutable dataset (with parent creation for nested paths)
-        try self.zfs_handle.createDatasetWithParents(self.allocator, dataset_path, .{
+        // 2. Attempt to create dataset directly (atomic operation)
+        // This avoids TOCTOU race condition by handling DatasetExists error
+        // instead of checking existence first
+        self.zfs_handle.createDatasetWithParents(self.allocator, dataset_path, .{
             .compression = "lz4",
             .atime = false,
             .readonly = false, // We'll set to readonly after populating
-        });
+        }) catch |err| {
+            // Handle dataset already exists - this is the expected race condition case
+            if (err == zfs.ZfsError.DatasetExists) {
+                return StoreError.PackageExists;
+            }
+            // For other errors, check if dataset exists (may have been created by another process)
+            const exists = self.zfs_handle.datasetExists(
+                self.allocator,
+                dataset_path,
+                .filesystem,
+            ) catch return err;
+            if (exists) {
+                return StoreError.PackageExists;
+            }
+            return err;
+        };
 
         // 4. Get mountpoint and copy files
         const mountpoint = try self.zfs_handle.getMountpoint(self.allocator, dataset_path);
@@ -450,6 +457,41 @@ pub const PackageStore = struct {
 
     // Private helper methods
 
+    /// Atomically write content to a file using temp file + rename pattern
+    /// This prevents race conditions where concurrent writes could corrupt the file
+    fn atomicWriteFile(self: *PackageStore, path: []const u8, content: []const u8) !void {
+        // Generate unique temp file path in the same directory (for atomic rename)
+        const dir_path = std.fs.path.dirname(path) orelse ".";
+        const basename = std.fs.path.basename(path);
+
+        // Use timestamp and random suffix for uniqueness
+        const timestamp = std.time.timestamp();
+        const random = std.crypto.random.int(u32);
+
+        const temp_path = try std.fmt.allocPrint(
+            self.allocator,
+            "{s}/.{s}.{d}.{d}.tmp",
+            .{ dir_path, basename, timestamp, random },
+        );
+        defer self.allocator.free(temp_path);
+
+        // Write to temp file
+        const temp_file = try std.fs.cwd().createFile(temp_path, .{
+            .exclusive = true, // Fail if file exists (extra safety)
+        });
+        errdefer {
+            temp_file.close();
+            std.fs.cwd().deleteFile(temp_path) catch {};
+        }
+
+        try temp_file.writeAll(content);
+        try temp_file.sync(); // Ensure data is flushed to disk
+        temp_file.close();
+
+        // Atomic rename (POSIX guarantees atomicity for rename on same filesystem)
+        try std.fs.cwd().rename(temp_path, path);
+    }
+
     /// Copy directory recursively
     fn copyDirectory(self: *PackageStore, source: []const u8, dest: []const u8) !void {
         // Create destination directory
@@ -475,7 +517,8 @@ pub const PackageStore = struct {
         }
     }
 
-    /// Write manifest to file
+    /// Write manifest to file atomically
+    /// Thread-safe: Uses atomic write pattern (temp file + rename)
     fn writeManifest(
         self: *PackageStore,
         base_path: []const u8,
@@ -488,10 +531,10 @@ pub const PackageStore = struct {
         );
         defer self.allocator.free(path);
 
-        const file = try std.fs.cwd().createFile(path, .{});
-        defer file.close();
-
-        const writer = file.writer();
+        // Build content in memory first
+        var content = std.ArrayList(u8).init(self.allocator);
+        defer content.deinit();
+        const writer = content.writer();
 
         // Write manifest in YAML format
         try writer.print("name: {s}\n", .{mani.name});
@@ -517,9 +560,13 @@ pub const PackageStore = struct {
                 try writer.print("  - {s}\n", .{tag});
             }
         }
+
+        // Atomically write to file
+        try self.atomicWriteFile(path, content.items);
     }
 
-    /// Write dependency manifest to file
+    /// Write dependency manifest to file atomically
+    /// Thread-safe: Uses atomic write pattern (temp file + rename)
     fn writeDepManifest(
         self: *PackageStore,
         base_path: []const u8,
@@ -532,10 +579,10 @@ pub const PackageStore = struct {
         );
         defer self.allocator.free(path);
 
-        const file = try std.fs.cwd().createFile(path, .{});
-        defer file.close();
-
-        const writer = file.writer();
+        // Build content in memory first
+        var content = std.ArrayList(u8).init(self.allocator);
+        defer content.deinit();
+        const writer = content.writer();
 
         try writer.writeAll("dependencies:\n");
         for (deps.dependencies) |dep| {
@@ -582,9 +629,13 @@ pub const PackageStore = struct {
                 },
             }
         }
+
+        // Atomically write to file
+        try self.atomicWriteFile(path, content.items);
     }
 
-    /// Write provenance to file
+    /// Write provenance to file atomically
+    /// Thread-safe: Uses atomic write pattern (temp file + rename)
     fn writeProvenance(
         self: *PackageStore,
         base_path: []const u8,
@@ -597,10 +648,10 @@ pub const PackageStore = struct {
         );
         defer self.allocator.free(path);
 
-        const file = try std.fs.cwd().createFile(path, .{});
-        defer file.close();
-
-        const writer = file.writer();
+        // Build content in memory first
+        var content = std.ArrayList(u8).init(self.allocator);
+        defer content.deinit();
+        const writer = content.writer();
 
         try writer.print("build_time: {d}\n", .{prov.build_time});
         try writer.print("builder: {s}\n", .{prov.builder});
@@ -627,5 +678,8 @@ pub const PackageStore = struct {
                 try writer.print("  - {s}\n", .{flag});
             }
         }
+
+        // Atomically write to file
+        try self.atomicWriteFile(path, content.items);
     }
 };

@@ -3,6 +3,7 @@ const zfs = @import("zfs.zig");
 const types = @import("types.zig");
 const store = @import("store.zig");
 const profile = @import("profile.zig");
+const posix = std.posix;
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageId = types.PackageId;
@@ -18,10 +19,15 @@ const ProfileManager = profile.ProfileManager;
 /// This prevents accidental collection of recently imported packages.
 pub const DEFAULT_GC_GRACE_PERIOD_SECONDS: i64 = 24 * 60 * 60; // 24 hours
 
+/// Path for the GC lock file to prevent concurrent GC operations
+pub const GC_LOCK_FILE_PATH: []const u8 = "/var/run/axiom-gc.lock";
+
 /// Garbage collection errors
 pub const GCError = error{
     ScanFailed,
     CollectionFailed,
+    LockAcquisitionFailed,
+    GCAlreadyRunning,
 };
 
 /// Package reference information
@@ -44,14 +50,18 @@ pub const GCStats = struct {
 };
 
 /// Garbage collector - removes unreferenced packages
+/// Thread-safe: Uses file-based locking to prevent concurrent GC operations
 pub const GarbageCollector = struct {
     allocator: std.mem.Allocator,
     zfs_handle: *ZfsHandle,
     store: *PackageStore,
     profile_mgr: *ProfileManager,
-    
+
     /// Grace period in seconds - don't collect packages newer than this
     grace_period: i64 = DEFAULT_GC_GRACE_PERIOD_SECONDS,
+
+    /// Lock file handle (null when not holding lock)
+    lock_file: ?std.fs.File = null,
 
     /// Initialize garbage collector
     pub fn init(
@@ -65,11 +75,61 @@ pub const GarbageCollector = struct {
             .zfs_handle = zfs_handle,
             .store = store_ptr,
             .profile_mgr = profile_mgr_ptr,
+            .lock_file = null,
         };
     }
 
+    /// Acquire exclusive lock for GC operation
+    /// Returns error if another GC is already running
+    fn acquireLock(self: *GarbageCollector) !void {
+        // Try to create/open lock file
+        const lock_file = std.fs.cwd().createFile(GC_LOCK_FILE_PATH, .{
+            .read = true,
+            .lock = .exclusive,
+            .lock_nonblocking = true,
+        }) catch |err| {
+            if (err == error.WouldBlock) {
+                return GCError.GCAlreadyRunning;
+            }
+            // If we can't create in /var/run, try opening existing
+            const existing = std.fs.cwd().openFile(GC_LOCK_FILE_PATH, .{
+                .lock = .exclusive,
+                .lock_nonblocking = true,
+            }) catch |err2| {
+                if (err2 == error.WouldBlock) {
+                    return GCError.GCAlreadyRunning;
+                }
+                return GCError.LockAcquisitionFailed;
+            };
+            self.lock_file = existing;
+            return;
+        };
+
+        // Write PID to lock file for debugging
+        var pid_buf: [32]u8 = undefined;
+        const pid_str = std.fmt.bufPrint(&pid_buf, "{d}\n", .{std.os.linux.getpid()}) catch "";
+        lock_file.writeAll(pid_str) catch {};
+
+        self.lock_file = lock_file;
+    }
+
+    /// Release the GC lock
+    fn releaseLock(self: *GarbageCollector) void {
+        if (self.lock_file) |file| {
+            file.close();
+            self.lock_file = null;
+            // Optionally remove lock file (not strictly necessary as lock is released)
+            std.fs.cwd().deleteFile(GC_LOCK_FILE_PATH) catch {};
+        }
+    }
+
     /// Run garbage collection
+    /// Thread-safe: Acquires exclusive file lock to prevent concurrent GC operations
     pub fn collect(self: *GarbageCollector, dry_run: bool) !GCStats {
+        // Acquire exclusive lock before proceeding
+        try self.acquireLock();
+        defer self.releaseLock();
+
         var stats = GCStats{};
         const start_time = std.time.milliTimestamp();
 

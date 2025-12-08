@@ -314,6 +314,7 @@ pub const ProfileLock = struct {
 };
 
 /// Profile manager for creating and managing profiles
+/// Thread-safe: Uses atomic file writes to prevent race conditions
 pub const ProfileManager = struct {
     allocator: std.mem.Allocator,
     zfs_handle: *ZfsHandle,
@@ -325,6 +326,41 @@ pub const ProfileManager = struct {
             .allocator = allocator,
             .zfs_handle = zfs_handle,
         };
+    }
+
+    /// Atomically write content to a file using temp file + rename pattern
+    /// This prevents race conditions where concurrent writes could corrupt the file
+    fn atomicWriteFile(self: *ProfileManager, path: []const u8, content: []const u8) !void {
+        // Generate unique temp file path in the same directory (for atomic rename)
+        const dir_path = std.fs.path.dirname(path) orelse ".";
+        const basename = std.fs.path.basename(path);
+
+        // Use timestamp and random suffix for uniqueness
+        const timestamp = std.time.timestamp();
+        const random = std.crypto.random.int(u32);
+
+        const temp_path = try std.fmt.allocPrint(
+            self.allocator,
+            "{s}/.{s}.{d}.{d}.tmp",
+            .{ dir_path, basename, timestamp, random },
+        );
+        defer self.allocator.free(temp_path);
+
+        // Write to temp file
+        const temp_file = try std.fs.cwd().createFile(temp_path, .{
+            .exclusive = true, // Fail if file exists (extra safety)
+        });
+        errdefer {
+            temp_file.close();
+            std.fs.cwd().deleteFile(temp_path) catch {};
+        }
+
+        try temp_file.writeAll(content);
+        try temp_file.sync(); // Ensure data is flushed to disk
+        temp_file.close();
+
+        // Atomic rename (POSIX guarantees atomicity for rename on same filesystem)
+        try std.fs.cwd().rename(temp_path, path);
     }
 
     /// Create a new profile
@@ -377,17 +413,20 @@ pub const ProfileManager = struct {
             }
         };
 
-        // Write profile.yaml
+        // Write profile.yaml atomically
         const profile_path = try std.fs.path.join(
             self.allocator,
             &[_][]const u8{ mountpoint, "profile.yaml" },
         );
         defer self.allocator.free(profile_path);
 
-        const file = try std.fs.createFileAbsolute(profile_path, .{});
-        defer file.close();
+        // Build content in memory first
+        var content = std.ArrayList(u8).init(self.allocator);
+        defer content.deinit();
+        try profile.write(content.writer());
 
-        try profile.write(file.writer());
+        // Atomically write to file
+        try self.atomicWriteFile(profile_path, content.items);
 
         std.debug.print("  ✓ Profile created at {s}\n", .{mountpoint});
     }
@@ -430,17 +469,20 @@ pub const ProfileManager = struct {
 
         try self.zfs_handle.snapshot(self.allocator, dataset_path, snap_name, false);
 
-        // Update profile.yaml
+        // Update profile.yaml atomically
         const profile_path = try std.fs.path.join(
             self.allocator,
             &[_][]const u8{ mountpoint, "profile.yaml" },
         );
         defer self.allocator.free(profile_path);
 
-        const file = try std.fs.cwd().createFile(profile_path, .{});
-        defer file.close();
+        // Build content in memory first
+        var content = std.ArrayList(u8).init(self.allocator);
+        defer content.deinit();
+        try profile.write(content.writer());
 
-        try profile.write(file.writer());
+        // Atomically write to file
+        try self.atomicWriteFile(profile_path, content.items);
 
         std.debug.print("Profile '{s}' updated (snapshot: {s})\n", .{ profile.name, snap_name });
     }
@@ -489,7 +531,8 @@ pub const ProfileManager = struct {
         return Profile.parse(self.allocator, content);
     }
 
-    /// Save a lock file for a profile
+    /// Save a lock file for a profile atomically
+    /// Thread-safe: Uses atomic write pattern (temp file + rename)
     pub fn saveLock(
         self: *ProfileManager,
         profile_name: []const u8,
@@ -506,17 +549,20 @@ pub const ProfileManager = struct {
         const mountpoint = try self.zfs_handle.getMountpoint(self.allocator, dataset_path);
         defer self.allocator.free(mountpoint);
 
-        // Write profile.lock.yaml
+        // Write profile.lock.yaml atomically
         const lock_path = try std.fs.path.join(
             self.allocator,
             &[_][]const u8{ mountpoint, "profile.lock.yaml" },
         );
         defer self.allocator.free(lock_path);
 
-        const file = try std.fs.cwd().createFile(lock_path, .{});
-        defer file.close();
+        // Build content in memory first
+        var content = std.ArrayList(u8).init(self.allocator);
+        defer content.deinit();
+        try lock.write(content.writer());
 
-        try lock.write(file.writer());
+        // Atomically write to file
+        try self.atomicWriteFile(lock_path, content.items);
 
         std.debug.print("Lock file saved: {s}\n", .{lock_path});
     }
