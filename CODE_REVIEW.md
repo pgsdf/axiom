@@ -13,7 +13,7 @@ Axiom is a well-designed ZFS-native package manager for the Pacific Grove Softwa
 
 **Overall Score: A-** (Production-ready, all critical issues resolved)
 
-> **Update (2025-12-08):** All Priority 1 issues have been fixed. Shell injection vulnerabilities removed, placeholder functions implemented.
+> **Update (2025-12-08):** All Priority 1 issues have been fixed. Shell injection vulnerabilities removed, placeholder functions implemented. Ports migration Python bootstrap chain fixes completed.
 
 ---
 
@@ -23,10 +23,11 @@ Axiom is a well-designed ZFS-native package manager for the Pacific Grove Softwa
 2. [Code Quality](#code-quality)
 3. [Security Analysis](#security-analysis)
 4. [Potential Bugs & Issues](#potential-bugs--issues)
-5. [Performance Considerations](#performance-considerations)
-6. [Testing](#testing)
-7. [Documentation](#documentation)
-8. [Recommendations](#recommendations)
+5. [Ports Migration](#ports-migration-portszig)
+6. [Performance Considerations](#performance-considerations)
+7. [Testing](#testing)
+8. [Documentation](#documentation)
+9. [Recommendations](#recommendations)
 
 ---
 
@@ -226,6 +227,61 @@ None found.
 
 ---
 
+## Ports Migration (ports.zig)
+
+The FreeBSD ports migration module (`ports.zig`) enables building ports and importing them into the Axiom store. Several issues were identified and fixed during Python bootstrap chain testing.
+
+### Issues Fixed
+
+1. **~~Memory Leak in createBuildSysroot~~ (FIXED)**
+   - `sysroot_root` was freed with `errdefer` but needed `defer` since it's always temporary
+   - ✅ Changed to `defer self.allocator.free(sysroot_root)` for cleanup on all paths
+   - ✅ `sysroot_localbase` correctly uses `errdefer` (ownership transferred on success)
+
+2. **~~Flavor Handling in getPortDependencies~~ (FIXED)**
+   - Function constructed invalid paths like `/usr/ports/devel/py-wheel@py311`
+   - The actual port directory is `/usr/ports/devel/py-wheel`; flavor is passed via `FLAVOR=py311`
+   - ✅ Now uses `ParsedOrigin.parse()` to separate path and flavor
+   - ✅ Passes `FLAVOR=` argument to make when querying dependencies
+
+3. **~~Python Package Name Mapping~~ (FIXED)**
+   - Store lookups used `py-flit-core` but FreeBSD names packages as `py311-flit-core`
+   - The flavor becomes a prefix, not a suffix
+   - ✅ Added `mapPortNameAlloc()` function that transforms Python package names:
+     - `devel/py-flit-core@py311` → `py311-flit-core`
+     - `devel/py-setuptools@py311` → `py311-setuptools`
+   - ✅ Non-Python packages continue to use existing `mapPortName()` logic
+
+4. **~~PYTHONPATH Not Set for Python Builds~~ (FIXED)**
+   - Python packages couldn't find dependencies (e.g., py-wheel needs flit_core)
+   - Build environment only set PATH, LD_LIBRARY_PATH, LDFLAGS, CPPFLAGS
+   - ✅ Added `pythonpath` field to `BuildEnvironment` struct
+   - ✅ Added `buildPythonPath()` that scans `sysroot/lib/python*/site-packages`
+   - ✅ Sets `PYTHONPATH` environment variable when running make
+   - ✅ Enables Python bootstrap chain: flit-core → installer → build → wheel → setuptools
+
+### Python Bootstrap Chain
+
+The fixes enable building the complete Python packaging bootstrap chain:
+
+```
+py-flit-core (no Python build deps)
+    ↓
+py-installer (needs flit-core)
+    ↓
+py-build (needs flit-core, installer)
+    ↓
+py-wheel (needs flit-core)
+    ↓
+py-setuptools (needs wheel, flit-core)
+    ↓
+All other Python packages
+```
+
+Each package is built using dependencies from the Axiom store sysroot with proper PYTHONPATH.
+
+---
+
 ## Performance Considerations
 
 ### Strengths
@@ -346,9 +402,17 @@ Axiom is a well-architected package manager with strong foundations. The ZFS-nat
 - ✅ All placeholder implementations completed
 - ✅ Process termination issues no longer apply (shell execution removed)
 
+**Ports Migration fixes completed:**
+- ✅ Memory leak in sysroot creation fixed
+- ✅ Flavor handling for Python packages (`@py311` suffix)
+- ✅ Python package name mapping (`py-*@pyXXX` → `pyXXX-*`)
+- ✅ PYTHONPATH support for Python bootstrap chain
+- ✅ Memory leak in conflict tracking fixed
+
 The codebase demonstrates professional software engineering practices and is **ready for production use**.
 
 ---
 
 *Review completed on 2025-12-07*
 *Priority 1 fixes completed on 2025-12-08*
+*Ports migration fixes completed on 2025-12-08*
