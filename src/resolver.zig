@@ -1179,7 +1179,10 @@ pub const Resolver = struct {
                 var kernel_compat: ?KernelCompat = null;
 
                 // Try to load package metadata for dependencies
-                if (self.store.getPackage(pkg)) |pkg_meta| {
+                if (self.store.getPackage(pkg)) |pkg_meta_const| {
+                    // Make a mutable copy so we can call deinit
+                    var pkg_meta = pkg_meta_const;
+
                     // Copy dependencies
                     var deps = std.ArrayList(Dependency).init(self.allocator);
                     for (pkg_meta.dependencies) |dep| {
