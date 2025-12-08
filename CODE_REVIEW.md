@@ -98,9 +98,10 @@ Axiom is a well-designed ZFS-native package manager for the Pacific Grove Softwa
    - ✅ Converted to standalone functions: `findProviders`, `checkPackageConflict`, `getConflicts`
    - ✅ Removed `printConstraint` wrapper (was redundant with `printVersionConstraint`)
 
-2. **Inconsistent Debug Output**
-   - Mixed use of `std.debug.print` throughout code
-   - Should use a logging abstraction for production
+2. **~~Inconsistent Debug Output~~ (ADDRESSED)**
+   - ~~Mixed use of `std.debug.print` throughout code~~
+   - ✅ Added `log.zig` logging abstraction with configurable levels (debug/info/warn/err)
+   - ✅ Supports scoped loggers, timestamps, and can be disabled for production
 
 3. **Magic Numbers**
    - `secure_tar.zig:23-25` - File size limits (1GB, 10GB) should be named constants
@@ -316,7 +317,8 @@ None found.
 
 1. **~~Add millisecond precision to snapshot names~~ (FIXED)**
    - ✅ `profile.zig` now uses `std.time.milliTimestamp()` for snapshot names
-2. **Create logging abstraction** - Replace `std.debug.print` with configurable logger
+2. **~~Create logging abstraction~~ (FIXED)**
+   - ✅ Added `log.zig` with configurable log levels and scoped loggers
 3. **Make ZFS pool name configurable**
 4. **Add input validation for CLI arguments**
 
