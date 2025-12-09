@@ -293,6 +293,18 @@ The FreeBSD ports migration module (`ports.zig`) enables building ports and impo
    - ✅ Compute `display_name` before calling `importPort()` to have valid copy
    - ✅ Use `display_name` instead of `pkg_id.name` for `result.axiom_package` formatting
 
+9. **~~PYTHONPATH Not Passed to Make~~ (FIXED)**
+   - PYTHONPATH was calculated in `BuildEnvironment` but never passed to ports framework
+   - Python builds couldn't find flit_core even when in sysroot
+   - ✅ Add `MAKE_ENV+=PYTHONPATH` and `CONFIGURE_ENV+=PYTHONPATH` to make args
+   - ✅ Only set when pythonpath is non-empty (Python packages in sysroot)
+
+10. **~~Use-After-Free in MigrationResult.origin~~ (FIXED)**
+    - `migrate()` stored pointer to caller's origin, freed by `migrateWithDependencies` defer
+    - Result: garbled warnings like `Warnings for ������������������������:`
+    - ✅ Duplicate origin string in `migrate()` so MigrationResult owns its copy
+    - ✅ Updated `deinit()` to free the owned origin
+
 ### Python Bootstrap Chain
 
 The fixes enable building the complete Python packaging bootstrap chain:
@@ -445,6 +457,8 @@ Axiom is a well-architected package manager with strong foundations. The ZFS-nat
 - ✅ Python interpreter mapping (`python311` → `python`)
 - ✅ importPort using origin for correct store path naming
 - ✅ Use-after-free bug in axiom_package display fixed
+- ✅ PYTHONPATH actually passed to make command
+- ✅ Use-after-free bug in MigrationResult.origin fixed
 
 The codebase demonstrates professional software engineering practices and is **ready for production use**.
 
