@@ -843,20 +843,83 @@ pub const CLI = struct {
     fn listPackages(self: *CLI, args: []const []const u8) !void {
         // Check for --names-only flag (for shell completion)
         var names_only = false;
+        var show_origin = false;
         for (args) |arg| {
             if (std.mem.eql(u8, arg, "--names-only")) {
                 names_only = true;
+            } else if (std.mem.eql(u8, arg, "--origin") or std.mem.eql(u8, arg, "-o")) {
+                show_origin = true;
             }
         }
 
+        // Get list of packages from store
+        const packages = self.store.listPackages() catch |err| {
+            std.debug.print("Error listing packages: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer {
+            for (packages) |pkg| {
+                self.allocator.free(pkg.name);
+                self.allocator.free(pkg.build_id);
+            }
+            self.allocator.free(packages);
+        }
+
         if (names_only) {
-            // TODO: Output package names only, one per line
-            // For shell completion scripts
+            // Output package names only, one per line (for shell completion)
+            // Deduplicate names since there may be multiple versions
+            var seen = std.StringHashMap(void).init(self.allocator);
+            defer seen.deinit();
+            for (packages) |pkg| {
+                if (!seen.contains(pkg.name)) {
+                    std.debug.print("{s}\n", .{pkg.name});
+                    seen.put(pkg.name, {}) catch {};
+                }
+            }
             return;
         }
 
-        std.debug.print("Installed packages:\n", .{});
-        std.debug.print("  (TODO: List packages from {s})\n", .{self.store.paths.store_root});
+        if (packages.len == 0) {
+            std.debug.print("No packages installed.\n", .{});
+            std.debug.print("\nUse 'axiom ports-import <port>' to build packages from FreeBSD ports.\n", .{});
+            return;
+        }
+
+        std.debug.print("Installed packages ({d}):\n", .{packages.len});
+        for (packages) |pkg| {
+            // Format: name-version_revision
+            if (show_origin) {
+                // Try to get origin for this package
+                const origin = self.store.getPackageOriginByName(pkg.name) catch null;
+                defer if (origin) |o| self.allocator.free(o);
+                if (origin) |o| {
+                    std.debug.print("  {s}-{}.{}.{}_{d}  ({s})\n", .{
+                        pkg.name,
+                        pkg.version.major,
+                        pkg.version.minor,
+                        pkg.version.patch,
+                        pkg.revision,
+                        o,
+                    });
+                } else {
+                    std.debug.print("  {s}-{}.{}.{}_{d}\n", .{
+                        pkg.name,
+                        pkg.version.major,
+                        pkg.version.minor,
+                        pkg.version.patch,
+                        pkg.revision,
+                    });
+                }
+            } else {
+                std.debug.print("  {s}-{}.{}.{}_{d}\n", .{
+                    pkg.name,
+                    pkg.version.major,
+                    pkg.version.minor,
+                    pkg.version.patch,
+                    pkg.revision,
+                });
+            }
+        }
     }
 
     // Environment operations
