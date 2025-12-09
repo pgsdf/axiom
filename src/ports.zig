@@ -79,6 +79,9 @@ const Importer = import_pkg.Importer;
 const PackageId = types.PackageId;
 const Signer = signature.Signer;
 const KeyPair = signature.KeyPair;
+const TrustStore = signature.TrustStore;
+const PublicKey = signature.PublicKey;
+const TrustLevel = signature.TrustLevel;
 
 pub const PortsError = error{
     PortNotFound,
@@ -292,6 +295,7 @@ pub const PortsMigrator = struct {
     const LOCAL_KEY_DIR = config.DEFAULT_CONFIG_DIR ++ "/keys";
     const LOCAL_SECRET_KEY_PATH = LOCAL_KEY_DIR ++ "/local-signing.key";
     const LOCAL_PUBLIC_KEY_PATH = LOCAL_KEY_DIR ++ "/local-signing.pub";
+    const TRUST_STORE_PATH = config.DEFAULT_CONFIG_DIR ++ "/trust.yaml";
 
     /// Get or create a local signing key for this machine
     /// Returns a KeyPair for signing packages built locally
@@ -303,6 +307,8 @@ pub const PortsMigrator = struct {
 
         // Try to load existing local key
         if (self.loadSigningKey(LOCAL_SECRET_KEY_PATH)) |key| {
+            // Ensure existing key is in trust store
+            self.ensureKeyInTrustStore(key) catch {};
             return key;
         } else |_| {
             // Key doesn't exist - generate a new one
@@ -318,6 +324,10 @@ pub const PortsMigrator = struct {
             const key_pair = KeyPair.generate();
             const key_id = try key_pair.keyId(self.allocator);
             defer self.allocator.free(key_id);
+
+            // Get hostname for owner field
+            var hostname_buf: [255]u8 = undefined;
+            const hostname = std.posix.gethostname(&hostname_buf) catch "localhost";
 
             // Save secret key
             {
@@ -339,12 +349,41 @@ pub const PortsMigrator = struct {
                 try writer.writeAll("# This key is used to verify packages built on this machine\n");
                 try writer.print("key_id: {s}\n", .{key_id});
                 try writer.print("key_data: {s}\n", .{std.fmt.fmtSliceHexLower(&key_pair.public_key)});
-
-                // Get hostname for owner field
-                var hostname_buf: [255]u8 = undefined;
-                const hostname = std.posix.gethostname(&hostname_buf) catch "localhost";
                 try writer.print("owner: \"Local Build ({s})\"\n", .{hostname});
                 try writer.print("created: {d}\n", .{std.time.timestamp()});
+            }
+
+            // Add public key to trust store so verification passes
+            {
+                var trust_store = TrustStore.init(self.allocator, TRUST_STORE_PATH);
+                defer trust_store.deinit();
+
+                // Try to load existing trust store (ignore errors for new store)
+                trust_store.load() catch {};
+
+                // Create owner string for the key
+                const owner = try std.fmt.allocPrint(self.allocator, "Local Build ({s})", .{hostname});
+                defer self.allocator.free(owner);
+
+                // Add the public key with third_party trust (local builds)
+                const pub_key = PublicKey{
+                    .key_id = key_id,
+                    .key_data = key_pair.public_key,
+                    .owner = owner,
+                    .created = std.time.timestamp(),
+                    .expires = null,
+                    .trust_level = .third_party,
+                };
+
+                trust_store.addKeyWithTrust(pub_key, .third_party) catch |err| {
+                    std.debug.print("Warning: Could not add key to trust store: {s}\n", .{@errorName(err)});
+                };
+
+                trust_store.save() catch |err| {
+                    std.debug.print("Warning: Could not save trust store: {s}\n", .{@errorName(err)});
+                };
+
+                std.debug.print("  Key added to trust store: {s}\n", .{TRUST_STORE_PATH});
             }
 
             std.debug.print("  Key ID: {s}\n", .{key_id});
@@ -396,6 +435,45 @@ pub const PortsMigrator = struct {
             .public_key = ed_pair.public_key.bytes,
             .secret_key = secret_key,
         };
+    }
+
+    /// Ensure a key is in the trust store (for existing keys that predate trust store integration)
+    fn ensureKeyInTrustStore(self: *PortsMigrator, key_pair: KeyPair) !void {
+        const key_id = try key_pair.keyId(self.allocator);
+        defer self.allocator.free(key_id);
+
+        var trust_store = TrustStore.init(self.allocator, TRUST_STORE_PATH);
+        defer trust_store.deinit();
+
+        // Try to load existing trust store
+        trust_store.load() catch {};
+
+        // Check if key is already trusted
+        if (trust_store.isKeyTrusted(key_id)) {
+            return; // Already in trust store
+        }
+
+        // Key not in trust store - add it
+        std.debug.print("Adding local signing key to trust store...\n", .{});
+
+        var hostname_buf: [255]u8 = undefined;
+        const hostname = std.posix.gethostname(&hostname_buf) catch "localhost";
+        const owner = try std.fmt.allocPrint(self.allocator, "Local Build ({s})", .{hostname});
+        defer self.allocator.free(owner);
+
+        const pub_key = PublicKey{
+            .key_id = key_id,
+            .key_data = key_pair.public_key,
+            .owner = owner,
+            .created = std.time.timestamp(),
+            .expires = null,
+            .trust_level = .third_party,
+        };
+
+        try trust_store.addKeyWithTrust(pub_key, .third_party);
+        try trust_store.save();
+
+        std.debug.print("  Key {s} added to trust store\n", .{key_id});
     }
 
     /// Sign a source directory before import
