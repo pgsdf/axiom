@@ -210,8 +210,9 @@ pub const Importer = struct {
         };
 
         // Generate build ID if not provided
+        // Note: On success, caller takes ownership of generated build_id through returned PackageId
         const build_id = options.build_id orelse try self.generateBuildId();
-        defer if (options.build_id == null) self.allocator.free(build_id);
+        errdefer if (options.build_id == null) self.allocator.free(build_id);
 
         const pkg_id = PackageId{
             .name = pkg_name,
