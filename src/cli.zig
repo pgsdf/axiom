@@ -3392,6 +3392,8 @@ pub const CLI = struct {
         var succeeded: usize = 0;
         var failed: usize = 0;
         var skipped: usize = 0;
+        var skipped_already_in_store: usize = 0;
+        var skipped_replaced_by_axiom: usize = 0;
 
         for (results.items) |*result| {
             // Show any warnings
@@ -3414,6 +3416,12 @@ pub const CLI = struct {
                 failed += 1;
             } else if (result.status == .skipped) {
                 skipped += 1;
+                // Track skip reasons
+                switch (result.skip_reason) {
+                    .already_in_store => skipped_already_in_store += 1,
+                    .replaced_by_axiom => skipped_replaced_by_axiom += 1,
+                    .none => {},
+                }
             } else if (result.status == .imported or result.status == .built or result.status == .generated) {
                 succeeded += 1;
             }
@@ -3422,6 +3430,14 @@ pub const CLI = struct {
         std.debug.print("\n" ++ "=" ** 60 ++ "\n", .{});
         if (skipped > 0) {
             std.debug.print("Summary: {d} succeeded, {d} skipped, {d} failed (of {d} total)\n", .{ succeeded, skipped, failed, results.items.len });
+            // Show breakdown of skip reasons
+            std.debug.print("\nSkipped packages breakdown:\n", .{});
+            if (skipped_already_in_store > 0) {
+                std.debug.print("  - {d} already in store (same origin)\n", .{skipped_already_in_store});
+            }
+            if (skipped_replaced_by_axiom > 0) {
+                std.debug.print("  - {d} replaced by Axiom (e.g., ports-mgmt/pkg)\n", .{skipped_replaced_by_axiom});
+            }
         } else {
             std.debug.print("Summary: {d} succeeded, {d} failed (of {d} total)\n", .{ succeeded, failed, results.items.len });
         }

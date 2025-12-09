@@ -966,6 +966,7 @@ pub const PortsMigrator = struct {
             if (std.mem.eql(u8, origin, skip_origin)) {
                 std.debug.print("  ⊘ Skipping {s} (replaced by Axiom)\n", .{origin});
                 result.status = .skipped;
+                result.skip_reason = .replaced_by_axiom;
                 return result;
             }
         }
@@ -1004,6 +1005,7 @@ pub const PortsMigrator = struct {
                 if (should_skip) {
                     std.debug.print("  ✓ Package '{s}' already in store (same origin: {s}), skipping\n", .{ pkg_name, origin });
                     result.status = .skipped;
+                    result.skip_reason = .already_in_store;
                     result.axiom_package = try std.fmt.allocPrint(
                         self.allocator,
                         "{s} (existing)",
@@ -3987,6 +3989,7 @@ pub const BrokenPackage = struct {
 pub const MigrationResult = struct {
     origin: []const u8,
     status: MigrationStatus,
+    skip_reason: SkipReason = .none,
     manifest_path: ?[]const u8,
     axiom_package: ?[]const u8, // Package ID if imported
     warnings: std.ArrayList([]const u8),
@@ -4011,6 +4014,21 @@ pub const MigrationStatus = enum {
     imported,
     failed,
     skipped,
+};
+
+/// Reason why a package was skipped during migration
+pub const SkipReason = enum {
+    none, // Not skipped
+    already_in_store, // Package already exists with same origin
+    replaced_by_axiom, // Port is in SKIP_PORTS (e.g., ports-mgmt/pkg)
+
+    pub fn description(self: SkipReason) []const u8 {
+        return switch (self) {
+            .none => "not skipped",
+            .already_in_store => "already in store",
+            .replaced_by_axiom => "replaced by Axiom",
+        };
+    }
 };
 
 /// Generate a migration report
