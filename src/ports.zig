@@ -2962,36 +2962,32 @@ pub const PortsMigrator = struct {
 
     /// Display build dependencies (user must build these first via separate ports-import calls)
     fn displayDependencies(self: *PortsMigrator, port_path: []const u8) !void {
-        // Get BUILD_DEPENDS
-        var build_args = [_][]const u8{ "make", "-C", port_path, "-V", "BUILD_DEPENDS" };
-        var build_child = std.process.Child.init(&build_args, self.allocator);
-        build_child.stdout_behavior = .Pipe;
-        build_child.stderr_behavior = .Ignore;
-        try build_child.spawn();
+        // Get BUILD_DEPENDS, LIB_DEPENDS, and RUN_DEPENDS
+        const dep_vars = [_][]const u8{ "BUILD_DEPENDS", "LIB_DEPENDS", "RUN_DEPENDS" };
+        var all_deps: [3]?[]const u8 = .{ null, null, null };
 
-        var build_deps: ?[]const u8 = null;
-        if (build_child.stdout) |stdout_pipe| {
-            build_deps = stdout_pipe.readToEndAlloc(self.allocator, 1024 * 1024) catch null;
+        for (dep_vars, 0..) |dep_var, idx| {
+            var args = [_][]const u8{ "make", "-C", port_path, "-V", dep_var };
+            var child = std.process.Child.init(&args, self.allocator);
+            child.stdout_behavior = .Pipe;
+            child.stderr_behavior = .Ignore;
+            try child.spawn();
+
+            if (child.stdout) |stdout_pipe| {
+                all_deps[idx] = stdout_pipe.readToEndAlloc(self.allocator, 1024 * 1024) catch null;
+            }
+            _ = try child.wait();
         }
-        _ = try build_child.wait();
-
-        // Get LIB_DEPENDS
-        var lib_args = [_][]const u8{ "make", "-C", port_path, "-V", "LIB_DEPENDS" };
-        var lib_child = std.process.Child.init(&lib_args, self.allocator);
-        lib_child.stdout_behavior = .Pipe;
-        lib_child.stderr_behavior = .Ignore;
-        try lib_child.spawn();
-
-        var lib_deps: ?[]const u8 = null;
-        if (lib_child.stdout) |stdout_pipe| {
-            lib_deps = stdout_pipe.readToEndAlloc(self.allocator, 1024 * 1024) catch null;
-        }
-        _ = try lib_child.wait();
 
         defer {
-            if (build_deps) |d| self.allocator.free(d);
-            if (lib_deps) |d| self.allocator.free(d);
+            for (&all_deps) |*dep| {
+                if (dep.*) |d| self.allocator.free(d);
+            }
         }
+
+        const build_deps = all_deps[0];
+        const lib_deps = all_deps[1];
+        const run_deps = all_deps[2];
 
         // Parse dependencies and extract port origins (category/port format)
         var origins = std.ArrayList([]const u8).init(self.allocator);
@@ -3029,27 +3025,30 @@ pub const PortsMigrator = struct {
             }
         }
 
-        // LIB_DEPENDS format: "libname.so:category/port"
-        if (lib_deps) |deps| {
-            const trimmed = std.mem.trim(u8, deps, " \t\n\r");
-            if (trimmed.len > 0) {
-                var dep_iter = std.mem.splitSequence(u8, trimmed, " ");
-                while (dep_iter.next()) |dep| {
-                    const dep_trimmed = std.mem.trim(u8, dep, " \t\n\r");
-                    if (dep_trimmed.len == 0) continue;
+        // LIB_DEPENDS and RUN_DEPENDS format: "libname.so:category/port" or "file:category/port"
+        const remaining_deps = [_]?[]const u8{ lib_deps, run_deps };
+        for (remaining_deps) |deps_opt| {
+            if (deps_opt) |deps| {
+                const trimmed = std.mem.trim(u8, deps, " \t\n\r");
+                if (trimmed.len > 0) {
+                    var dep_iter = std.mem.splitSequence(u8, trimmed, " ");
+                    while (dep_iter.next()) |dep| {
+                        const dep_trimmed = std.mem.trim(u8, dep, " \t\n\r");
+                        if (dep_trimmed.len == 0) continue;
 
-                    if (std.mem.indexOf(u8, dep_trimmed, ":")) |colon_pos| {
-                        const origin = dep_trimmed[colon_pos + 1 ..];
-                        if (origin.len > 0 and std.mem.indexOf(u8, origin, "/") != null) {
-                            var found = false;
-                            for (origins.items) |existing| {
-                                if (std.mem.eql(u8, existing, origin)) {
-                                    found = true;
-                                    break;
+                        if (std.mem.indexOf(u8, dep_trimmed, ":")) |colon_pos| {
+                            const origin = dep_trimmed[colon_pos + 1 ..];
+                            if (origin.len > 0 and std.mem.indexOf(u8, origin, "/") != null) {
+                                var found = false;
+                                for (origins.items) |existing| {
+                                    if (std.mem.eql(u8, existing, origin)) {
+                                        found = true;
+                                        break;
+                                    }
                                 }
-                            }
-                            if (!found) {
-                                try origins.append(try self.allocator.dupe(u8, origin));
+                                if (!found) {
+                                    try origins.append(try self.allocator.dupe(u8, origin));
+                                }
                             }
                         }
                     }
@@ -3073,6 +3072,16 @@ pub const PortsMigrator = struct {
         // Note: we don't free the strings in missing since they're borrowed from origins
 
         for (origins.items) |dep_origin| {
+            // Skip dependencies that are in SKIP_PORTS (e.g., ports-mgmt/pkg)
+            var is_skipped = false;
+            for (SKIP_PORTS) |skip_origin| {
+                if (std.mem.eql(u8, dep_origin, skip_origin)) {
+                    is_skipped = true;
+                    break;
+                }
+            }
+            if (is_skipped) continue;
+
             // Map port origin to package name (handles Python flavors, etc.)
             const pkg_name = try self.mapPortNameAlloc(dep_origin);
             defer self.allocator.free(pkg_name);
