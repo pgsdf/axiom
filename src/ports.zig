@@ -1096,6 +1096,181 @@ pub const PortsMigrator = struct {
         return null;
     }
 
+    /// Scan the package store for packages with broken layout
+    /// Returns a list of (package_name, origin) tuples for packages that need rebuilding
+    pub fn findBrokenPackages(self: *PortsMigrator) !std.ArrayList(BrokenPackage) {
+        var broken = std.ArrayList(BrokenPackage).init(self.allocator);
+        errdefer {
+            for (broken.items) |b| b.deinit(self.allocator);
+            broken.deinit();
+        }
+
+        // Require store to be configured
+        _ = self.options.store orelse return broken;
+        const store_path = "/axiom/store/pkg";
+
+        var store_dir = std.fs.cwd().openDir(store_path, .{ .iterate = true }) catch {
+            return broken;
+        };
+        defer store_dir.close();
+
+        // Iterate over package names
+        var pkg_iter = store_dir.iterate();
+        while (pkg_iter.next() catch null) |pkg_entry| {
+            if (pkg_entry.kind != .directory) continue;
+
+            // Find latest version of this package
+            const pkg_path = try std.fs.path.join(self.allocator, &[_][]const u8{ store_path, pkg_entry.name });
+            defer self.allocator.free(pkg_path);
+
+            var pkg_dir = std.fs.cwd().openDir(pkg_path, .{ .iterate = true }) catch continue;
+            defer pkg_dir.close();
+
+            // Iterate versions to find root paths
+            var ver_iter = pkg_dir.iterate();
+            while (ver_iter.next() catch null) |ver_entry| {
+                if (ver_entry.kind != .directory) continue;
+
+                const ver_path = try std.fs.path.join(self.allocator, &[_][]const u8{ pkg_path, ver_entry.name });
+                defer self.allocator.free(ver_path);
+
+                var ver_dir = std.fs.cwd().openDir(ver_path, .{ .iterate = true }) catch continue;
+                defer ver_dir.close();
+
+                // Iterate revisions
+                var rev_iter = ver_dir.iterate();
+                while (rev_iter.next() catch null) |rev_entry| {
+                    if (rev_entry.kind != .directory) continue;
+
+                    const rev_path = try std.fs.path.join(self.allocator, &[_][]const u8{ ver_path, rev_entry.name });
+                    defer self.allocator.free(rev_path);
+
+                    var rev_dir = std.fs.cwd().openDir(rev_path, .{ .iterate = true }) catch continue;
+                    defer rev_dir.close();
+
+                    // Iterate build IDs
+                    var build_iter = rev_dir.iterate();
+                    while (build_iter.next() catch null) |build_entry| {
+                        if (build_entry.kind != .directory) continue;
+
+                        const root_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+                            rev_path, build_entry.name, "root",
+                        });
+                        defer self.allocator.free(root_path);
+
+                        // Check if this package has broken layout
+                        const broken_content = try self.findBrokenLayoutContent(root_path);
+                        if (broken_content != null) {
+                            self.allocator.free(broken_content.?);
+
+                            // Try to get origin from manifest
+                            const manifest_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+                                rev_path, build_entry.name, "manifest.yaml",
+                            });
+                            defer self.allocator.free(manifest_path);
+
+                            const origin = self.readOriginFromManifest(manifest_path) catch null;
+
+                            try broken.append(.{
+                                .name = try self.allocator.dupe(u8, pkg_entry.name),
+                                .origin = origin,
+                                .path = try self.allocator.dupe(u8, rev_path),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        return broken;
+    }
+
+    /// Read origin field from a manifest.yaml file
+    fn readOriginFromManifest(self: *PortsMigrator, path: []const u8) ![]const u8 {
+        const file = try std.fs.cwd().openFile(path, .{});
+        defer file.close();
+
+        const content = try file.readToEndAlloc(self.allocator, 1024 * 1024);
+        defer self.allocator.free(content);
+
+        // Simple parsing: look for "origin: " line
+        var lines = std.mem.splitScalar(u8, content, '\n');
+        while (lines.next()) |line| {
+            if (std.mem.startsWith(u8, line, "origin: ")) {
+                const origin = std.mem.trim(u8, line["origin: ".len..], " \t\r");
+                return try self.allocator.dupe(u8, origin);
+            }
+        }
+
+        return error.OriginNotFound;
+    }
+
+    /// Fix broken packages by destroying and rebuilding them
+    pub fn fixBrokenPackages(self: *PortsMigrator) !usize {
+        const broken = try self.findBrokenPackages();
+        defer {
+            for (broken.items) |b| b.deinit(self.allocator);
+            broken.deinit();
+        }
+
+        if (broken.items.len == 0) {
+            std.debug.print("No broken packages found.\n", .{});
+            return 0;
+        }
+
+        std.debug.print("\nFound {d} broken package(s):\n", .{broken.items.len});
+        for (broken.items) |b| {
+            std.debug.print("  - {s}", .{b.name});
+            if (b.origin) |o| {
+                std.debug.print(" (origin: {s})", .{o});
+            }
+            std.debug.print("\n", .{});
+        }
+        std.debug.print("\n", .{});
+
+        var fixed: usize = 0;
+        for (broken.items) |b| {
+            const origin = b.origin orelse {
+                std.debug.print("Skipping {s}: no origin recorded, cannot rebuild\n", .{b.name});
+                continue;
+            };
+
+            std.debug.print("Fixing {s} from {s}...\n", .{ b.name, origin });
+
+            // Destroy the broken package using ZFS
+            if (self.options.zfs_handle) |zfs| {
+                const dataset = try std.fmt.allocPrint(self.allocator, "zroot/axiom/store/pkg/{s}", .{b.name});
+                defer self.allocator.free(dataset);
+
+                zfs.destroy(dataset, true) catch |err| {
+                    std.debug.print("  Failed to destroy {s}: {s}\n", .{ dataset, @errorName(err) });
+                    continue;
+                };
+                std.debug.print("  Destroyed {s}\n", .{dataset});
+            } else {
+                std.debug.print("  Skipping destroy: no ZFS handle\n", .{});
+                continue;
+            }
+
+            // Rebuild the package
+            const result = self.migrate(origin) catch |err| {
+                std.debug.print("  Rebuild failed: {s}\n", .{@errorName(err)});
+                continue;
+            };
+            defer result.deinit(self.allocator);
+
+            if (result.status == .imported) {
+                std.debug.print("  ✓ Rebuilt successfully\n", .{});
+                fixed += 1;
+            } else {
+                std.debug.print("  Rebuild status: {s}\n", .{@tagName(result.status)});
+            }
+        }
+
+        std.debug.print("\nFixed {d} of {d} broken packages.\n", .{ fixed, broken.items.len });
+        return fixed;
+    }
+
     /// Recursively link/copy contents of a directory into the sysroot
     /// For bin/ directories, we COPY files instead of symlinking because:
     /// - When kernel executes a symlinked script, it passes the RESOLVED path to the interpreter
@@ -3318,6 +3493,19 @@ pub const PortsMigrator = struct {
         }
 
         return output.toOwnedSlice();
+    }
+};
+
+/// Information about a package with broken layout
+pub const BrokenPackage = struct {
+    name: []const u8,
+    origin: ?[]const u8,
+    path: []const u8,
+
+    pub fn deinit(self: BrokenPackage, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        if (self.origin) |o| allocator.free(o);
+        allocator.free(self.path);
     }
 };
 
