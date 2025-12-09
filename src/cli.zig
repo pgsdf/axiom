@@ -885,8 +885,42 @@ pub const CLI = struct {
             return;
         }
 
-        std.debug.print("Installed packages ({d}):\n", .{packages.len});
+        // Deduplicate packages by name-version-revision (ignore build_id variations)
+        // Each package may have multiple build IDs (content-addressed builds)
+        const PackageKey = struct {
+            name: []const u8,
+            version: types.Version,
+            revision: u32,
+        };
+
+        var unique_packages = std.ArrayList(PackageKey).init(self.allocator);
+        defer unique_packages.deinit();
+
+        // Simple O(n²) deduplication - fine for reasonable package counts
         for (packages) |pkg| {
+            var found = false;
+            for (unique_packages.items) |existing| {
+                if (std.mem.eql(u8, existing.name, pkg.name) and
+                    existing.version.major == pkg.version.major and
+                    existing.version.minor == pkg.version.minor and
+                    existing.version.patch == pkg.version.patch and
+                    existing.revision == pkg.revision)
+                {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                unique_packages.append(.{
+                    .name = pkg.name,
+                    .version = pkg.version,
+                    .revision = pkg.revision,
+                }) catch {};
+            }
+        }
+
+        std.debug.print("Installed packages ({d}):\n", .{unique_packages.items.len});
+        for (unique_packages.items) |pkg| {
             // Format: name-version_revision
             if (show_origin) {
                 // Try to get origin for this package
