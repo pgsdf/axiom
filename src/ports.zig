@@ -456,7 +456,14 @@ pub const PortsMigrator = struct {
 
         // Check if key is already trusted
         if (trust_store.isKeyTrusted(key_id)) {
-            return; // Already in trust store
+            // Key exists - but check if trust_level needs to be upgraded from .unknown
+            const current_level = trust_store.getKeyTrustLevel(key_id);
+            if (current_level == .unknown) {
+                // Upgrade trust level for existing key (from pre-trust_level trust store)
+                trust_store.setKeyTrustLevel(key_id, .third_party) catch {};
+                trust_store.save() catch {};
+            }
+            return;
         }
 
         // Key not in trust store - add it
