@@ -1305,8 +1305,22 @@ pub const PortsMigrator = struct {
             return 0;
         }
 
-        std.debug.print("\nFound {d} broken package(s):\n", .{broken.items.len});
+        // Deduplicate by package name - we destroy entire ZFS datasets so only need to process once
+        var unique_packages = std.StringHashMap(BrokenPackage).init(self.allocator);
+        defer unique_packages.deinit();
+
         for (broken.items) |b| {
+            if (!unique_packages.contains(b.name)) {
+                try unique_packages.put(b.name, b);
+            }
+        }
+
+        const unique_count = unique_packages.count();
+        std.debug.print("\nFound {d} broken build(s) across {d} unique package(s):\n", .{ broken.items.len, unique_count });
+
+        var iter = unique_packages.iterator();
+        while (iter.next()) |entry| {
+            const b = entry.value_ptr.*;
             std.debug.print("  - {s}", .{b.name});
             if (b.origin) |o| {
                 std.debug.print(" (origin: {s})", .{o});
@@ -1316,7 +1330,9 @@ pub const PortsMigrator = struct {
         std.debug.print("\n", .{});
 
         var fixed: usize = 0;
-        for (broken.items) |b| {
+        var pkg_iter = unique_packages.iterator();
+        while (pkg_iter.next()) |entry| {
+            const b = entry.value_ptr.*;
             // Try to get origin from manifest, or guess it from package name
             const origin = b.origin orelse blk: {
                 const guessed = self.guessOriginFromName(b.name) catch null;
@@ -1377,7 +1393,7 @@ pub const PortsMigrator = struct {
             }
         }
 
-        std.debug.print("\nFixed {d} of {d} broken packages.\n", .{ fixed, broken.items.len });
+        std.debug.print("\nFixed {d} of {d} broken packages.\n", .{ fixed, unique_count });
         return fixed;
     }
 
