@@ -259,6 +259,7 @@ pub const MigrateOptions = struct {
 
     // Dependency resolution
     auto_deps: bool = true, // Automatically build dependencies first
+    continue_on_failure: bool = false, // Continue building other ports if one fails
 
     // Build system dependencies (required if build_after_generate or import_after_build is true)
     zfs_handle: ?*ZfsHandle = null,
@@ -983,7 +984,10 @@ pub const PortsMigrator = struct {
 
         // Check if package already exists in store (skip only if same origin)
         if (self.options.store) |store| {
-            const pkg_name = self.mapPortName(origin);
+            // Use mapPortNameAlloc to get correct package name (handles Python flavors)
+            const pkg_name = try self.mapPortNameAlloc(origin);
+            defer self.allocator.free(pkg_name);
+
             const exists = store.packageNameExists(pkg_name) catch false;
             if (exists) {
                 // Check if the existing package has the same origin
@@ -3345,9 +3349,10 @@ pub const PortsMigrator = struct {
                 const result = try self.migrate(dep);
                 try results.append(result);
 
-                // Stop on failure
-                if (result.status == .failed) {
+                // Stop on failure unless continue_on_failure is set
+                if (result.status == .failed and !self.options.continue_on_failure) {
                     std.debug.print("Stopping due to failure in {s}\n", .{dep});
+                    std.debug.print("  (use --continue-on-failure to continue building other ports)\n", .{});
                     break;
                 }
             }
