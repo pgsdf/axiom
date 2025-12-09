@@ -1242,7 +1242,7 @@ pub const PortsMigrator = struct {
                 const dataset = try std.fmt.allocPrint(self.allocator, "zroot/axiom/store/pkg/{s}", .{b.name});
                 defer self.allocator.free(dataset);
 
-                zfs_h.destroyDataset(dataset, true) catch |err| {
+                zfs_h.destroyDataset(self.allocator, dataset, true) catch |err| {
                     std.debug.print("  Failed to destroy {s}: {s}\n", .{ dataset, @errorName(err) });
                     continue;
                 };
