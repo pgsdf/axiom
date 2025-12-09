@@ -1331,20 +1331,36 @@ pub const PortsMigrator = struct {
 
             std.debug.print("Fixing {s} from {s}...\n", .{ b.name, origin });
 
-            // Destroy the broken package using ZFS
-            if (self.options.zfs_handle) |zfs_h| {
-                const dataset = try std.fmt.allocPrint(self.allocator, "zroot/axiom/store/pkg/{s}", .{b.name});
-                defer self.allocator.free(dataset);
+            // Destroy the broken package using direct zfs command with -Rf
+            // -R = recursive including clones, -f = force unmount
+            const dataset = try std.fmt.allocPrint(self.allocator, "zroot/axiom/store/pkg/{s}", .{b.name});
+            defer self.allocator.free(dataset);
 
-                zfs_h.destroyDataset(self.allocator, dataset, true) catch |err| {
-                    std.debug.print("  Failed to destroy {s}: {s}\n", .{ dataset, @errorName(err) });
-                    continue;
-                };
-                std.debug.print("  Destroyed {s}\n", .{dataset});
-            } else {
-                std.debug.print("  Skipping destroy: no ZFS handle\n", .{});
+            const destroy_cmd = try std.fmt.allocPrint(self.allocator, "zfs destroy -Rf {s} 2>&1", .{dataset});
+            defer self.allocator.free(destroy_cmd);
+
+            var child = std.process.Child.init(&[_][]const u8{ "sh", "-c", destroy_cmd }, self.allocator);
+            child.stdout_behavior = .Pipe;
+            child.stderr_behavior = .Pipe;
+
+            child.spawn() catch |err| {
+                std.debug.print("  Failed to spawn destroy command: {s}\n", .{@errorName(err)});
+                continue;
+            };
+
+            const stdout = child.stdout.?.reader().readAllAlloc(self.allocator, 4096) catch "";
+            defer if (stdout.len > 0) self.allocator.free(stdout);
+
+            const term = child.wait() catch {
+                std.debug.print("  Failed to wait for destroy command\n", .{});
+                continue;
+            };
+
+            if (term.Exited != 0) {
+                std.debug.print("  Failed to destroy {s}: {s}\n", .{ dataset, stdout });
                 continue;
             }
+            std.debug.print("  Destroyed {s}\n", .{dataset});
 
             // Rebuild the package
             var result = self.migrate(origin) catch |err| {
