@@ -297,6 +297,12 @@ pub const PortsMigrator = struct {
     const LOCAL_PUBLIC_KEY_PATH = LOCAL_KEY_DIR ++ "/local-signing.pub";
     const TRUST_STORE_PATH = config.DEFAULT_CONFIG_DIR ++ "/trust.yaml";
 
+    /// Ports that should be skipped during migration
+    /// These are either replaced by Axiom itself or incompatible with Axiom's model
+    const SKIP_PORTS = [_][]const u8{
+        "ports-mgmt/pkg", // Axiom replaces pkg
+    };
+
     /// Get or create a local signing key for this machine
     /// Returns a KeyPair for signing packages built locally
     fn getOrCreateLocalSigningKey(self: *PortsMigrator) !KeyPair {
@@ -946,6 +952,15 @@ pub const PortsMigrator = struct {
             .warnings = std.ArrayList([]const u8).init(self.allocator),
             .errors = std.ArrayList([]const u8).init(self.allocator),
         };
+
+        // Check if port should be skipped (e.g., ports-mgmt/pkg is replaced by Axiom)
+        for (SKIP_PORTS) |skip_origin| {
+            if (std.mem.eql(u8, origin, skip_origin)) {
+                std.debug.print("  ⊘ Skipping {s} (replaced by Axiom)\n", .{origin});
+                result.status = .skipped;
+                return result;
+            }
+        }
 
         // Phase 1: Extract metadata
         var metadata = self.extractMetadata(origin) catch |err| {
