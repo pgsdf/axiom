@@ -3262,6 +3262,7 @@ pub const CLI = struct {
             std.debug.print("  --no-deps            Don't auto-resolve dependencies\n", .{});
             std.debug.print("  --use-system-tools   Use /usr/local tools instead of sysroot\n", .{});
             std.debug.print("  --fix-broken         Scan store and rebuild packages with broken layout\n", .{});
+            std.debug.print("  --no-sign            Don't sign packages after import\n", .{});
             std.debug.print("\nExamples:\n", .{});
             std.debug.print("  axiom ports-import shells/bash\n", .{});
             std.debug.print("  axiom ports-import editors/vim --jobs 8 --verbose\n", .{});
@@ -3280,6 +3281,7 @@ pub const CLI = struct {
         var auto_deps: bool = true;
         var use_system_tools: bool = false;
         var fix_broken: bool = false;
+        var sign_packages: bool = true;
 
         var i: usize = 0;
         while (i < args.len) : (i += 1) {
@@ -3301,6 +3303,8 @@ pub const CLI = struct {
                 use_system_tools = true;
             } else if (std.mem.eql(u8, args[i], "--fix-broken")) {
                 fix_broken = true;
+            } else if (std.mem.eql(u8, args[i], "--no-sign")) {
+                sign_packages = false;
             } else if (origin == null and args[i][0] != '-') {
                 origin = args[i];
             }
@@ -3320,6 +3324,7 @@ pub const CLI = struct {
                 .auto_deps = false, // Rebuild each package independently
                 .zfs_handle = self.zfs_handle,
                 .store = self.store,
+                .sign_packages = sign_packages,
                 .importer = self.importer,
                 .build_jobs = jobs,
                 .keep_sandbox = keep_sandbox,
@@ -3363,6 +3368,7 @@ pub const CLI = struct {
             .build_jobs = jobs,
             .keep_sandbox = keep_sandbox,
             .use_system_tools = use_system_tools,
+            .sign_packages = sign_packages,
         });
 
         // Check bootstrap status and warn if packages are missing

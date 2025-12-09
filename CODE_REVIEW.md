@@ -317,6 +317,18 @@ The FreeBSD ports migration module (`ports.zig`) enables building ports and impo
     - ✅ `fixBrokenPackages()` destroys and rebuilds each broken package
     - ✅ Uses `zfs destroy -Rf` for force recursive destroy including clones
 
+12. **~~Package Signing for Locally-Built Packages~~ (FIXED)**
+    - Packages imported via `ports-import` were unsigned, causing "WARNING: Package is not signed"
+    - ✅ Added automatic signing after successful import
+    - ✅ `getOrCreateLocalSigningKey()` generates/loads a local Ed25519 signing key
+    - ✅ Keys stored in `/var/axiom/keys/`:
+      - `local-signing.key` (secret key, mode 0600)
+      - `local-signing.pub` (public key, mode 0644)
+    - ✅ `signPackageInStore()` signs the package after import
+    - ✅ Creates `manifest.sig` with file hashes and Ed25519 signature
+    - ✅ Added `--no-sign` CLI option to disable signing
+    - ✅ Signing is enabled by default for all ports-import operations
+
 ### Python Bootstrap Chain
 
 The fixes enable building the complete Python packaging bootstrap chain:
@@ -472,6 +484,7 @@ Axiom is a well-architected package manager with strong foundations. The ZFS-nat
 - ✅ PYTHONPATH actually passed to make command
 - ✅ Use-after-free bug in MigrationResult.origin fixed
 - ✅ `--fix-broken` option to auto-repair packages with broken layout
+- ✅ Automatic package signing for locally-built packages
 
 The codebase demonstrates professional software engineering practices and is **ready for production use**.
 

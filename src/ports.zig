@@ -70,12 +70,15 @@ const import_pkg = @import("import.zig");
 const zfs = @import("zfs.zig");
 const bootstrap_pkg = @import("bootstrap.zig");
 const config = @import("config.zig");
+const signature = @import("signature.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageStore = store_pkg.PackageStore;
 const Builder = build_pkg.Builder;
 const Importer = import_pkg.Importer;
 const PackageId = types.PackageId;
+const Signer = signature.Signer;
+const KeyPair = signature.KeyPair;
 
 pub const PortsError = error{
     PortNotFound,
@@ -265,6 +268,10 @@ pub const MigrateOptions = struct {
 
     // Workaround options
     use_system_tools: bool = false, // Skip sysroot creation, use /usr/local directly
+
+    // Package signing options
+    sign_packages: bool = true, // Sign packages after import (default: true)
+    signing_key_path: ?[]const u8 = null, // Path to signing key, or null for auto-generated local key
 };
 
 /// Ports migration tool
@@ -279,6 +286,189 @@ pub const PortsMigrator = struct {
             .allocator = allocator,
             .options = options,
         };
+    }
+
+    /// Default path for local signing key
+    const LOCAL_KEY_DIR = config.DEFAULT_CONFIG_DIR ++ "/keys";
+    const LOCAL_SECRET_KEY_PATH = LOCAL_KEY_DIR ++ "/local-signing.key";
+    const LOCAL_PUBLIC_KEY_PATH = LOCAL_KEY_DIR ++ "/local-signing.pub";
+
+    /// Get or create a local signing key for this machine
+    /// Returns a KeyPair for signing packages built locally
+    fn getOrCreateLocalSigningKey(self: *PortsMigrator) !KeyPair {
+        // Check if user specified a custom key path
+        if (self.options.signing_key_path) |custom_path| {
+            return self.loadSigningKey(custom_path);
+        }
+
+        // Try to load existing local key
+        if (self.loadSigningKey(LOCAL_SECRET_KEY_PATH)) |key| {
+            return key;
+        } else |_| {
+            // Key doesn't exist - generate a new one
+            std.debug.print("Generating local signing key...\n", .{});
+
+            // Create key directory if needed
+            std.fs.cwd().makePath(LOCAL_KEY_DIR) catch |err| {
+                std.debug.print("Warning: Failed to create key directory: {s}\n", .{@errorName(err)});
+                return err;
+            };
+
+            // Generate new key pair
+            const key_pair = KeyPair.generate();
+            const key_id = try key_pair.keyId(self.allocator);
+            defer self.allocator.free(key_id);
+
+            // Save secret key
+            {
+                const file = try std.fs.cwd().createFile(LOCAL_SECRET_KEY_PATH, .{ .mode = 0o600 });
+                defer file.close();
+                const writer = file.writer();
+                try writer.writeAll("# Axiom Local Signing Key (SECRET - keep private!)\n");
+                try writer.writeAll("# Generated automatically for signing locally-built packages\n");
+                try writer.print("key_id: {s}\n", .{key_id});
+                try writer.print("secret_key: {s}\n", .{std.fmt.fmtSliceHexLower(&key_pair.secret_key)});
+            }
+
+            // Save public key (can be shared)
+            {
+                const file = try std.fs.cwd().createFile(LOCAL_PUBLIC_KEY_PATH, .{ .mode = 0o644 });
+                defer file.close();
+                const writer = file.writer();
+                try writer.writeAll("# Axiom Local Signing Key (PUBLIC)\n");
+                try writer.writeAll("# This key is used to verify packages built on this machine\n");
+                try writer.print("key_id: {s}\n", .{key_id});
+                try writer.print("key_data: {s}\n", .{std.fmt.fmtSliceHexLower(&key_pair.public_key)});
+
+                // Get hostname for owner field
+                var hostname_buf: [256]u8 = undefined;
+                const hostname = std.posix.gethostname(&hostname_buf) catch "localhost";
+                try writer.print("owner: \"Local Build ({s})\"\n", .{hostname});
+                try writer.print("created: {d}\n", .{std.time.timestamp()});
+            }
+
+            std.debug.print("  Key ID: {s}\n", .{key_id});
+            std.debug.print("  Secret key saved to: {s}\n", .{LOCAL_SECRET_KEY_PATH});
+            std.debug.print("  Public key saved to: {s}\n", .{LOCAL_PUBLIC_KEY_PATH});
+
+            return key_pair;
+        }
+    }
+
+    /// Load a signing key from file
+    fn loadSigningKey(self: *PortsMigrator, path: []const u8) !KeyPair {
+        const file = try std.fs.cwd().openFile(path, .{});
+        defer file.close();
+
+        const content = try file.readToEndAlloc(self.allocator, 1024 * 1024);
+        defer self.allocator.free(content);
+
+        var secret_key: [64]u8 = undefined;
+        var found_key = false;
+
+        var lines = std.mem.splitSequence(u8, content, "\n");
+        while (lines.next()) |line| {
+            const trimmed = std.mem.trim(u8, line, " \t");
+            if (std.mem.startsWith(u8, trimmed, "secret_key:")) {
+                const value = std.mem.trim(u8, trimmed[11..], " \t");
+                if (value.len == 128) {
+                    _ = std.fmt.hexToBytes(&secret_key, value) catch {
+                        return error.InvalidKeyFormat;
+                    };
+                    found_key = true;
+                }
+            }
+        }
+
+        if (!found_key) {
+            return error.InvalidKeyFormat;
+        }
+
+        // Reconstruct key pair from secret key
+        const ed_secret = std.crypto.sign.Ed25519.SecretKey.fromBytes(secret_key) catch {
+            return error.InvalidKeyFormat;
+        };
+        const ed_pair = std.crypto.sign.Ed25519.KeyPair.fromSecretKey(ed_secret) catch {
+            return error.InvalidKeyFormat;
+        };
+
+        return KeyPair{
+            .public_key = ed_pair.public_key.bytes,
+            .secret_key = secret_key,
+        };
+    }
+
+    /// Sign a package in the store
+    fn signPackageInStore(self: *PortsMigrator, pkg_id: PackageId) !void {
+        if (!self.options.sign_packages) {
+            return;
+        }
+
+        // Get the signing key
+        const key_pair = self.getOrCreateLocalSigningKey() catch |err| {
+            std.debug.print("Warning: Could not get signing key: {s}\n", .{@errorName(err)});
+            std.debug.print("  Package will remain unsigned\n", .{});
+            return;
+        };
+
+        // Get hostname for signer name
+        var hostname_buf: [256]u8 = undefined;
+        const hostname = std.posix.gethostname(&hostname_buf) catch "localhost";
+        const signer_name = try std.fmt.allocPrint(self.allocator, "Local Build ({s})", .{hostname});
+        defer self.allocator.free(signer_name);
+
+        // Find the package in the store
+        const store = self.options.store orelse {
+            std.debug.print("Warning: Store not available for signing\n", .{});
+            return;
+        };
+
+        // Get package mountpoint path
+        const pkg_path = store.paths.packageMountpoint(self.allocator, pkg_id) catch |err| {
+            std.debug.print("Warning: Could not find package path: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer self.allocator.free(pkg_path);
+
+        // Check if the package directory exists
+        std.fs.cwd().access(pkg_path, .{}) catch {
+            std.debug.print("Warning: Package directory does not exist: {s}\n", .{pkg_path});
+            return;
+        };
+
+        std.debug.print("Signing package: {s}@{}\n", .{ pkg_id.name, pkg_id.version });
+
+        // Create signer and sign the package directory
+        var signer = Signer.init(self.allocator, key_pair, signer_name);
+        var sig = signer.signPackage(pkg_path) catch |err| {
+            std.debug.print("Warning: Failed to sign package: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer sig.deinit(self.allocator);
+
+        // Save signature
+        const sig_yaml = try sig.toYaml(self.allocator);
+        defer self.allocator.free(sig_yaml);
+
+        const sig_path = try std.fs.path.join(self.allocator, &[_][]const u8{ pkg_path, "manifest.sig" });
+        defer self.allocator.free(sig_path);
+
+        {
+            const sig_file = std.fs.cwd().createFile(sig_path, .{}) catch |err| {
+                std.debug.print("Warning: Failed to create signature file: {s}\n", .{@errorName(err)});
+                return;
+            };
+            defer sig_file.close();
+            sig_file.writeAll(sig_yaml) catch |err| {
+                std.debug.print("Warning: Failed to write signature: {s}\n", .{@errorName(err)});
+                return;
+            };
+        }
+
+        const key_id = key_pair.keyId(self.allocator) catch "unknown";
+        defer if (!std.mem.eql(u8, key_id, "unknown")) self.allocator.free(key_id);
+
+        std.debug.print("  ✓ Package signed (key: {s})\n", .{key_id});
     }
 
     /// Check if minimal bootstrap packages are available and warn if not
@@ -3121,6 +3311,12 @@ pub const PortsMigrator = struct {
         };
 
         std.debug.print("  ✓ Package imported: {s}@{}\n", .{ pkg_id.name, pkg_id.version });
+
+        // Sign the package after successful import
+        self.signPackageInStore(pkg_id) catch |err| {
+            std.debug.print("Warning: Failed to sign package: {s}\n", .{@errorName(err)});
+            // Don't fail the import if signing fails
+        };
 
         return pkg_id;
     }
