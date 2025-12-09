@@ -1253,7 +1253,7 @@ pub const PortsMigrator = struct {
             }
 
             // Rebuild the package
-            const result = self.migrate(origin) catch |err| {
+            var result = self.migrate(origin) catch |err| {
                 std.debug.print("  Rebuild failed: {s}\n", .{@errorName(err)});
                 continue;
             };
