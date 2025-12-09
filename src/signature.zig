@@ -707,6 +707,10 @@ pub const TrustStore = struct {
                     if (current_trusted) {
                         try self.trustKey(key.key_id);
                     }
+                    // Free the temporary key's allocated fields (addKey duplicates them)
+                    if (key.key_id.len > 0) self.allocator.free(key.key_id);
+                    if (key.owner) |o| self.allocator.free(o);
+                    if (key.email) |e| self.allocator.free(e);
                 }
                 current_key = PublicKey{
                     .key_id = "",
@@ -752,6 +756,10 @@ pub const TrustStore = struct {
             if (current_trusted) {
                 try self.trustKey(key.key_id);
             }
+            // Free the temporary key's allocated fields (addKey duplicates them)
+            if (key.key_id.len > 0) self.allocator.free(key.key_id);
+            if (key.owner) |o| self.allocator.free(o);
+            if (key.email) |e| self.allocator.free(e);
         }
     }
 
