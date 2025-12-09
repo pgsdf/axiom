@@ -341,7 +341,7 @@ pub const PortsMigrator = struct {
                 try writer.print("key_data: {s}\n", .{std.fmt.fmtSliceHexLower(&key_pair.public_key)});
 
                 // Get hostname for owner field
-                var hostname_buf: [256]u8 = undefined;
+                var hostname_buf: [255]u8 = undefined;
                 const hostname = std.posix.gethostname(&hostname_buf) catch "localhost";
                 try writer.print("owner: \"Local Build ({s})\"\n", .{hostname});
                 try writer.print("created: {d}\n", .{std.time.timestamp()});
@@ -412,7 +412,7 @@ pub const PortsMigrator = struct {
         };
 
         // Get hostname for signer name
-        var hostname_buf: [256]u8 = undefined;
+        var hostname_buf: [255]u8 = undefined;
         const hostname = std.posix.gethostname(&hostname_buf) catch "localhost";
         const signer_name = try std.fmt.allocPrint(self.allocator, "Local Build ({s})", .{hostname});
         defer self.allocator.free(signer_name);
