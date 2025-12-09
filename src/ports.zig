@@ -687,8 +687,13 @@ pub const PortsMigrator = struct {
 
     /// Full migration: extract, generate, optionally build and import
     pub fn migrate(self: *PortsMigrator, origin: []const u8) !MigrationResult {
+        // Duplicate origin so MigrationResult owns its copy
+        // (caller's origin may be freed, e.g., from dep_tree in migrateWithDependencies)
+        const owned_origin = try self.allocator.dupe(u8, origin);
+        errdefer self.allocator.free(owned_origin);
+
         var result: MigrationResult = .{
-            .origin = origin,
+            .origin = owned_origin,
             .status = .pending,
             .manifest_path = null,
             .axiom_package = null,
@@ -2060,6 +2065,13 @@ pub const PortsMigrator = struct {
         var make_ldflags_arg: ?[]const u8 = null;
         defer if (make_ldflags_arg) |f| self.allocator.free(f);
 
+        // PYTHONPATH for Python package builds
+        var make_pythonpath_arg: ?[]const u8 = null;
+        defer if (make_pythonpath_arg) |f| self.allocator.free(f);
+
+        var configure_pythonpath_arg: ?[]const u8 = null;
+        defer if (configure_pythonpath_arg) |f| self.allocator.free(f);
+
         // FLAVOR argument for flavored ports (e.g., devel/py-setuptools@py311)
         var flavor_arg: ?[]const u8 = null;
         defer if (flavor_arg) |f| self.allocator.free(f);
@@ -2175,6 +2187,24 @@ pub const PortsMigrator = struct {
             );
             try args.append(make_ldflags_arg.?);
 
+            // PYTHONPATH for Python package builds (flit_core, setuptools, etc.)
+            // Only set if we found Python site-packages in the sysroot
+            if (env.pythonpath.len > 0) {
+                make_pythonpath_arg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "MAKE_ENV+=PYTHONPATH=\"{s}\"",
+                    .{env.pythonpath},
+                );
+                try args.append(make_pythonpath_arg.?);
+
+                configure_pythonpath_arg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "CONFIGURE_ENV+=PYTHONPATH=\"{s}\"",
+                    .{env.pythonpath},
+                );
+                try args.append(configure_pythonpath_arg.?);
+            }
+
             std.debug.print("    [DEBUG] Passing to ports framework:\n", .{});
             std.debug.print("    [DEBUG]   MAKE_ENV+=PATH={s} LOCALBASE={s}\n", .{ env.path, localbase });
             std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PATH={s} LOCALBASE={s}\n", .{ env.path, localbase });
@@ -2182,6 +2212,10 @@ pub const PortsMigrator = struct {
             std.debug.print("    [DEBUG]   LDFLAGS+={s}\n", .{env.ldflags});
             std.debug.print("    [DEBUG]   CONFIGURE_ENV+=CPPFLAGS=\"{s}\"\n", .{env.cppflags});
             std.debug.print("    [DEBUG]   CONFIGURE_ENV+=LDFLAGS=\"{s}\"\n", .{env.ldflags});
+            if (env.pythonpath.len > 0) {
+                std.debug.print("    [DEBUG]   MAKE_ENV+=PYTHONPATH=\"{s}\"\n", .{env.pythonpath});
+                std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PYTHONPATH=\"{s}\"\n", .{env.pythonpath});
+            }
         }
 
         // Add DESTDIR if provided
@@ -3297,6 +3331,8 @@ pub const MigrationResult = struct {
     errors: std.ArrayList([]const u8),
 
     pub fn deinit(self: *MigrationResult, allocator: std.mem.Allocator) void {
+        // origin is now owned (duplicated in migrate())
+        allocator.free(self.origin);
         if (self.manifest_path) |p| allocator.free(p);
         if (self.axiom_package) |p| allocator.free(p);
         for (self.warnings.items) |w| allocator.free(w);
