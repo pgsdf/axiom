@@ -1205,6 +1205,93 @@ pub const PortsMigrator = struct {
         return error.OriginNotFound;
     }
 
+    /// Guess the origin for a package by searching the ports tree
+    /// Maps package name back to category/portname format
+    fn guessOriginFromName(self: *PortsMigrator, pkg_name: []const u8) !?[]const u8 {
+        // Common package name to origin mappings
+        // These handle cases where the package name differs from the port name
+        const mappings = [_]struct { pkg: []const u8, origin: []const u8 }{
+            .{ .pkg = "make", .origin = "devel/gmake" },
+            .{ .pkg = "perl", .origin = "lang/perl5.36" },
+            .{ .pkg = "python", .origin = "lang/python311" },
+            .{ .pkg = "Locale-gettext", .origin = "misc/p5-Locale-gettext" },
+            .{ .pkg = "Locale-libintl", .origin = "misc/p5-Locale-libintl" },
+            .{ .pkg = "Unicode-EastAsianWidth", .origin = "textproc/p5-Unicode-EastAsianWidth" },
+            .{ .pkg = "Text-Unidecode", .origin = "converters/p5-Text-Unidecode" },
+        };
+
+        // Check hardcoded mappings first
+        for (mappings) |m| {
+            if (std.mem.eql(u8, pkg_name, m.pkg)) {
+                return try self.allocator.dupe(u8, m.origin);
+            }
+        }
+
+        // Search common categories for a matching port
+        const categories = [_][]const u8{
+            "devel", "lang", "print", "misc", "textproc", "converters",
+            "sysutils", "security", "net", "www", "databases", "editors",
+        };
+
+        for (categories) |category| {
+            // Try exact match: category/pkg_name
+            const origin = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ category, pkg_name });
+            defer self.allocator.free(origin);
+
+            const port_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+                self.options.ports_tree, category, pkg_name,
+            });
+            defer self.allocator.free(port_path);
+
+            // Check if this port exists
+            if (std.fs.cwd().access(port_path, .{})) |_| {
+                return try self.allocator.dupe(u8, origin);
+            } else |_| {}
+        }
+
+        // Try searching for PORTNAME match in common categories
+        for (categories) |category| {
+            const cat_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+                self.options.ports_tree, category,
+            });
+            defer self.allocator.free(cat_path);
+
+            var cat_dir = std.fs.cwd().openDir(cat_path, .{ .iterate = true }) catch continue;
+            defer cat_dir.close();
+
+            var iter = cat_dir.iterate();
+            while (iter.next() catch null) |entry| {
+                if (entry.kind != .directory) continue;
+
+                // Check if the Makefile's PORTNAME matches our package name
+                const makefile_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+                    cat_path, entry.name, "Makefile",
+                });
+                defer self.allocator.free(makefile_path);
+
+                const file = std.fs.cwd().openFile(makefile_path, .{}) catch continue;
+                defer file.close();
+
+                const content = file.readToEndAlloc(self.allocator, 64 * 1024) catch continue;
+                defer self.allocator.free(content);
+
+                // Look for PORTNAME= line
+                var lines = std.mem.splitScalar(u8, content, '\n');
+                while (lines.next()) |line| {
+                    if (std.mem.startsWith(u8, line, "PORTNAME=")) {
+                        const portname = std.mem.trim(u8, line["PORTNAME=".len..], " \t");
+                        if (std.mem.eql(u8, portname, pkg_name)) {
+                            return try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ category, entry.name });
+                        }
+                        break; // Only check first PORTNAME
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
     /// Fix broken packages by destroying and rebuilding them
     pub fn fixBrokenPackages(self: *PortsMigrator) !usize {
         const broken = try self.findBrokenPackages();
@@ -1230,10 +1317,17 @@ pub const PortsMigrator = struct {
 
         var fixed: usize = 0;
         for (broken.items) |b| {
-            const origin = b.origin orelse {
-                std.debug.print("Skipping {s}: no origin recorded, cannot rebuild\n", .{b.name});
+            // Try to get origin from manifest, or guess it from package name
+            const origin = b.origin orelse blk: {
+                const guessed = self.guessOriginFromName(b.name) catch null;
+                if (guessed) |g| {
+                    std.debug.print("Guessed origin for {s}: {s}\n", .{ b.name, g });
+                    break :blk g;
+                }
+                std.debug.print("Skipping {s}: no origin recorded and couldn't guess\n", .{b.name});
                 continue;
             };
+            defer if (b.origin == null) self.allocator.free(origin);
 
             std.debug.print("Fixing {s} from {s}...\n", .{ b.name, origin });
 
