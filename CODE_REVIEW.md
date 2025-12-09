@@ -305,6 +305,18 @@ The FreeBSD ports migration module (`ports.zig`) enables building ports and impo
     - ✅ Duplicate origin string in `migrate()` so MigrationResult owns its copy
     - ✅ Updated `deinit()` to free the owned origin
 
+11. **~~Broken Package Layout Detection and Repair~~ (FIXED)**
+    - Packages built with earlier LOCALBASE bug had files under `root/tmp/axiom-sysroot-*/usr/local/`
+    - Detection existed but workaround only linked from nested path
+    - ✅ Added `--fix-broken` CLI option to `ports-import`
+    - ✅ `findBrokenPackages()` scans store for packages with broken layout
+    - ✅ `guessOriginFromName()` finds origin when not recorded in manifest:
+      - Hardcoded mappings for renamed packages (make→gmake, Locale-gettext→p5-Locale-gettext)
+      - Directory search in common categories
+      - PORTNAME= scan in Makefiles
+    - ✅ `fixBrokenPackages()` destroys and rebuilds each broken package
+    - ✅ Uses `zfs destroy -Rf` for force recursive destroy including clones
+
 ### Python Bootstrap Chain
 
 The fixes enable building the complete Python packaging bootstrap chain:
@@ -459,6 +471,7 @@ Axiom is a well-architected package manager with strong foundations. The ZFS-nat
 - ✅ Use-after-free bug in axiom_package display fixed
 - ✅ PYTHONPATH actually passed to make command
 - ✅ Use-after-free bug in MigrationResult.origin fixed
+- ✅ `--fix-broken` option to auto-repair packages with broken layout
 
 The codebase demonstrates professional software engineering practices and is **ready for production use**.
 
@@ -466,4 +479,4 @@ The codebase demonstrates professional software engineering practices and is **r
 
 *Review completed on 2025-12-07*
 *Priority 1 fixes completed on 2025-12-08*
-*Ports migration fixes completed on 2025-12-08*
+*Ports migration fixes completed on 2025-12-09*
