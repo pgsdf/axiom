@@ -3259,7 +3259,8 @@ pub const PortsMigrator = struct {
         };
 
         // Create import options
-        // Note: Ports builds are unsigned, so we allow unsigned imports
+        // Note: We sign packages locally but the key may not be in the trust store yet
+        // Use warn mode so verification continues but doesn't fail on untrusted local keys
         const import_options = import_pkg.ImportOptions{
             .name = pkg_name,
             .version = version,
@@ -3269,7 +3270,8 @@ pub const PortsMigrator = struct {
             .dry_run = false,
             .auto_detect = false,
             .security = .{
-                .allow_unsigned = true, // Ports builds don't have signatures
+                .verification_mode = signature.VerificationMode.warn, // Don't fail on untrusted local signing keys
+                .allow_unsigned = true, // Also allow unsigned packages (signing optional)
             },
         };
 
