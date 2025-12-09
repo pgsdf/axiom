@@ -2694,6 +2694,13 @@ pub const PortsMigrator = struct {
         var configure_pythonpath_arg: ?[]const u8 = null;
         defer if (configure_pythonpath_arg) |f| self.allocator.free(f);
 
+        // CMAKE_PREFIX_PATH for cmake-based builds
+        var cmake_prefix_arg: ?[]const u8 = null;
+        defer if (cmake_prefix_arg) |f| self.allocator.free(f);
+
+        var configure_cmake_prefix_arg: ?[]const u8 = null;
+        defer if (configure_cmake_prefix_arg) |f| self.allocator.free(f);
+
         // FLAVOR argument for flavored ports (e.g., devel/py-setuptools@py311)
         var flavor_arg: ?[]const u8 = null;
         defer if (flavor_arg) |f| self.allocator.free(f);
@@ -2827,6 +2834,24 @@ pub const PortsMigrator = struct {
                 try args.append(configure_pythonpath_arg.?);
             }
 
+            // CMAKE_PREFIX_PATH for cmake-based builds (like cmake-core itself)
+            // cmake's find_library/find_path doesn't use LDFLAGS/CPPFLAGS,
+            // it needs CMAKE_PREFIX_PATH to find packages in the sysroot
+            cmake_prefix_arg = try std.fmt.allocPrint(
+                self.allocator,
+                "CMAKE_PREFIX_PATH={s}",
+                .{env.sysroot},
+            );
+            try args.append(cmake_prefix_arg.?);
+
+            // Also pass via CONFIGURE_ENV for ports that run cmake in configure phase
+            configure_cmake_prefix_arg = try std.fmt.allocPrint(
+                self.allocator,
+                "CONFIGURE_ENV+=CMAKE_PREFIX_PATH=\"{s}\"",
+                .{env.sysroot},
+            );
+            try args.append(configure_cmake_prefix_arg.?);
+
             std.debug.print("    [DEBUG] Passing to ports framework:\n", .{});
             std.debug.print("    [DEBUG]   MAKE_ENV+=PATH={s} LOCALBASE={s}\n", .{ env.path, localbase });
             std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PATH={s} LOCALBASE={s}\n", .{ env.path, localbase });
@@ -2838,6 +2863,7 @@ pub const PortsMigrator = struct {
                 std.debug.print("    [DEBUG]   MAKE_ENV+=PYTHONPATH=\"{s}\"\n", .{env.pythonpath});
                 std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PYTHONPATH=\"{s}\"\n", .{env.pythonpath});
             }
+            std.debug.print("    [DEBUG]   CMAKE_PREFIX_PATH={s}\n", .{env.sysroot});
         }
 
         // Add DESTDIR if provided
