@@ -365,17 +365,17 @@ pub const PortsMigrator = struct {
                 const owner = try std.fmt.allocPrint(self.allocator, "Local Build ({s})", .{hostname});
                 defer self.allocator.free(owner);
 
-                // Add the public key with full trust
+                // Add the public key with third_party trust (local builds)
                 const pub_key = PublicKey{
                     .key_id = key_id,
                     .key_data = key_pair.public_key,
                     .owner = owner,
                     .created = std.time.timestamp(),
                     .expires = null,
-                    .trust_level = .full,
+                    .trust_level = .third_party,
                 };
 
-                trust_store.addKeyWithTrust(pub_key, .full) catch |err| {
+                trust_store.addKeyWithTrust(pub_key, .third_party) catch |err| {
                     std.debug.print("Warning: Could not add key to trust store: {s}\n", .{@errorName(err)});
                 };
 
@@ -467,10 +467,10 @@ pub const PortsMigrator = struct {
             .owner = owner,
             .created = std.time.timestamp(),
             .expires = null,
-            .trust_level = .full,
+            .trust_level = .third_party,
         };
 
-        try trust_store.addKeyWithTrust(pub_key, .full);
+        try trust_store.addKeyWithTrust(pub_key, .third_party);
         try trust_store.save();
 
         std.debug.print("  Key {s} added to trust store\n", .{key_id});
