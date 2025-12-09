@@ -3393,6 +3393,7 @@ pub const PortsMigrator = struct {
             .security = .{
                 .verification_mode = signature.VerificationMode.warn, // Don't fail on untrusted local signing keys
                 .allow_unsigned = true, // Also allow unsigned packages (signing optional)
+                .trust_store_path = TRUST_STORE_PATH, // Use same trust store as signing
             },
         };
 
