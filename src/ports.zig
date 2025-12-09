@@ -1000,6 +1000,10 @@ pub const PortsMigrator = struct {
                     "{s}@{}.{}.{}-r{d}",
                     .{ display_name, pkg_id.version.major, pkg_id.version.minor, pkg_id.version.patch, pkg_id.revision },
                 );
+
+                // Free the build_id that was allocated during import
+                // (ports import always generates a build_id, so it's always allocated)
+                self.allocator.free(pkg_id.build_id);
             }
 
             // Clean up build output if we're not keeping the sandbox
