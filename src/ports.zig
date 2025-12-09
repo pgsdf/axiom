@@ -398,12 +398,9 @@ pub const PortsMigrator = struct {
         };
     }
 
-    /// Sign a package in the store
-    fn signPackageInStore(self: *PortsMigrator, pkg_id: PackageId) !void {
-        if (!self.options.sign_packages) {
-            return;
-        }
-
+    /// Sign a source directory before import
+    /// Creates manifest.sig in the directory which will be copied to the store
+    fn signSourceDirectory(self: *PortsMigrator, pkg_dir: []const u8, pkg_name: []const u8) !void {
         // Get the signing key
         const key_pair = self.getOrCreateLocalSigningKey() catch |err| {
             std.debug.print("Warning: Could not get signing key: {s}\n", .{@errorName(err)});
@@ -417,30 +414,11 @@ pub const PortsMigrator = struct {
         const signer_name = try std.fmt.allocPrint(self.allocator, "Local Build ({s})", .{hostname});
         defer self.allocator.free(signer_name);
 
-        // Find the package in the store
-        const store = self.options.store orelse {
-            std.debug.print("Warning: Store not available for signing\n", .{});
-            return;
-        };
-
-        // Get package mountpoint path
-        const pkg_path = store.paths.packageMountpoint(self.allocator, pkg_id) catch |err| {
-            std.debug.print("Warning: Could not find package path: {s}\n", .{@errorName(err)});
-            return;
-        };
-        defer self.allocator.free(pkg_path);
-
-        // Check if the package directory exists
-        std.fs.cwd().access(pkg_path, .{}) catch {
-            std.debug.print("Warning: Package directory does not exist: {s}\n", .{pkg_path});
-            return;
-        };
-
-        std.debug.print("Signing package: {s}@{}\n", .{ pkg_id.name, pkg_id.version });
+        std.debug.print("Signing package: {s}\n", .{pkg_name});
 
         // Create signer and sign the package directory
         var signer = Signer.init(self.allocator, key_pair, signer_name);
-        var sig = signer.signPackage(pkg_path) catch |err| {
+        var sig = signer.signPackage(pkg_dir) catch |err| {
             std.debug.print("Warning: Failed to sign package: {s}\n", .{@errorName(err)});
             return;
         };
@@ -450,7 +428,7 @@ pub const PortsMigrator = struct {
         const sig_yaml = try sig.toYaml(self.allocator);
         defer self.allocator.free(sig_yaml);
 
-        const sig_path = try std.fs.path.join(self.allocator, &[_][]const u8{ pkg_path, "manifest.sig" });
+        const sig_path = try std.fs.path.join(self.allocator, &[_][]const u8{ pkg_dir, "manifest.sig" });
         defer self.allocator.free(sig_path);
 
         {
@@ -3301,6 +3279,15 @@ pub const PortsMigrator = struct {
 
         std.debug.print("  Package root: {s}\n", .{pkg_root});
 
+        // Sign the package BEFORE import (while the staging directory is still writable)
+        // The manifest.sig will be copied to the store along with other files
+        if (self.options.sign_packages) {
+            self.signSourceDirectory(pkg_root, pkg_name) catch |err| {
+                std.debug.print("Warning: Failed to sign package: {s}\n", .{@errorName(err)});
+                // Don't fail the import if signing fails
+            };
+        }
+
         // Import the package
         const pkg_id = importer.import(
             import_pkg.ImportSource{ .directory = pkg_root },
@@ -3311,12 +3298,6 @@ pub const PortsMigrator = struct {
         };
 
         std.debug.print("  ✓ Package imported: {s}@{}\n", .{ pkg_id.name, pkg_id.version });
-
-        // Sign the package after successful import
-        self.signPackageInStore(pkg_id) catch |err| {
-            std.debug.print("Warning: Failed to sign package: {s}\n", .{@errorName(err)});
-            // Don't fail the import if signing fails
-        };
 
         return pkg_id;
     }
