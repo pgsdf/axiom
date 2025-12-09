@@ -3250,6 +3250,7 @@ pub const CLI = struct {
     fn portsImport(self: *CLI, args: []const []const u8) !void {
         if (args.len < 1) {
             std.debug.print("Usage: axiom ports-import <origin> [options]\n", .{});
+            std.debug.print("       axiom ports-import --fix-broken\n", .{});
             std.debug.print("\nFull migration: generate manifests, build, and import to store.\n", .{});
             std.debug.print("Automatically resolves and builds dependencies in correct order.\n", .{});
             std.debug.print("\nOptions:\n", .{});
@@ -3260,10 +3261,12 @@ pub const CLI = struct {
             std.debug.print("  --dry-run            Generate manifests only, don't build\n", .{});
             std.debug.print("  --no-deps            Don't auto-resolve dependencies\n", .{});
             std.debug.print("  --use-system-tools   Use /usr/local tools instead of sysroot\n", .{});
+            std.debug.print("  --fix-broken         Scan store and rebuild packages with broken layout\n", .{});
             std.debug.print("\nExamples:\n", .{});
             std.debug.print("  axiom ports-import shells/bash\n", .{});
             std.debug.print("  axiom ports-import editors/vim --jobs 8 --verbose\n", .{});
             std.debug.print("  axiom ports-import devel/m4 --no-deps  # Just this port\n", .{});
+            std.debug.print("  axiom ports-import --fix-broken        # Repair corrupted packages\n", .{});
             return;
         }
 
@@ -3276,6 +3279,7 @@ pub const CLI = struct {
         var dry_run: bool = false;
         var auto_deps: bool = true;
         var use_system_tools: bool = false;
+        var fix_broken: bool = false;
 
         var i: usize = 0;
         while (i < args.len) : (i += 1) {
@@ -3295,13 +3299,42 @@ pub const CLI = struct {
                 auto_deps = false;
             } else if (std.mem.eql(u8, args[i], "--use-system-tools")) {
                 use_system_tools = true;
+            } else if (std.mem.eql(u8, args[i], "--fix-broken")) {
+                fix_broken = true;
             } else if (origin == null and args[i][0] != '-') {
                 origin = args[i];
             }
         }
 
+        // Handle --fix-broken mode (no origin required)
+        if (fix_broken) {
+            std.debug.print("Scanning for packages with broken layout...\n", .{});
+
+            var migrator = PortsMigrator.init(self.allocator, .{
+                .ports_tree = ports_tree,
+                .output_dir = "./generated/axiom-ports",
+                .build_after_generate = true,
+                .import_after_build = true,
+                .dry_run = false,
+                .verbose = verbose,
+                .auto_deps = false, // Rebuild each package independently
+                .zfs_handle = self.zfs_handle,
+                .store = self.store,
+                .importer = self.importer,
+                .build_jobs = jobs,
+                .keep_sandbox = keep_sandbox,
+                .use_system_tools = use_system_tools,
+            });
+
+            _ = migrator.fixBrokenPackages() catch |err| {
+                std.debug.print("Error fixing broken packages: {s}\n", .{@errorName(err)});
+            };
+            return;
+        }
+
         const port_origin = origin orelse {
             std.debug.print("Error: Port origin required (e.g., shells/bash)\n", .{});
+            std.debug.print("       Or use --fix-broken to repair packages with broken layout\n", .{});
             return;
         };
 
