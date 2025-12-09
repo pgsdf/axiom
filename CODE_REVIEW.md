@@ -329,6 +329,13 @@ The FreeBSD ports migration module (`ports.zig`) enables building ports and impo
     - ✅ Added `--no-sign` CLI option to disable signing
     - ✅ Signing is enabled by default for all ports-import operations
 
+13. **~~Use-After-Free in PackageId.build_id~~ (FIXED)**
+    - `import()` generated build_id but freed it via defer before returning
+    - Returned PackageId.build_id pointed to freed memory
+    - Result: garbled paths like `/axiom/store/pkg/pkgconf/2.4.3/0/����������������`
+    - ✅ Changed `defer` to `errdefer` - only free build_id on error
+    - ✅ On success, caller takes ownership through returned PackageId
+
 ### Python Bootstrap Chain
 
 The fixes enable building the complete Python packaging bootstrap chain:
@@ -485,6 +492,7 @@ Axiom is a well-architected package manager with strong foundations. The ZFS-nat
 - ✅ Use-after-free bug in MigrationResult.origin fixed
 - ✅ `--fix-broken` option to auto-repair packages with broken layout
 - ✅ Automatic package signing for locally-built packages
+- ✅ Use-after-free bug in PackageId.build_id fixed
 
 The codebase demonstrates professional software engineering practices and is **ready for production use**.
 
