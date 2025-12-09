@@ -1238,11 +1238,11 @@ pub const PortsMigrator = struct {
             std.debug.print("Fixing {s} from {s}...\n", .{ b.name, origin });
 
             // Destroy the broken package using ZFS
-            if (self.options.zfs_handle) |zfs| {
+            if (self.options.zfs_handle) |zfs_h| {
                 const dataset = try std.fmt.allocPrint(self.allocator, "zroot/axiom/store/pkg/{s}", .{b.name});
                 defer self.allocator.free(dataset);
 
-                zfs.destroy(dataset, true) catch |err| {
+                zfs_h.destroy(dataset, true) catch |err| {
                     std.debug.print("  Failed to destroy {s}: {s}\n", .{ dataset, @errorName(err) });
                     continue;
                 };
