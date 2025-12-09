@@ -677,6 +677,7 @@ pub const TrustStore = struct {
             if (key.email) |e| try writer.print("email = \"{s}\"\n", .{e});
             try writer.print("created = {d}\n", .{key.created});
             if (key.expires) |exp| try writer.print("expires = {d}\n", .{exp});
+            try writer.print("trust_level = \"{s}\"\n", .{@tagName(key.trust_level)});
             const trusted = self.trusted.get(key.key_id) orelse false;
             try writer.print("trusted = {}\n", .{trusted});
             try writer.writeAll("\n");
@@ -741,6 +742,20 @@ pub const TrustStore = struct {
                 if (current_key) |*key| {
                     if (extractQuotedValue(trimmed)) |value| {
                         key.email = try self.allocator.dupe(u8, value);
+                    }
+                }
+            } else if (std.mem.startsWith(u8, trimmed, "trust_level")) {
+                if (current_key) |*key| {
+                    if (extractQuotedValue(trimmed)) |value| {
+                        if (std.mem.eql(u8, value, "official")) {
+                            key.trust_level = .official;
+                        } else if (std.mem.eql(u8, value, "community")) {
+                            key.trust_level = .community;
+                        } else if (std.mem.eql(u8, value, "third_party")) {
+                            key.trust_level = .third_party;
+                        } else {
+                            key.trust_level = .unknown;
+                        }
                     }
                 }
             } else if (std.mem.startsWith(u8, trimmed, "trusted")) {
