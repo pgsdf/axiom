@@ -2442,43 +2442,88 @@ pub const PortsMigrator = struct {
 
         try child.spawn();
 
-        // Read stdout (contains compiler output including errors)
-        var stdout_output: ?[]const u8 = null;
-        if (child.stdout) |stdout_pipe| {
-            const stdout_content = stdout_pipe.readToEndAlloc(self.allocator, 10 * 1024 * 1024) catch null;
-            if (stdout_content) |content| {
-                if (content.len > 0) {
-                    stdout_output = content;
-                } else {
-                    self.allocator.free(content);
-                }
-            }
-        }
-
-        // Read stderr
-        var stderr_output: ?[]const u8 = null;
-        if (child.stderr) |stderr_pipe| {
-            const stderr_content = stderr_pipe.readToEndAlloc(self.allocator, 1024 * 1024) catch null;
-            if (stderr_content) |content| {
-                if (content.len > 0) {
-                    stderr_output = content;
-                } else {
-                    self.allocator.free(content);
-                }
-            }
-        }
+        // Read stdout and stderr concurrently to avoid pipe deadlock
+        // If we read sequentially, the child can fill the stderr buffer while we're
+        // blocked reading stdout, causing deadlock (common with large builds like Python)
+        const output = try collectOutputConcurrently(self.allocator, &child);
 
         const term = try child.wait();
 
         // In verbose mode, show stdout
         if (self.options.verbose) {
-            if (stdout_output) |out| {
+            if (output.stdout) |out| {
                 std.debug.print("{s}", .{out});
             }
         }
 
         return MakeResult{
             .exit_code = term.Exited,
+            .stdout = output.stdout,
+            .stderr = output.stderr,
+        };
+    }
+
+    /// Helper to collect stdout and stderr concurrently using a thread
+    /// This prevents pipe deadlock when subprocess produces lots of output
+    const CollectedOutput = struct {
+        stdout: ?[]const u8,
+        stderr: ?[]const u8,
+    };
+
+    fn collectOutputConcurrently(allocator: std.mem.Allocator, child: *std.process.Child) !CollectedOutput {
+        var stdout_output: ?[]const u8 = null;
+        var stderr_output: ?[]const u8 = null;
+
+        // Context for stderr reader thread
+        const StderrReader = struct {
+            alloc: std.mem.Allocator,
+            pipe: *std.fs.File,
+            result: ?[]const u8 = null,
+
+            fn run(self: *@This()) void {
+                self.result = self.pipe.readToEndAlloc(self.alloc, 1024 * 1024) catch null;
+            }
+        };
+
+        var stderr_reader: ?StderrReader = null;
+        var stderr_thread: ?std.Thread = null;
+
+        // Spawn thread to read stderr
+        if (child.stderr) |*stderr_pipe| {
+            stderr_reader = StderrReader{
+                .alloc = allocator,
+                .pipe = stderr_pipe,
+            };
+            stderr_thread = std.Thread.spawn(.{}, StderrReader.run, .{&stderr_reader.?}) catch null;
+        }
+
+        // Read stdout in main thread
+        if (child.stdout) |stdout_pipe| {
+            const stdout_content = stdout_pipe.readToEndAlloc(allocator, 10 * 1024 * 1024) catch null;
+            if (stdout_content) |content| {
+                if (content.len > 0) {
+                    stdout_output = content;
+                } else {
+                    allocator.free(content);
+                }
+            }
+        }
+
+        // Wait for stderr thread to complete
+        if (stderr_thread) |t| {
+            t.join();
+            if (stderr_reader) |reader| {
+                if (reader.result) |content| {
+                    if (content.len > 0) {
+                        stderr_output = content;
+                    } else {
+                        allocator.free(content);
+                    }
+                }
+            }
+        }
+
+        return CollectedOutput{
             .stdout = stdout_output,
             .stderr = stderr_output,
         };
@@ -2786,45 +2831,24 @@ pub const PortsMigrator = struct {
 
         try child.spawn();
 
-        // Read stdout (contains compiler output including errors)
-        var stdout_output: ?[]const u8 = null;
-        if (child.stdout) |stdout_pipe| {
-            const stdout_content = stdout_pipe.readToEndAlloc(self.allocator, 10 * 1024 * 1024) catch null;
-            if (stdout_content) |content| {
-                if (content.len > 0) {
-                    stdout_output = content;
-                } else {
-                    self.allocator.free(content);
-                }
-            }
-        }
-
-        // Read stderr
-        var stderr_output: ?[]const u8 = null;
-        if (child.stderr) |stderr_pipe| {
-            const stderr_content = stderr_pipe.readToEndAlloc(self.allocator, 1024 * 1024) catch null;
-            if (stderr_content) |content| {
-                if (content.len > 0) {
-                    stderr_output = content;
-                } else {
-                    self.allocator.free(content);
-                }
-            }
-        }
+        // Read stdout and stderr concurrently to avoid pipe deadlock
+        // If we read sequentially, the child can fill the stderr buffer while we're
+        // blocked reading stdout, causing deadlock (common with large builds like Python)
+        const output = try collectOutputConcurrently(self.allocator, &child);
 
         const term = try child.wait();
 
         // In verbose mode, show stdout
         if (self.options.verbose) {
-            if (stdout_output) |out| {
+            if (output.stdout) |out| {
                 std.debug.print("{s}", .{out});
             }
         }
 
         return MakeResult{
             .exit_code = term.Exited,
-            .stdout = stdout_output,
-            .stderr = stderr_output,
+            .stdout = output.stdout,
+            .stderr = output.stderr,
         };
     }
 
