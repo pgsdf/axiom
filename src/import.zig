@@ -90,6 +90,8 @@ pub const ImportOptions = struct {
     revision: u32 = 1,
     description: ?[]const u8 = null,
     license: ?[]const u8 = null,
+    /// FreeBSD port origin (e.g., "devel/autoconf")
+    origin: ?[]const u8 = null,
     manifest_path: ?[]const u8 = null,
     dry_run: bool = false,
     auto_detect: bool = true,
@@ -237,25 +239,27 @@ pub const Importer = struct {
             .name = pkg_name,
             .version = pkg_version,
             .revision = options.revision,
-            .description = if (options.description) |d| 
-                try self.allocator.dupe(u8, d) 
-            else if (metadata.description) |d| 
-                try self.allocator.dupe(u8, d) 
-            else 
+            .description = if (options.description) |d|
+                try self.allocator.dupe(u8, d)
+            else if (metadata.description) |d|
+                try self.allocator.dupe(u8, d)
+            else
                 null,
-            .license = if (options.license) |l| 
-                try self.allocator.dupe(u8, l) 
-            else if (metadata.license) |l| 
-                try self.allocator.dupe(u8, l) 
-            else 
+            .license = if (options.license) |l|
+                try self.allocator.dupe(u8, l)
+            else if (metadata.license) |l|
+                try self.allocator.dupe(u8, l)
+            else
                 null,
             .homepage = if (metadata.homepage) |h| try self.allocator.dupe(u8, h) else null,
+            .origin = if (options.origin) |o| try self.allocator.dupe(u8, o) else null,
             .tags = &[_][]const u8{},
         };
         defer {
             if (pkg_manifest.description) |d| self.allocator.free(d);
             if (pkg_manifest.license) |l| self.allocator.free(l);
             if (pkg_manifest.homepage) |h| self.allocator.free(h);
+            if (pkg_manifest.origin) |o| self.allocator.free(o);
         }
 
         const deps_manifest = manifest.DependencyManifest{
