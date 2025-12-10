@@ -1,8 +1,48 @@
 # Axiom Setup Guide
 
-## ZFS Dataset Configuration
+## Quick Setup (Recommended)
 
-Axiom requires proper ZFS dataset configuration before use. Follow these steps **in order**:
+The easiest way to set up Axiom is using the setup wizard:
+
+```bash
+# Build and install Axiom first
+zig build
+sudo cp zig-out/bin/axiom /usr/local/bin/axiom
+
+# Run the setup wizard
+sudo axiom setup
+```
+
+The setup wizard will:
+- Create all required ZFS datasets in the correct order
+- Set the mountpoint before creating child datasets (critical!)
+- Configure recommended ZFS properties (compression=lz4, atime=off)
+- Create configuration directories (/etc/axiom, /var/cache/axiom)
+
+### Setup Wizard Options
+
+```bash
+# Check current setup status
+sudo axiom setup --check
+
+# Use a different ZFS pool
+sudo axiom setup --pool tank
+
+# Non-interactive mode (for scripting)
+sudo axiom setup --yes
+
+# Continue a partial setup
+sudo axiom setup --force
+
+# See all options
+axiom setup --help
+```
+
+---
+
+## Manual ZFS Dataset Configuration
+
+If you prefer to set up ZFS datasets manually, or need to understand what the setup wizard does, follow these steps **in order**:
 
 ### 1. Create Root Dataset
 

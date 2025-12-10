@@ -41,6 +41,74 @@ axiom version
 
 ---
 
+### Setup
+
+The setup wizard initializes Axiom's ZFS datasets and configuration directories.
+
+#### `axiom setup`
+
+Run the interactive setup wizard to initialize Axiom.
+
+```bash
+sudo axiom setup
+```
+
+**What it does:**
+1. Creates the base dataset (`zroot/axiom`)
+2. Sets the mountpoint to `/axiom` (before creating children - critical!)
+3. Sets recommended properties (compression=lz4, atime=off)
+4. Creates child datasets (store, store/pkg, profiles, env, builds)
+5. Creates configuration directories (`/etc/axiom`, `/var/cache/axiom`)
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--pool <name>` | Use a different ZFS pool (default: zroot) |
+| `--dataset <name>` | Use a different dataset name (default: axiom) |
+| `--mountpoint <path>` | Use a different mountpoint (default: /axiom) |
+| `--yes`, `-y` | Non-interactive mode (assume yes to all prompts) |
+| `--force`, `-f` | Continue setup even if partially configured |
+| `--check`, `-c` | Check current setup status and exit |
+| `--help`, `-h` | Show setup help |
+
+**Examples:**
+
+```bash
+# Interactive setup with defaults
+sudo axiom setup
+
+# Check if Axiom is already set up
+sudo axiom setup --check
+
+# Use a different pool
+sudo axiom setup --pool tank
+
+# Non-interactive setup for scripting
+sudo axiom setup --yes
+
+# Continue a partial setup
+sudo axiom setup --force
+```
+
+**Example output (--check):**
+```
+Current Status:
+  ✓ Pool 'zroot'
+  ✓ Base dataset (zroot/axiom)
+  ✓ Mountpoint correct (/axiom)
+  ✓ Store dataset
+  ✓ Profiles dataset
+  ✓ Env dataset
+  ✓ Builds dataset
+  ✓ Config directory (/etc/axiom)
+  ✓ Cache directory (/var/cache/axiom)
+
+Setup is complete.
+```
+
+---
+
 ### Profile Management
 
 Profiles define sets of packages you want installed.
