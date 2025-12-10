@@ -696,6 +696,9 @@ pub const PackageStore = struct {
         if (mani.maintainer) |maint| {
             try writer.print("maintainer: {s}\n", .{maint});
         }
+        if (mani.origin) |orig| {
+            try writer.print("origin: {s}\n", .{orig});
+        }
 
         if (mani.tags.len > 0) {
             try writer.writeAll("tags:\n");
