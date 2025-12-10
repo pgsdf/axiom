@@ -1168,6 +1168,8 @@ pub const PortsMigrator = struct {
             self.allocator.free(self.ldflags);
             self.allocator.free(self.cppflags);
             if (self.pythonpath.len > 0) self.allocator.free(self.pythonpath);
+            if (self.perl5lib.len > 0) self.allocator.free(self.perl5lib);
+            if (self.gmake_path.len > 0) self.allocator.free(self.gmake_path);
         }
     };
 
