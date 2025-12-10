@@ -50,7 +50,8 @@ const BootstrapManager = bootstrap_pkg.BootstrapManager;
 pub const Command = enum {
     help,
     version,
-    
+    setup,
+
     // Profile management
     profile_create,
     profile_list,
@@ -157,7 +158,8 @@ pub const Command = enum {
 pub fn parseCommand(cmd: []const u8) Command {
     if (std.mem.eql(u8, cmd, "help")) return .help;
     if (std.mem.eql(u8, cmd, "version")) return .version;
-    
+    if (std.mem.eql(u8, cmd, "setup")) return .setup;
+
     // Profile commands
     if (std.mem.eql(u8, cmd, "profile")) return .profile_list;
     if (std.mem.eql(u8, cmd, "profile-create")) return .profile_create;
@@ -352,7 +354,13 @@ pub const CLI = struct {
         switch (cmd) {
             .help => try self.showHelp(),
             .version => try self.showVersion(),
-            
+            .setup => {
+                // Setup is handled in main() before CLI initialization
+                // If we get here, setup was already complete
+                std.debug.print("Axiom is already set up and running.\n", .{});
+                std.debug.print("To check setup status: axiom setup --check\n", .{});
+            },
+
             .profile_create => try self.profileCreate(args[1..]),
             .profile_list => try self.profileList(args[1..]),
             .profile_show => try self.profileShow(args[1..]),
@@ -582,11 +590,22 @@ pub const CLI = struct {
             \\  kernel                      Check kernel-bound package compatibility
             \\  kernel-check                (alias for kernel)
             \\
+            \\Setup:
+            \\  setup                      Run the setup wizard to initialize Axiom
+            \\    --pool <name>              ZFS pool to use (default: zroot)
+            \\    --dataset <name>           Dataset name (default: axiom)
+            \\    --mountpoint <path>        Mountpoint (default: /axiom)
+            \\    --check                    Check current setup status
+            \\    --force                    Continue partial setup
+            \\    --yes                      Non-interactive mode
+            \\
             \\General:
             \\  help                       Show this help message
             \\  version                    Show version information
             \\
             \\Examples:
+            \\  axiom setup                           # Run the setup wizard (first time)
+            \\  axiom setup --check                   # Check setup status
             \\  axiom profile-create development      # System-wide profile (root)
             \\  axiom user-profile-create my-dev      # Per-user profile
             \\  axiom user-realize my-env my-dev      # Create user environment
