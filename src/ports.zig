@@ -2420,17 +2420,49 @@ pub const PortsMigrator = struct {
         }
 
         // Scan for versioned directories directly under perl5 (like 5.42)
+        // Also add the corresponding site_perl/<version> paths
         var perl5_iter = dir.iterate();
         while (try perl5_iter.next()) |entry| {
             if (entry.kind != .directory) continue;
             if (std.mem.eql(u8, entry.name, "site_perl")) continue; // Already handled
             // Only add version directories (start with digit)
             if (entry.name.len == 0 or !std.ascii.isDigit(entry.name[0])) continue;
+
+            // Add perl5/<version>
             const version_path = try std.fs.path.join(self.allocator, &[_][]const u8{
                 perl5_dir,
                 entry.name,
             });
             try paths.append(version_path);
+
+            // Also add site_perl/<version> if it exists (p5-* packages install here)
+            const site_version_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+                site_perl_dir,
+                entry.name,
+            });
+            // Check if it exists and add it
+            std.fs.cwd().access(site_version_path, .{}) catch {
+                self.allocator.free(site_version_path);
+                continue;
+            };
+            try paths.append(site_version_path);
+
+            // Also scan for arch subdirs under site_perl/<version>
+            if (std.fs.cwd().openDir(site_version_path, .{ .iterate = true })) |svd| {
+                var sv_dir = svd;
+                defer sv_dir.close();
+                var sv_iter = sv_dir.iterate();
+                while (try sv_iter.next()) |arch_entry| {
+                    if (arch_entry.kind != .directory) continue;
+                    if (std.mem.eql(u8, arch_entry.name, "auto")) continue;
+                    if (std.mem.eql(u8, arch_entry.name, "man")) continue;
+                    const arch_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+                        site_version_path,
+                        arch_entry.name,
+                    });
+                    try paths.append(arch_path);
+                }
+            } else |_| {}
         }
 
         if (paths.items.len == 0) return "";
