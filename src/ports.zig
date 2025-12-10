@@ -2378,9 +2378,10 @@ pub const PortsMigrator = struct {
             try paths.append(site_perl_copy);
 
             // Scan site_perl for both version dirs (5.XX) and arch dirs (amd64-freebsd)
-            // FreeBSD installs p5-* modules to both:
+            // FreeBSD installs p5-* modules to various patterns:
             //   site_perl/5.42/ - version-specific
-            //   site_perl/mach/ - architecture-specific (where mach = amd64-freebsd)
+            //   site_perl/mach/ - architecture-specific
+            //   site_perl/mach/5.42/ - arch then version (p5-Locale-gettext uses this!)
             // Note: Also include symlinks since 'mach' is often a symlink
             var site_iter = site_dir.iterate();
             while (try site_iter.next()) |entry| {
@@ -2396,27 +2397,25 @@ pub const PortsMigrator = struct {
                 });
                 try paths.append(subdir_path);
 
-                // If this is a version directory (starts with digit), also scan for arch subdirs
-                if (entry.name.len > 0 and std.ascii.isDigit(entry.name[0])) {
-                    if (std.fs.cwd().openDir(subdir_path, .{ .iterate = true })) |vd| {
-                        var ver_dir = vd;
-                        defer ver_dir.close();
-                        var ver_iter = ver_dir.iterate();
-                        while (try ver_iter.next()) |arch_entry| {
-                            // Include directories AND symlinks
-                            if (arch_entry.kind != .directory and arch_entry.kind != .sym_link) continue;
-                            // Skip special dirs, add architecture dirs (contain XS .so files)
-                            if (std.mem.eql(u8, arch_entry.name, "auto")) continue;
-                            if (std.mem.eql(u8, arch_entry.name, "man")) continue;
-                            // Add arch dirs like amd64-freebsd, amd64-freebsd-thread-multi
-                            const arch_path = try std.fs.path.join(self.allocator, &[_][]const u8{
-                                subdir_path,
-                                arch_entry.name,
-                            });
-                            try paths.append(arch_path);
-                        }
-                    } else |_| {}
-                }
+                // Scan ALL subdirs (not just version dirs) for nested directories
+                // This handles site_perl/mach/5.42/ pattern used by p5-Locale-gettext
+                if (std.fs.cwd().openDir(subdir_path, .{ .iterate = true })) |vd| {
+                    var ver_dir = vd;
+                    defer ver_dir.close();
+                    var ver_iter = ver_dir.iterate();
+                    while (try ver_iter.next()) |sub_entry| {
+                        // Include directories AND symlinks
+                        if (sub_entry.kind != .directory and sub_entry.kind != .sym_link) continue;
+                        if (std.mem.eql(u8, sub_entry.name, "auto")) continue;
+                        if (std.mem.eql(u8, sub_entry.name, "man")) continue;
+                        // Add subdirs like site_perl/mach/5.42 or site_perl/5.42/amd64-freebsd
+                        const sub_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+                            subdir_path,
+                            sub_entry.name,
+                        });
+                        try paths.append(sub_path);
+                    }
+                } else |_| {}
             }
         } else |_| {
             // site_perl doesn't exist, continue to check other locations
