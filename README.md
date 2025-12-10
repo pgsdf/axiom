@@ -30,36 +30,45 @@ zroot/axiom/
 
 ## Quick Start
 
+**Important:** Follow these steps in order. The bootstrap step (step 4) is required before importing other packages.
+
 ```bash
-# 1. Build Axiom
+# Step 1: Build Axiom
 zig build
 
-# 2. Install the CLI
+# Step 2: Install the CLI
 sudo cp zig-out/bin/axiom /usr/local/bin/axiom
 
-# 3. Run the setup wizard (creates ZFS datasets)
+# Step 3: Run the setup wizard (creates ZFS datasets)
 sudo axiom setup
 
-# 4. Bootstrap build tools (required for building from ports)
-sudo axiom ports-import devel/m4
-sudo axiom ports-import devel/gmake
+# Step 4: BOOTSTRAP - Required before importing other packages!
+sudo axiom ports-import devel/m4      # Macro processor (required by autoconf)
+sudo axiom ports-import devel/gmake   # GNU make (required by GNU software)
 
-# 5. Import packages from FreeBSD ports
+# Step 5: Import packages from FreeBSD ports
 sudo axiom ports-import shells/bash
 sudo axiom ports-import editors/vim
 
-# 6. Create a profile and add packages
+# Step 6: Create a profile and add packages
 sudo axiom profile-create myprofile
 sudo axiom profile-add-package myprofile bash
 sudo axiom profile-add-package myprofile vim
 
-# 7. Resolve dependencies and create environment
+# Step 7: Resolve dependencies and create environment
 sudo axiom resolve myprofile
 sudo axiom realize myenv myprofile
 
-# 8. Activate the environment
+# Step 8: Activate the environment
 source /axiom/env/myenv/activate
 ```
+
+**Install Order Summary:**
+1. Build & install Axiom
+2. Run `axiom setup` (creates ZFS datasets)
+3. Bootstrap: `devel/m4` → `devel/gmake`
+4. Import packages
+5. Create profile → resolve → realize
 
 ## Building
 
@@ -149,30 +158,6 @@ try zfs_handle.setProperty(allocator, "zroot/axiom/test", "readonly", "on");
 // Get property
 const compression = try zfs_handle.getProperty(allocator, "zroot/axiom/test", "compression");
 defer allocator.free(compression);
-```
-
-## Quick Start
-
-```bash
-# Install
-zig build
-sudo cp zig-out/bin/axiom /usr/local/bin/axiom
-
-# Create profile
-sudo axiom profile-create development
-
-# Add packages (edit profile.yaml manually for now)
-
-# Resolve dependencies
-sudo axiom resolve development
-
-# Create environment
-sudo axiom realize dev-env development
-
-# Activate
-source /axiom/env/dev-env/activate
-
-# Use your packages!
 ```
 
 ## Documentation
