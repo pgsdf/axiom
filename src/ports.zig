@@ -1145,6 +1145,8 @@ pub const PortsMigrator = struct {
         cppflags: []const u8,
         /// PYTHONPATH for Python packages in sysroot lib/python*/site-packages
         pythonpath: []const u8,
+        /// PERL5LIB for Perl modules in sysroot lib/perl5/site_perl
+        perl5lib: []const u8,
         allocator: std.mem.Allocator,
 
         pub fn deinit(self: *BuildEnvironment) void {
@@ -2250,11 +2252,18 @@ pub const PortsMigrator = struct {
         // Python packages (py-flit-core, py-setuptools, etc.) install to lib/pythonX.Y/site-packages
         const pythonpath = try self.buildPythonPath(sysroot_lib);
 
+        // PERL5LIB: scan sysroot/lib for perl5/site_perl directories
+        // Perl modules (p5-Locale-gettext, etc.) install to lib/perl5/site_perl/X.YZ
+        const perl5lib = try self.buildPerl5Lib(sysroot_lib);
+
         std.debug.print("    [DEBUG] Sysroot created: {s}\n", .{sysroot});
         std.debug.print("    [DEBUG] Final PATH: {s}\n", .{path});
         std.debug.print("    [DEBUG] Final LDFLAGS: {s}\n", .{ldflags});
         if (pythonpath.len > 0) {
             std.debug.print("    [DEBUG] Final PYTHONPATH: {s}\n", .{pythonpath});
+        }
+        if (perl5lib.len > 0) {
+            std.debug.print("    [DEBUG] Final PERL5LIB: {s}\n", .{perl5lib});
         }
 
         return BuildEnvironment{
@@ -2264,6 +2273,7 @@ pub const PortsMigrator = struct {
             .ldflags = ldflags,
             .cppflags = cppflags,
             .pythonpath = pythonpath,
+            .perl5lib = perl5lib,
             .allocator = self.allocator,
         };
     }
@@ -2303,6 +2313,86 @@ pub const PortsMigrator = struct {
             };
 
             try paths.append(site_packages);
+        }
+
+        if (paths.items.len == 0) return "";
+
+        // Join all paths with ":"
+        var total_len: usize = 0;
+        for (paths.items, 0..) |p, i| {
+            total_len += p.len;
+            if (i < paths.items.len - 1) total_len += 1; // for ':'
+        }
+
+        const result = try self.allocator.alloc(u8, total_len);
+        var pos: usize = 0;
+        for (paths.items, 0..) |p, i| {
+            @memcpy(result[pos..][0..p.len], p);
+            pos += p.len;
+            if (i < paths.items.len - 1) {
+                result[pos] = ':';
+                pos += 1;
+            }
+        }
+
+        return result;
+    }
+
+    /// Build PERL5LIB by scanning lib directory for perl5/site_perl directories
+    fn buildPerl5Lib(self: *PortsMigrator, lib_dir: []const u8) ![]const u8 {
+        var paths = std.ArrayList([]const u8).init(self.allocator);
+        defer {
+            for (paths.items) |p| self.allocator.free(p);
+            paths.deinit();
+        }
+
+        // Perl modules are in lib/perl5/site_perl/X.YZ and lib/perl5/X.YZ
+        const perl5_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ lib_dir, "perl5" });
+        defer self.allocator.free(perl5_dir);
+
+        // First check if perl5 directory exists
+        var dir = std.fs.cwd().openDir(perl5_dir, .{ .iterate = true }) catch |err| {
+            if (err == error.FileNotFound) return "";
+            return err;
+        };
+        defer dir.close();
+
+        // Add site_perl directories (where most p5-* packages install)
+        const site_perl_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ perl5_dir, "site_perl" });
+        defer self.allocator.free(site_perl_dir);
+
+        // Try to open site_perl and scan for version directories
+        if (std.fs.cwd().openDir(site_perl_dir, .{ .iterate = true })) |*site_dir| {
+            defer site_dir.close();
+            var site_iter = site_dir.iterate();
+            while (try site_iter.next()) |entry| {
+                if (entry.kind != .directory) continue;
+                // Add version directories like 5.42, 5.40, etc.
+                const version_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+                    site_perl_dir,
+                    entry.name,
+                });
+                try paths.append(version_path);
+            }
+        } else |_| {
+            // site_perl doesn't exist, continue to check other locations
+        }
+
+        // Also add lib/perl5 itself (some modules install directly there)
+        const perl5_path = try self.allocator.dupe(u8, perl5_dir);
+        try paths.append(perl5_path);
+
+        // Scan for versioned directories directly under perl5 (like 5.42)
+        var perl5_iter = dir.iterate();
+        while (try perl5_iter.next()) |entry| {
+            if (entry.kind != .directory) continue;
+            if (std.mem.eql(u8, entry.name, "site_perl")) continue; // Already handled
+            // Add version directories like 5.42
+            const version_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+                perl5_dir,
+                entry.name,
+            });
+            try paths.append(version_path);
         }
 
         if (paths.items.len == 0) return "";
@@ -2696,6 +2786,13 @@ pub const PortsMigrator = struct {
         var configure_pythonpath_arg: ?[]const u8 = null;
         defer if (configure_pythonpath_arg) |f| self.allocator.free(f);
 
+        // PERL5LIB for Perl module builds
+        var make_perl5lib_arg: ?[]const u8 = null;
+        defer if (make_perl5lib_arg) |f| self.allocator.free(f);
+
+        var configure_perl5lib_arg: ?[]const u8 = null;
+        defer if (configure_perl5lib_arg) |f| self.allocator.free(f);
+
         // CMAKE_PREFIX_PATH for cmake-based builds
         var cmake_prefix_arg: ?[]const u8 = null;
         defer if (cmake_prefix_arg) |f| self.allocator.free(f);
@@ -2836,6 +2933,24 @@ pub const PortsMigrator = struct {
                 try args.append(configure_pythonpath_arg.?);
             }
 
+            // PERL5LIB for Perl module builds (p5-Locale-gettext, etc.)
+            // Only set if we found Perl modules in the sysroot
+            if (env.perl5lib.len > 0) {
+                make_perl5lib_arg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "MAKE_ENV+=PERL5LIB=\"{s}\"",
+                    .{env.perl5lib},
+                );
+                try args.append(make_perl5lib_arg.?);
+
+                configure_perl5lib_arg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "CONFIGURE_ENV+=PERL5LIB=\"{s}\"",
+                    .{env.perl5lib},
+                );
+                try args.append(configure_perl5lib_arg.?);
+            }
+
             // CMAKE_PREFIX_PATH for cmake-based builds (like cmake-core itself)
             // cmake's find_library/find_path doesn't use LDFLAGS/CPPFLAGS,
             // it needs CMAKE_PREFIX_PATH to find packages in the sysroot
@@ -2864,6 +2979,10 @@ pub const PortsMigrator = struct {
             if (env.pythonpath.len > 0) {
                 std.debug.print("    [DEBUG]   MAKE_ENV+=PYTHONPATH=\"{s}\"\n", .{env.pythonpath});
                 std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PYTHONPATH=\"{s}\"\n", .{env.pythonpath});
+            }
+            if (env.perl5lib.len > 0) {
+                std.debug.print("    [DEBUG]   MAKE_ENV+=PERL5LIB=\"{s}\"\n", .{env.perl5lib});
+                std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PERL5LIB=\"{s}\"\n", .{env.perl5lib});
             }
             std.debug.print("    [DEBUG]   CMAKE_PREFIX_PATH={s}\n", .{env.sysroot});
         }
@@ -2961,6 +3080,9 @@ pub const PortsMigrator = struct {
                 std.debug.print("    LD_LIBRARY_PATH={s}\n", .{env.ld_library_path});
                 if (env.pythonpath.len > 0) {
                     std.debug.print("    PYTHONPATH={s}\n", .{env.pythonpath});
+                }
+                if (env.perl5lib.len > 0) {
+                    std.debug.print("    PERL5LIB={s}\n", .{env.perl5lib});
                 }
             }
         }
