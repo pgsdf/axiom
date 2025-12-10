@@ -1,0 +1,144 @@
+# Axiom Technical Decisions Log
+
+This document captures technical decisions, solved problems, and their rationale to prevent regression and maintain institutional knowledge.
+
+---
+
+## Bootstrap Order
+
+**Decision**: The bootstrap order for building from FreeBSD ports is:
+1. `misc/help2man` - Man page generator
+2. `devel/m4` - Macro processor
+3. `devel/gmake` - GNU make
+
+**Rationale**:
+- `m4` requires `help2man` during its build process to generate man pages
+- `gmake` is required by most GNU software
+- These packages have minimal dependencies and can build with system tools
+
+**Date**: 2025-12-10
+
+---
+
+## ZFS Dataset Ordering
+
+**Decision**: When creating Axiom ZFS datasets, the mountpoint MUST be set on the parent dataset BEFORE creating child datasets.
+
+**Rationale**: Child datasets inherit their mountpoint from the parent. If you create children first, they get the wrong mountpoint (e.g., `/zroot/axiom/store` instead of `/axiom/store`).
+
+**Correct order**:
+```bash
+zfs create zroot/axiom
+zfs set mountpoint=/axiom zroot/axiom  # BEFORE creating children!
+zfs create zroot/axiom/store
+zfs create zroot/axiom/store/pkg
+# ... etc
+```
+
+**Date**: 2025-12-10
+
+---
+
+## Perl Module Discovery (PERL5LIB)
+
+**Problem**: When building ports that depend on Perl modules (like `help2man` needing `Locale::gettext`), the configure script can't find the modules even though they're in the Axiom store.
+
+**Root Cause**: FreeBSD Perl modules install to multiple locations:
+- `lib/perl5/site_perl/` - base directory
+- `lib/perl5/site_perl/<version>/` - version-specific (e.g., 5.42)
+- `lib/perl5/site_perl/<version>/<arch>/` - architecture-specific (e.g., amd64-freebsd)
+- `lib/perl5/site_perl/mach/` - symlink to current architecture
+- `lib/perl5/<version>/` - core Perl modules
+
+**Solution**: The `buildPerl5Lib()` function in `ports.zig` must scan and include ALL of these paths:
+1. `site_perl` itself
+2. All subdirectories under `site_perl` (both version dirs and arch dirs)
+3. Architecture subdirectories within version directories
+4. `perl5/<version>` directories
+5. Corresponding `site_perl/<version>` when `perl5/<version>` exists
+
+**Important**: Must include symlinks (`.sym_link` kind) not just directories, as `mach` is often a symlink.
+
+**Environment variables needed**:
+- `PERL5LIB` - Perl module search path
+- `LD_LIBRARY_PATH` - For loading XS module .so files (they depend on libintl, etc.)
+
+**Current Status**: UNRESOLVED - The PERL5LIB paths are being set but Locale::gettext still not found. Need to investigate:
+1. What files are actually in the p5-Locale-gettext package
+2. What directory structure exists in the sysroot
+3. Whether the .pm files are in the expected locations
+
+**Diagnostic commands**:
+```bash
+# Find .pm files in the package
+find /axiom/store/pkg/Locale-gettext -name "*.pm"
+
+# Check sysroot structure
+ls -laR /tmp/axiom-sysroot-*/usr/local/lib/perl5/site_perl/
+
+# Test module loading manually
+PERL5LIB="<paths>" perl -e "use Locale::gettext; print 'OK\n'"
+```
+
+**Date**: 2025-12-10
+
+---
+
+## Build Environment Variables
+
+**Decision**: The following environment variables must be passed to port builds via `MAKE_ENV` and `CONFIGURE_ENV`:
+
+| Variable | Purpose |
+|----------|---------|
+| `PATH` | Include sysroot bin directory first |
+| `LDFLAGS` | Library search paths for linker |
+| `CPPFLAGS` | Include paths for preprocessor |
+| `PERL5LIB` | Perl module search paths |
+| `PYTHONPATH` | Python module search paths |
+| `LD_LIBRARY_PATH` | Runtime library loading (needed for XS modules) |
+| `CMAKE_PREFIX_PATH` | CMake package discovery |
+
+**Rationale**: FreeBSD ports use these to find dependencies. Without them, builds either fail or use system packages instead of Axiom store packages.
+
+**Date**: 2025-12-10
+
+---
+
+## Package Name Mapping
+
+**Decision**: Port origins must be mapped to Axiom package names because FreeBSD ports use different naming conventions.
+
+**Examples**:
+- `devel/gmake` → `make` (package installs as "make" not "gmake")
+- `lang/perl5.42` → `perl`
+- `devel/p5-Locale-gettext` → `Locale-gettext`
+
+**Implementation**: `mapPortNameAlloc()` function in `ports.zig`
+
+**Date**: 2025-12-10
+
+---
+
+## Binary Aliases
+
+**Problem**: Some packages install binaries with different names than what other ports expect.
+
+**Example**: `devel/gmake` installs as `make` but other ports expect `gmake`.
+
+**Solution**: The `createBinaryAliases()` function creates symlinks in the sysroot:
+- `gmake` → `make`
+
+**Date**: 2025-12-10
+
+---
+
+## Adding New Decisions
+
+When solving a problem or making a technical decision, add an entry here with:
+1. **Decision**: What was decided
+2. **Rationale**: Why this decision was made
+3. **Implementation details**: Code locations, functions involved
+4. **Date**: When the decision was made
+5. **Status**: Resolved/Unresolved/Partial
+
+This prevents re-solving the same problems and losing working solutions.
