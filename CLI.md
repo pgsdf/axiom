@@ -176,6 +176,49 @@ axiom profile-delete development
 
 **Warning:** This destroys the ZFS dataset. Use with caution.
 
+#### `axiom profile-add-package <profile> <package> [version]`
+
+Add a package to an existing profile without editing YAML files.
+
+```bash
+# Add package with any version
+axiom profile-add-package development bash
+
+# Add package with exact version
+axiom profile-add-package development bash 5.2.0
+
+# Add package with caret constraint (compatible versions)
+axiom profile-add-package development bash "^5.0"
+
+# Add package with tilde constraint (patch updates only)
+axiom profile-add-package development bash "~5.2"
+
+# Add package with range constraint
+axiom profile-add-package development bash ">=5.0"
+```
+
+**Version constraint formats:**
+| Format | Meaning |
+|--------|---------|
+| `*` or omitted | Any version |
+| `5.2.0` | Exact version 5.2.0 |
+| `^5.0` | Compatible with 5.0 (5.x.x) |
+| `~5.2` | Patch updates only (5.2.x) |
+| `>=5.0` | Version 5.0 or higher |
+| `>=5.0,<6.0` | Range between versions |
+
+**Alias:** `axiom profile-add`
+
+#### `axiom profile-remove-package <profile> <package>`
+
+Remove a package from an existing profile.
+
+```bash
+axiom profile-remove-package development bash
+```
+
+**Alias:** `axiom profile-remove`
+
 ---
 
 ### Package Operations
