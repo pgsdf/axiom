@@ -40,17 +40,24 @@ sudo cp zig-out/bin/axiom /usr/local/bin/axiom
 # 3. Run the setup wizard (creates ZFS datasets)
 sudo axiom setup
 
-# 4. Import packages from FreeBSD ports
+# 4. Bootstrap build tools (required for building from ports)
+sudo axiom ports-import devel/m4
+sudo axiom ports-import devel/gmake
+
+# 5. Import packages from FreeBSD ports
 sudo axiom ports-import shells/bash
 sudo axiom ports-import editors/vim
 
-# 5. Create a profile and environment
+# 6. Create a profile and add packages
 sudo axiom profile-create myprofile
-# Edit /axiom/profiles/myprofile/profile.yaml to add packages
+sudo axiom profile-add-package myprofile bash
+sudo axiom profile-add-package myprofile vim
+
+# 7. Resolve dependencies and create environment
 sudo axiom resolve myprofile
 sudo axiom realize myenv myprofile
 
-# 6. Activate the environment
+# 8. Activate the environment
 source /axiom/env/myenv/activate
 ```
 

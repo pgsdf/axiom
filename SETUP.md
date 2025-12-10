@@ -19,6 +19,40 @@ The setup wizard will:
 - Configure recommended ZFS properties (compression=lz4, atime=off)
 - Create configuration directories (/etc/axiom, /var/cache/axiom)
 
+### After Setup: Bootstrap Build Tools
+
+Before importing packages from FreeBSD ports, you need to bootstrap essential build tools:
+
+```bash
+# Import minimal build dependencies first
+sudo axiom ports-import devel/m4
+sudo axiom ports-import devel/gmake
+
+# Now you can import other packages
+sudo axiom ports-import shells/bash
+sudo axiom ports-import editors/vim
+```
+
+**Why bootstrap first?** Packages like `bash` require `m4` and other build tools during compilation. If these aren't in the Axiom store, builds may fail or fall back to system tools (which defeats the purpose of isolated environments).
+
+### Creating Your First Environment
+
+```bash
+# Create a profile
+sudo axiom profile-create myprofile
+
+# Add packages to the profile (no YAML editing required!)
+sudo axiom profile-add-package myprofile bash
+sudo axiom profile-add-package myprofile vim
+
+# Resolve dependencies
+sudo axiom resolve myprofile
+
+# Create and activate the environment
+sudo axiom realize myenv myprofile
+source /axiom/env/myenv/activate
+```
+
 ### Setup Wizard Options
 
 ```bash
