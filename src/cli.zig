@@ -58,7 +58,9 @@ pub const Command = enum {
     profile_show,
     profile_update,
     profile_delete,
-    
+    profile_add_package,
+    profile_remove_package,
+
     // Package operations
     import_pkg,
     install,
@@ -166,7 +168,11 @@ pub fn parseCommand(cmd: []const u8) Command {
     if (std.mem.eql(u8, cmd, "profile-show")) return .profile_show;
     if (std.mem.eql(u8, cmd, "profile-update")) return .profile_update;
     if (std.mem.eql(u8, cmd, "profile-delete")) return .profile_delete;
-    
+    if (std.mem.eql(u8, cmd, "profile-add-package")) return .profile_add_package;
+    if (std.mem.eql(u8, cmd, "profile-add")) return .profile_add_package;
+    if (std.mem.eql(u8, cmd, "profile-remove-package")) return .profile_remove_package;
+    if (std.mem.eql(u8, cmd, "profile-remove")) return .profile_remove_package;
+
     // Package commands
     if (std.mem.eql(u8, cmd, "import")) return .import_pkg;
     if (std.mem.eql(u8, cmd, "install")) return .install;
@@ -366,7 +372,9 @@ pub const CLI = struct {
             .profile_show => try self.profileShow(args[1..]),
             .profile_update => try self.profileUpdate(args[1..]),
             .profile_delete => try self.profileDelete(args[1..]),
-            
+            .profile_add_package => try self.profileAddPackage(args[1..]),
+            .profile_remove_package => try self.profileRemovePackage(args[1..]),
+
             .import_pkg => try self.importPackage(args[1..]),
             .install => try self.install(args[1..]),
             .remove => try self.remove(args[1..]),
@@ -474,6 +482,8 @@ pub const CLI = struct {
             \\  profile-show <name>        Show profile details
             \\  profile-update <name>      Update a profile
             \\  profile-delete <name>      Delete a profile
+            \\  profile-add-package <p> <pkg> [ver]   Add package to profile
+            \\  profile-remove-package <p> <pkg>      Remove package from profile
             \\
             \\Package Operations:
             \\  import <source> [opts]     Import package from directory/tarball
@@ -719,6 +729,51 @@ pub const CLI = struct {
         std.debug.print("Deleting profile: {s}\n", .{name});
         try self.profile_mgr.deleteProfile(name);
         std.debug.print("✓ Profile deleted\n", .{});
+    }
+
+    fn profileAddPackage(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 2) {
+            std.debug.print("Usage: axiom profile-add-package <profile> <package> [version]\n", .{});
+            std.debug.print("\nExamples:\n", .{});
+            std.debug.print("  axiom profile-add-package myprofile bash          # Any version\n", .{});
+            std.debug.print("  axiom profile-add-package myprofile bash 5.2.0    # Exact version\n", .{});
+            std.debug.print("  axiom profile-add-package myprofile bash \"^5.0\"   # Caret (compatible)\n", .{});
+            std.debug.print("  axiom profile-add-package myprofile bash \"~5.2\"   # Tilde (patch updates)\n", .{});
+            std.debug.print("  axiom profile-add-package myprofile bash \">=5.0\"  # Range\n", .{});
+            return;
+        }
+
+        const profile_name = args[0];
+        const package_name = args[1];
+        const version_constraint: ?[]const u8 = if (args.len > 2) args[2] else null;
+
+        self.profile_mgr.addPackageToProfile(profile_name, package_name, version_constraint) catch |err| {
+            if (err == error.ProfileNotFound) {
+                std.debug.print("Error: Profile '{s}' not found.\n", .{profile_name});
+                return;
+            }
+            return err;
+        };
+    }
+
+    fn profileRemovePackage(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 2) {
+            std.debug.print("Usage: axiom profile-remove-package <profile> <package>\n", .{});
+            std.debug.print("\nExample:\n", .{});
+            std.debug.print("  axiom profile-remove-package myprofile bash\n", .{});
+            return;
+        }
+
+        const profile_name = args[0];
+        const package_name = args[1];
+
+        self.profile_mgr.removePackageFromProfile(profile_name, package_name) catch |err| {
+            if (err == error.ProfileNotFound) {
+                std.debug.print("Error: Profile '{s}' not found.\n", .{profile_name});
+                return;
+            }
+            return err;
+        };
     }
 
     // Package operations

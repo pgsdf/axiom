@@ -650,7 +650,222 @@ pub const ProfileManager = struct {
 
         std.debug.print("  ✓ Profile deleted\n", .{});
     }
+
+    /// Add a package to an existing profile
+    pub fn addPackageToProfile(
+        self: *ProfileManager,
+        profile_name: []const u8,
+        package_name: []const u8,
+        version_constraint: ?[]const u8,
+    ) !void {
+        // Load existing profile
+        var prof = try self.loadProfile(profile_name);
+        defer {
+            self.allocator.free(prof.name);
+            if (prof.description) |d| self.allocator.free(d);
+            for (prof.packages) |pkg| {
+                self.allocator.free(pkg.name);
+            }
+            self.allocator.free(prof.packages);
+        }
+
+        // Check if package already exists
+        for (prof.packages) |pkg| {
+            if (std.mem.eql(u8, pkg.name, package_name)) {
+                std.debug.print("Package '{s}' already in profile '{s}'\n", .{ package_name, profile_name });
+                return;
+            }
+        }
+
+        // Parse version constraint
+        const constraint = if (version_constraint) |vc|
+            try parseVersionConstraintString(vc)
+        else
+            VersionConstraint{ .any = {} };
+
+        // Create new packages array with the additional package
+        var new_packages = try self.allocator.alloc(PackageRequest, prof.packages.len + 1);
+        errdefer self.allocator.free(new_packages);
+
+        // Copy existing packages
+        for (prof.packages, 0..) |pkg, i| {
+            new_packages[i] = .{
+                .name = try self.allocator.dupe(u8, pkg.name),
+                .constraint = pkg.constraint,
+            };
+        }
+
+        // Add new package
+        new_packages[prof.packages.len] = .{
+            .name = try self.allocator.dupe(u8, package_name),
+            .constraint = constraint,
+        };
+
+        // Create updated profile
+        const updated_profile = Profile{
+            .name = try self.allocator.dupe(u8, prof.name),
+            .description = if (prof.description) |d| try self.allocator.dupe(u8, d) else null,
+            .packages = new_packages,
+        };
+        defer {
+            self.allocator.free(updated_profile.name);
+            if (updated_profile.description) |d| self.allocator.free(d);
+            for (updated_profile.packages) |pkg| {
+                self.allocator.free(pkg.name);
+            }
+            self.allocator.free(updated_profile.packages);
+        }
+
+        // Save updated profile
+        try self.updateProfile(updated_profile);
+
+        std.debug.print("✓ Added '{s}' to profile '{s}'\n", .{ package_name, profile_name });
+    }
+
+    /// Remove a package from an existing profile
+    pub fn removePackageFromProfile(
+        self: *ProfileManager,
+        profile_name: []const u8,
+        package_name: []const u8,
+    ) !void {
+        // Load existing profile
+        var prof = try self.loadProfile(profile_name);
+        defer {
+            self.allocator.free(prof.name);
+            if (prof.description) |d| self.allocator.free(d);
+            for (prof.packages) |pkg| {
+                self.allocator.free(pkg.name);
+            }
+            self.allocator.free(prof.packages);
+        }
+
+        // Find package index
+        var found_index: ?usize = null;
+        for (prof.packages, 0..) |pkg, i| {
+            if (std.mem.eql(u8, pkg.name, package_name)) {
+                found_index = i;
+                break;
+            }
+        }
+
+        if (found_index == null) {
+            std.debug.print("Package '{s}' not found in profile '{s}'\n", .{ package_name, profile_name });
+            return;
+        }
+
+        // Create new packages array without the removed package
+        if (prof.packages.len == 1) {
+            // Removing last package - create empty array
+            var new_packages = try self.allocator.alloc(PackageRequest, 0);
+
+            const updated_profile = Profile{
+                .name = try self.allocator.dupe(u8, prof.name),
+                .description = if (prof.description) |d| try self.allocator.dupe(u8, d) else null,
+                .packages = new_packages,
+            };
+            defer {
+                self.allocator.free(updated_profile.name);
+                if (updated_profile.description) |d| self.allocator.free(d);
+                self.allocator.free(updated_profile.packages);
+            }
+
+            try self.updateProfile(updated_profile);
+        } else {
+            var new_packages = try self.allocator.alloc(PackageRequest, prof.packages.len - 1);
+            errdefer self.allocator.free(new_packages);
+
+            var j: usize = 0;
+            for (prof.packages, 0..) |pkg, i| {
+                if (i != found_index.?) {
+                    new_packages[j] = .{
+                        .name = try self.allocator.dupe(u8, pkg.name),
+                        .constraint = pkg.constraint,
+                    };
+                    j += 1;
+                }
+            }
+
+            const updated_profile = Profile{
+                .name = try self.allocator.dupe(u8, prof.name),
+                .description = if (prof.description) |d| try self.allocator.dupe(u8, d) else null,
+                .packages = new_packages,
+            };
+            defer {
+                self.allocator.free(updated_profile.name);
+                if (updated_profile.description) |d| self.allocator.free(d);
+                for (updated_profile.packages) |pkg| {
+                    self.allocator.free(pkg.name);
+                }
+                self.allocator.free(updated_profile.packages);
+            }
+
+            try self.updateProfile(updated_profile);
+        }
+
+        std.debug.print("✓ Removed '{s}' from profile '{s}'\n", .{ package_name, profile_name });
+    }
 };
+
+/// Parse a version constraint from a user-provided string
+/// Supports: "*", "1.2.3" (exact), "^1.2.3" (caret), "~1.2.3" (tilde), ">=1.0.0" (range)
+fn parseVersionConstraintString(version_str: []const u8) !VersionConstraint {
+    const trimmed = std.mem.trim(u8, version_str, " \t\"");
+
+    if (trimmed.len == 0 or std.mem.eql(u8, trimmed, "*")) {
+        return VersionConstraint{ .any = {} };
+    }
+
+    if (std.mem.startsWith(u8, trimmed, "^")) {
+        const v = try Version.parse(trimmed[1..]);
+        return VersionConstraint{ .caret = v };
+    }
+
+    if (std.mem.startsWith(u8, trimmed, "~")) {
+        const v = try Version.parse(trimmed[1..]);
+        return VersionConstraint{ .tilde = v };
+    }
+
+    if (std.mem.startsWith(u8, trimmed, ">=") or std.mem.startsWith(u8, trimmed, ">") or
+        std.mem.startsWith(u8, trimmed, "<=") or std.mem.startsWith(u8, trimmed, "<"))
+    {
+        // Parse as range
+        var min: ?Version = null;
+        var max: ?Version = null;
+        var min_inclusive = true;
+        var max_inclusive = true;
+
+        var parts = std.mem.splitScalar(u8, trimmed, ',');
+        while (parts.next()) |part| {
+            const p = std.mem.trim(u8, part, " \t");
+            if (std.mem.startsWith(u8, p, ">=")) {
+                min = try Version.parse(p[2..]);
+                min_inclusive = true;
+            } else if (std.mem.startsWith(u8, p, ">")) {
+                min = try Version.parse(p[1..]);
+                min_inclusive = false;
+            } else if (std.mem.startsWith(u8, p, "<=")) {
+                max = try Version.parse(p[2..]);
+                max_inclusive = true;
+            } else if (std.mem.startsWith(u8, p, "<")) {
+                max = try Version.parse(p[1..]);
+                max_inclusive = false;
+            }
+        }
+
+        return VersionConstraint{
+            .range = .{
+                .min = min,
+                .max = max,
+                .min_inclusive = min_inclusive,
+                .max_inclusive = max_inclusive,
+            },
+        };
+    }
+
+    // Default: exact version
+    const v = try Version.parse(trimmed);
+    return VersionConstraint{ .exact = v };
+}
 
 /// Parse version constraint from string and type
 fn parseConstraint(
