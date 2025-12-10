@@ -3437,6 +3437,7 @@ pub const PortsMigrator = struct {
             .revision = metadata.revision,
             .description = metadata.comment,
             .license = if (metadata.license.len > 0) metadata.license else null,
+            .origin = origin, // FreeBSD port origin for tracking
             .dry_run = false,
             .auto_detect = false,
             .security = .{
