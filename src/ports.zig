@@ -2381,9 +2381,11 @@ pub const PortsMigrator = struct {
             // FreeBSD installs p5-* modules to both:
             //   site_perl/5.42/ - version-specific
             //   site_perl/mach/ - architecture-specific (where mach = amd64-freebsd)
+            // Note: Also include symlinks since 'mach' is often a symlink
             var site_iter = site_dir.iterate();
             while (try site_iter.next()) |entry| {
-                if (entry.kind != .directory) continue;
+                // Include directories AND symlinks (mach is often a symlink)
+                if (entry.kind != .directory and entry.kind != .sym_link) continue;
                 // Skip special directories that aren't module paths
                 if (std.mem.eql(u8, entry.name, "auto")) continue;
                 if (std.mem.eql(u8, entry.name, "man")) continue;
@@ -2401,7 +2403,8 @@ pub const PortsMigrator = struct {
                         defer ver_dir.close();
                         var ver_iter = ver_dir.iterate();
                         while (try ver_iter.next()) |arch_entry| {
-                            if (arch_entry.kind != .directory) continue;
+                            // Include directories AND symlinks
+                            if (arch_entry.kind != .directory and arch_entry.kind != .sym_link) continue;
                             // Skip special dirs, add architecture dirs (contain XS .so files)
                             if (std.mem.eql(u8, arch_entry.name, "auto")) continue;
                             if (std.mem.eql(u8, arch_entry.name, "man")) continue;
@@ -2423,7 +2426,8 @@ pub const PortsMigrator = struct {
         // Also add the corresponding site_perl/<version> paths
         var perl5_iter = dir.iterate();
         while (try perl5_iter.next()) |entry| {
-            if (entry.kind != .directory) continue;
+            // Include directories AND symlinks
+            if (entry.kind != .directory and entry.kind != .sym_link) continue;
             if (std.mem.eql(u8, entry.name, "site_perl")) continue; // Already handled
             // Only add version directories (start with digit)
             if (entry.name.len == 0 or !std.ascii.isDigit(entry.name[0])) continue;
@@ -2453,7 +2457,8 @@ pub const PortsMigrator = struct {
                 defer sv_dir.close();
                 var sv_iter = sv_dir.iterate();
                 while (try sv_iter.next()) |arch_entry| {
-                    if (arch_entry.kind != .directory) continue;
+                    // Include directories AND symlinks
+                    if (arch_entry.kind != .directory and arch_entry.kind != .sym_link) continue;
                     if (std.mem.eql(u8, arch_entry.name, "auto")) continue;
                     if (std.mem.eql(u8, arch_entry.name, "man")) continue;
                     const arch_path = try std.fs.path.join(self.allocator, &[_][]const u8{
