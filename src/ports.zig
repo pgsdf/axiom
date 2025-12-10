@@ -2365,7 +2365,8 @@ pub const PortsMigrator = struct {
         defer self.allocator.free(site_perl_dir);
 
         // Try to open site_perl and scan for version directories
-        if (std.fs.cwd().openDir(site_perl_dir, .{ .iterate = true })) |*site_dir| {
+        if (std.fs.cwd().openDir(site_perl_dir, .{ .iterate = true })) |sd| {
+            var site_dir = sd;
             defer site_dir.close();
             var site_iter = site_dir.iterate();
             while (try site_iter.next()) |entry| {
