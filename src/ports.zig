@@ -2368,7 +2368,7 @@ pub const PortsMigrator = struct {
         const site_perl_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ perl5_dir, "site_perl" });
         defer self.allocator.free(site_perl_dir);
 
-        // Try to open site_perl and add it plus version subdirectories
+        // Try to open site_perl and add it plus subdirectories
         if (std.fs.cwd().openDir(site_perl_dir, .{ .iterate = true })) |sd| {
             var site_dir = sd;
             defer site_dir.close();
@@ -2377,38 +2377,43 @@ pub const PortsMigrator = struct {
             const site_perl_copy = try self.allocator.dupe(u8, site_perl_dir);
             try paths.append(site_perl_copy);
 
-            // Now scan for version directories (5.XX) and add them with arch subdirs
+            // Scan site_perl for both version dirs (5.XX) and arch dirs (amd64-freebsd)
+            // FreeBSD installs p5-* modules to both:
+            //   site_perl/5.42/ - version-specific
+            //   site_perl/mach/ - architecture-specific (where mach = amd64-freebsd)
             var site_iter = site_dir.iterate();
             while (try site_iter.next()) |entry| {
                 if (entry.kind != .directory) continue;
-                // Add version directories (start with digit, like 5.42, 5.40)
-                if (entry.name.len == 0 or !std.ascii.isDigit(entry.name[0])) continue;
+                // Skip special directories that aren't module paths
+                if (std.mem.eql(u8, entry.name, "auto")) continue;
+                if (std.mem.eql(u8, entry.name, "man")) continue;
 
-                const version_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+                const subdir_path = try std.fs.path.join(self.allocator, &[_][]const u8{
                     site_perl_dir,
                     entry.name,
                 });
-                try paths.append(version_path);
+                try paths.append(subdir_path);
 
-                // Also scan this version dir for architecture subdirs (amd64-freebsd, etc.)
-                if (std.fs.cwd().openDir(version_path, .{ .iterate = true })) |vd| {
-                    var ver_dir = vd;
-                    defer ver_dir.close();
-                    var ver_iter = ver_dir.iterate();
-                    while (try ver_iter.next()) |arch_entry| {
-                        if (arch_entry.kind != .directory) continue;
-                        // Skip special dirs, add architecture dirs (contain XS .so files)
-                        if (std.mem.eql(u8, arch_entry.name, "auto")) continue;
-                        if (std.mem.eql(u8, arch_entry.name, "man")) continue;
-                        // Add arch dirs like amd64-freebsd, amd64-freebsd-thread-multi
-                        const arch_path = try std.fs.path.join(self.allocator, &[_][]const u8{
-                            version_path,
-                            arch_entry.name,
-                        });
-                        // Only add if it's not already in paths (avoid version_path being added twice)
-                        try paths.append(arch_path);
-                    }
-                } else |_| {}
+                // If this is a version directory (starts with digit), also scan for arch subdirs
+                if (entry.name.len > 0 and std.ascii.isDigit(entry.name[0])) {
+                    if (std.fs.cwd().openDir(subdir_path, .{ .iterate = true })) |vd| {
+                        var ver_dir = vd;
+                        defer ver_dir.close();
+                        var ver_iter = ver_dir.iterate();
+                        while (try ver_iter.next()) |arch_entry| {
+                            if (arch_entry.kind != .directory) continue;
+                            // Skip special dirs, add architecture dirs (contain XS .so files)
+                            if (std.mem.eql(u8, arch_entry.name, "auto")) continue;
+                            if (std.mem.eql(u8, arch_entry.name, "man")) continue;
+                            // Add arch dirs like amd64-freebsd, amd64-freebsd-thread-multi
+                            const arch_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+                                subdir_path,
+                                arch_entry.name,
+                            });
+                            try paths.append(arch_path);
+                        }
+                    } else |_| {}
+                }
             }
         } else |_| {
             // site_perl doesn't exist, continue to check other locations
