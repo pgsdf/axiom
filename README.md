@@ -43,6 +43,7 @@ sudo cp zig-out/bin/axiom /usr/local/bin/axiom
 sudo axiom setup
 
 # Step 4: BOOTSTRAP - Required before importing other packages!
+sudo axiom ports-import misc/help2man # Man page generator (required by m4)
 sudo axiom ports-import devel/m4      # Macro processor (required by autoconf)
 sudo axiom ports-import devel/gmake   # GNU make (required by GNU software)
 
@@ -66,7 +67,7 @@ source /axiom/env/myenv/activate
 **Install Order Summary:**
 1. Build & install Axiom
 2. Run `axiom setup` (creates ZFS datasets)
-3. Bootstrap: `devel/m4` → `devel/gmake`
+3. Bootstrap: `misc/help2man` → `devel/m4` → `devel/gmake`
 4. Import packages
 5. Create profile → resolve → realize
 

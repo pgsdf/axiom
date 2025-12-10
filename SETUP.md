@@ -24,21 +24,25 @@ The setup wizard will:
 **CRITICAL**: Before importing packages from FreeBSD ports, you MUST bootstrap essential build tools in this exact order:
 
 ```bash
-# Step 1: Bootstrap m4 first (required by almost everything)
+# Step 1: Bootstrap help2man first (required by m4)
+sudo axiom ports-import misc/help2man
+
+# Step 2: Bootstrap m4 (macro processor, required by autoconf)
 sudo axiom ports-import devel/m4
 
-# Step 2: Bootstrap gmake (GNU make, required by GNU software)
+# Step 3: Bootstrap gmake (GNU make, required by GNU software)
 sudo axiom ports-import devel/gmake
 
-# Step 3: Now you can import other packages
+# Step 4: Now you can import other packages
 sudo axiom ports-import shells/bash
 sudo axiom ports-import editors/vim
 ```
 
 **Why this order matters:**
+- `help2man` generates man pages and is required to build `m4`
 - `m4` is a macro processor required by autoconf and many configure scripts
 - `gmake` (GNU make) is required by most GNU software including bash
-- If you try to build `bash` without `m4` and `gmake` in the store, the build will fail
+- If you try to build packages without these bootstrap tools, builds will fail
 - These bootstrap packages have minimal dependencies and can build with system tools
 
 ### Creating Your First Environment
@@ -202,6 +206,7 @@ zig build
 sudo cp zig-out/bin/axiom /usr/local/bin/axiom
 
 # 3. BOOTSTRAP FIRST - These must be imported before other packages!
+sudo axiom ports-import misc/help2man # Required by m4
 sudo axiom ports-import devel/m4      # Required by autoconf, configure scripts
 sudo axiom ports-import devel/gmake   # Required by GNU software
 
@@ -241,6 +246,7 @@ sudo axiom ports-import shells/bash
 # Error: Build fails - m4 not found, gmake not found
 
 # CORRECT - Bootstrap first!
+sudo axiom ports-import misc/help2man
 sudo axiom ports-import devel/m4
 sudo axiom ports-import devel/gmake
 sudo axiom ports-import shells/bash    # Now this works
@@ -255,6 +261,7 @@ sudo axiom resolve development
 # Error: PackageNotFound - bash not in store
 
 # CORRECT - Import packages first!
+sudo axiom ports-import misc/help2man  # Bootstrap
 sudo axiom ports-import devel/m4       # Bootstrap
 sudo axiom ports-import devel/gmake    # Bootstrap
 sudo axiom ports-import shells/bash    # Import package
