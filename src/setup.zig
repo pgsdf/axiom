@@ -258,12 +258,18 @@ pub const SetupWizard = struct {
         try stdout.print("===========================================\n", .{});
         try stdout.print("\n", .{});
         try stdout.print("Next steps:\n", .{});
-        try stdout.print("  1. Import packages:    axiom ports-import shells/bash\n", .{});
-        try stdout.print("  2. Create a profile:   axiom profile-create myprofile\n", .{});
-        try stdout.print("  3. Edit profile:       edit {s}/myprofile/profile.yaml\n", .{self.mountpoint});
-        try stdout.print("  4. Resolve deps:       axiom resolve myprofile\n", .{});
-        try stdout.print("  5. Create environment: axiom realize myenv myprofile\n", .{});
-        try stdout.print("  6. Activate:           source {s}/env/myenv/activate\n", .{self.mountpoint});
+        try stdout.print("\n", .{});
+        try stdout.print("  Bootstrap build tools (required for building from ports):\n", .{});
+        try stdout.print("    axiom ports-import devel/m4\n", .{});
+        try stdout.print("    axiom ports-import devel/gmake\n", .{});
+        try stdout.print("\n", .{});
+        try stdout.print("  Then import packages and create your environment:\n", .{});
+        try stdout.print("    1. Import packages:      axiom ports-import shells/bash\n", .{});
+        try stdout.print("    2. Create a profile:     axiom profile-create myprofile\n", .{});
+        try stdout.print("    3. Add packages:         axiom profile-add-package myprofile bash\n", .{});
+        try stdout.print("    4. Resolve dependencies: axiom resolve myprofile\n", .{});
+        try stdout.print("    5. Create environment:   axiom realize myenv myprofile\n", .{});
+        try stdout.print("    6. Activate:             source {s}/env/myenv/activate\n", .{self.mountpoint});
         try stdout.print("\n", .{});
         try stdout.print("For more help: axiom help\n", .{});
     }
