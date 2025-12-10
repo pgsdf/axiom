@@ -12,6 +12,7 @@ const build = @import("build.zig");
 const cli = @import("cli.zig");
 const user = @import("user.zig");
 const config = @import("config.zig");
+const setup = @import("setup.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -24,6 +25,25 @@ pub fn main() !void {
 
     // Skip program name
     const cmd_args = if (args.len > 1) args[1..] else &[_][]const u8{};
+
+    // Handle setup command before ZFS initialization
+    // Setup needs to run before ZFS is initialized since it creates the datasets
+    if (cmd_args.len > 0 and std.mem.eql(u8, cmd_args[0], "setup")) {
+        setup.runSetup(allocator, cmd_args[1..]) catch |err| {
+            switch (err) {
+                setup.SetupError.RootRequired => std.process.exit(1),
+                setup.SetupError.ZfsNotAvailable => std.process.exit(1),
+                setup.SetupError.PoolNotFound => std.process.exit(1),
+                setup.SetupError.DatasetExists => std.process.exit(1),
+                setup.SetupError.Cancelled => std.process.exit(0),
+                else => {
+                    std.debug.print("Setup failed: {}\n", .{err});
+                    std.process.exit(1);
+                },
+            }
+        };
+        return;
+    }
 
     // Initialize ZFS
     var zfs_handle = zfs.ZfsHandle.init() catch |err| {
