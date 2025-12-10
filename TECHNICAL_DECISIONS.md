@@ -103,6 +103,7 @@ PERL5LIB="<paths>" perl -e "use Locale::gettext; print 'OK\n'"
 | `PYTHONPATH` | Python module search paths |
 | `LD_LIBRARY_PATH` | Runtime library loading (needed for XS modules) |
 | `CMAKE_PREFIX_PATH` | CMake package discovery |
+| `GMAKE` | Path to GNU make (override for ports framework) |
 
 **Rationale**: FreeBSD ports use these to find dependencies. Without them, builds either fail or use system packages instead of Axiom store packages.
 
@@ -115,9 +116,11 @@ PERL5LIB="<paths>" perl -e "use Locale::gettext; print 'OK\n'"
 **Decision**: Port origins must be mapped to Axiom package names because FreeBSD ports use different naming conventions.
 
 **Examples**:
-- `devel/gmake` → `make` (package installs as "make" not "gmake")
+- `devel/gmake` → `make` (Axiom package name, NOT the binary name)
 - `lang/perl5.42` → `perl`
 - `devel/p5-Locale-gettext` → `Locale-gettext`
+
+**Important distinction**: This maps the **package name** in the Axiom store, NOT the binary name. For example, the `devel/gmake` port is stored as package "make" in Axiom, but the binary it installs is still called `gmake`.
 
 **Implementation**: `mapPortNameAlloc()` function in `ports.zig`
 
@@ -127,12 +130,42 @@ PERL5LIB="<paths>" perl -e "use Locale::gettext; print 'OK\n'"
 
 ## Binary Aliases
 
-**Problem**: Some packages install binaries with different names than what other ports expect.
+**Problem**: On FreeBSD, GNU tools are installed with 'g' prefix (gmake, gsed, gtar) because BSD has its own make/sed/tar. Some build scripts expect the unprefixed names.
 
-**Example**: `devel/gmake` installs as `make` but other ports expect `gmake`.
+**Solution**: The `createBinaryAliases()` function creates symlinks in the sysroot from unprefixed to prefixed names:
+- `make` → `gmake` (scripts expecting 'make' will find gmake)
+- `sed` → `gsed`
+- `tar` → `gtar`
 
-**Solution**: The `createBinaryAliases()` function creates symlinks in the sysroot:
-- `gmake` → `make`
+**Important**: On FreeBSD:
+- `devel/gmake` installs binary as `gmake` (NOT `make`)
+- BSD make is the system `make`
+- We create alias so scripts expecting `make` find GNU make
+
+**Date**: 2025-12-10 (corrected)
+
+---
+
+## GMAKE Variable Override
+
+**Problem**: FreeBSD ports framework uses the `GMAKE` variable which defaults to `/usr/local/bin/gmake`. When building ports in the Axiom sysroot, gmake isn't in `/usr/local/bin` - it's in the sysroot's bin directory.
+
+**Root Cause**: Even though we set PATH to include the sysroot, the ports framework uses `GMAKE=/usr/local/bin/gmake` as a hardcoded path.
+
+**Error message**: `env: /usr/local/bin/gmake: No such file or directory`
+
+**Solution**:
+1. Added `gmake_path` field to `BuildEnvironment` struct
+2. Check if gmake exists in sysroot bin directory
+3. Pass `GMAKE={sysroot}/bin/gmake` as a make variable override in MAKE_ENV
+4. Fall back to `/usr/local/bin/gmake` when gmake isn't in sysroot
+
+**Implementation**:
+- `BuildEnvironment.gmake_path` - stores path to gmake
+- `getBuildEnvironment()` - detects gmake in sysroot
+- `runMakeTargetNoDeps()` - passes `GMAKE=...` to make
+
+**Status**: RESOLVED
 
 **Date**: 2025-12-10
 

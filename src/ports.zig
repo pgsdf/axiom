@@ -1147,6 +1147,9 @@ pub const PortsMigrator = struct {
         pythonpath: []const u8,
         /// PERL5LIB for Perl modules in sysroot lib/perl5/site_perl
         perl5lib: []const u8,
+        /// Path to gmake binary in sysroot (for GMAKE override)
+        /// FreeBSD ports use GMAKE variable which defaults to /usr/local/bin/gmake
+        gmake_path: []const u8,
         allocator: std.mem.Allocator,
 
         pub fn deinit(self: *BuildEnvironment) void {
@@ -1756,33 +1759,36 @@ pub const PortsMigrator = struct {
         }
     }
 
-    /// Create binary aliases in the sysroot for ports where the installed binary name
-    /// differs from what FreeBSD ports expect.
+    /// Create binary aliases in the sysroot for scripts that expect unprefixed GNU tool names.
+    ///
+    /// On FreeBSD, GNU tools are installed with 'g' prefix (gmake, gsed, gtar, ggrep, gawk)
+    /// because BSD has its own make/sed/tar/grep/awk. Some build scripts expect the
+    /// unprefixed names, so we create aliases.
     ///
     /// For example:
-    /// - devel/gmake: The GNU make package installs 'make', but ports expect 'gmake'
-    /// - devel/gsed: The GNU sed package installs 'sed', but ports expect 'gsed'
+    /// - devel/gmake: The GNU make package installs 'gmake', we create 'make' alias
+    /// - devel/gsed: The GNU sed package installs 'gsed', we create 'sed' alias
     ///
-    /// This creates symlinks in sysroot/bin/ from the expected name to the actual binary.
+    /// This creates symlinks in sysroot/bin/ from the alias name to the actual binary.
     fn createBinaryAliases(self: *PortsMigrator, sysroot: []const u8, dep_origins: []const []const u8) !void {
         // Map of port origin -> (alias_name, target_name)
-        // alias_name is what ports expect, target_name is what the package actually installs
+        // alias_name is what we create, target_name is what the package actually installs
         const BinaryAlias = struct {
             alias: []const u8,
             target: []const u8,
         };
 
         const alias_map = std.StaticStringMap(BinaryAlias).initComptime(.{
-            // GNU make: package installs 'make', ports expect 'gmake'
-            .{ "devel/gmake", BinaryAlias{ .alias = "gmake", .target = "make" } },
-            // GNU sed: package installs 'sed', ports expect 'gsed'
-            .{ "devel/gsed", BinaryAlias{ .alias = "gsed", .target = "sed" } },
-            // GNU tar: package installs 'tar', ports expect 'gtar'
-            .{ "archivers/gtar", BinaryAlias{ .alias = "gtar", .target = "tar" } },
-            // GNU grep: package installs 'grep', ports expect 'ggrep'
-            .{ "textproc/gnugrep", BinaryAlias{ .alias = "ggrep", .target = "grep" } },
-            // GNU awk: package installs 'awk', ports expect 'gawk'
-            .{ "lang/gawk", BinaryAlias{ .alias = "gawk", .target = "awk" } },
+            // GNU make: package installs 'gmake', create 'make' alias for scripts expecting 'make'
+            .{ "devel/gmake", BinaryAlias{ .alias = "make", .target = "gmake" } },
+            // GNU sed: package installs 'gsed', create 'sed' alias
+            .{ "devel/gsed", BinaryAlias{ .alias = "sed", .target = "gsed" } },
+            // GNU tar: package installs 'gtar', create 'tar' alias
+            .{ "archivers/gtar", BinaryAlias{ .alias = "tar", .target = "gtar" } },
+            // GNU grep: package installs 'ggrep', create 'grep' alias
+            .{ "textproc/gnugrep", BinaryAlias{ .alias = "grep", .target = "ggrep" } },
+            // GNU awk: package installs 'gawk', create 'awk' alias
+            .{ "lang/gawk", BinaryAlias{ .alias = "awk", .target = "gawk" } },
         });
 
         const bin_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "bin" });
@@ -2111,6 +2117,7 @@ pub const PortsMigrator = struct {
                 .cppflags = try self.allocator.dupe(u8, "-I/usr/local/include"),
                 .pythonpath = "",
                 .perl5lib = "",
+                .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
                 .allocator = self.allocator,
             };
         }
@@ -2135,6 +2142,7 @@ pub const PortsMigrator = struct {
                 .cppflags = try self.allocator.dupe(u8, "-I/usr/local/include"),
                 .pythonpath = "",
                 .perl5lib = "",
+                .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
                 .allocator = self.allocator,
             };
         };
@@ -2197,6 +2205,7 @@ pub const PortsMigrator = struct {
                 .cppflags = try self.allocator.dupe(u8, "-I/usr/local/include"),
                 .pythonpath = "",
                 .perl5lib = "",
+                .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
                 .allocator = self.allocator,
             };
         }
@@ -2205,8 +2214,8 @@ pub const PortsMigrator = struct {
         const sysroot = try self.createBuildSysroot(all_roots.items);
         errdefer self.allocator.free(sysroot);
 
-        // Create binary aliases in sysroot for ports that install binaries with different names
-        // than what FreeBSD ports expect (e.g., gmake package installs 'make' but ports expect 'gmake')
+        // Create binary aliases in sysroot for scripts expecting unprefixed GNU tool names
+        // (e.g., gmake installs 'gmake' binary, we create 'make' alias for scripts expecting 'make')
         try self.createBinaryAliases(sysroot, deps.items);
 
         // Create unversioned wrappers for autotools (autoconf -> autoconf-2.72, etc.)
@@ -2259,9 +2268,27 @@ pub const PortsMigrator = struct {
         // Perl modules (p5-Locale-gettext, etc.) install to lib/perl5/site_perl/X.YZ
         const perl5lib = try self.buildPerl5Lib(sysroot_lib);
 
+        // GMAKE: Check if gmake exists in sysroot, otherwise fall back to system path
+        // FreeBSD ports framework uses GMAKE variable (defaults to /usr/local/bin/gmake)
+        // We override this to point to sysroot gmake when available
+        const gmake_in_sysroot = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot_bin, "gmake" });
+        errdefer self.allocator.free(gmake_in_sysroot);
+
+        const gmake_path = blk: {
+            // Check if gmake exists in sysroot
+            std.fs.cwd().access(gmake_in_sysroot, .{}) catch {
+                // gmake not in sysroot, fall back to system path
+                self.allocator.free(gmake_in_sysroot);
+                break :blk try self.allocator.dupe(u8, "/usr/local/bin/gmake");
+            };
+            // gmake found in sysroot
+            break :blk gmake_in_sysroot;
+        };
+
         std.debug.print("    [DEBUG] Sysroot created: {s}\n", .{sysroot});
         std.debug.print("    [DEBUG] Final PATH: {s}\n", .{path});
         std.debug.print("    [DEBUG] Final LDFLAGS: {s}\n", .{ldflags});
+        std.debug.print("    [DEBUG] Final GMAKE: {s}\n", .{gmake_path});
         if (pythonpath.len > 0) {
             std.debug.print("    [DEBUG] Final PYTHONPATH: {s}\n", .{pythonpath});
         }
@@ -2277,6 +2304,7 @@ pub const PortsMigrator = struct {
             .cppflags = cppflags,
             .pythonpath = pythonpath,
             .perl5lib = perl5lib,
+            .gmake_path = gmake_path,
             .allocator = self.allocator,
         };
     }
@@ -2872,6 +2900,10 @@ pub const PortsMigrator = struct {
         defer if (make_ld_library_path_arg) |f| self.allocator.free(f);
 
         var configure_ld_library_path_arg: ?[]const u8 = null;
+
+        // GMAKE: Override path to GNU make for ports that use GMAKE variable
+        var gmake_arg: ?[]const u8 = null;
+        defer if (gmake_arg) |f| self.allocator.free(f);
         defer if (configure_ld_library_path_arg) |f| self.allocator.free(f);
 
         // CMAKE_PREFIX_PATH for cmake-based builds
@@ -3050,6 +3082,18 @@ pub const PortsMigrator = struct {
                 try args.append(configure_ld_library_path_arg.?);
             }
 
+            // GMAKE: Override the path to GNU make
+            // FreeBSD ports framework uses GMAKE variable which defaults to /usr/local/bin/gmake
+            // We override this to point to the sysroot or system gmake
+            if (env.gmake_path.len > 0) {
+                gmake_arg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "GMAKE={s}",
+                    .{env.gmake_path},
+                );
+                try args.append(gmake_arg.?);
+            }
+
             // CMAKE_PREFIX_PATH for cmake-based builds (like cmake-core itself)
             // cmake's find_library/find_path doesn't use LDFLAGS/CPPFLAGS,
             // it needs CMAKE_PREFIX_PATH to find packages in the sysroot
@@ -3086,6 +3130,9 @@ pub const PortsMigrator = struct {
             if (env.ld_library_path.len > 0) {
                 std.debug.print("    [DEBUG]   MAKE_ENV+=LD_LIBRARY_PATH=\"{s}\"\n", .{env.ld_library_path});
                 std.debug.print("    [DEBUG]   CONFIGURE_ENV+=LD_LIBRARY_PATH=\"{s}\"\n", .{env.ld_library_path});
+            }
+            if (env.gmake_path.len > 0) {
+                std.debug.print("    [DEBUG]   GMAKE={s}\n", .{env.gmake_path});
             }
             std.debug.print("    [DEBUG]   CMAKE_PREFIX_PATH={s}\n", .{env.sysroot});
         }
@@ -4009,7 +4056,8 @@ pub const PortsMigrator = struct {
             // Autoconf switch installs tools under autoconf
             .{ "devel/autoconf-switch", "autoconf" },
 
-            // gmake installs as 'make' not 'gmake'
+            // gmake package - normalize to 'make' for Axiom store naming
+            // (the binary is still 'gmake', this is just the package name)
             .{ "devel/gmake", "make" },
         });
 
