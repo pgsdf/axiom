@@ -381,8 +381,7 @@ pub const SetupWizard = struct {
         try stdout.print("{s} [y/N]: ", .{prompt});
 
         var buf: [256]u8 = undefined;
-        const line = stdin.readUntilDelimiterOrEof(&buf, '\n') catch |err| {
-            _ = err;
+        const line = stdin.readUntilDelimiterOrEof(&buf, '\n') catch {
             return false;
         };
 
@@ -537,7 +536,7 @@ pub const SetupWizard = struct {
     /// Check if a directory exists
     fn directoryExists(self: *SetupWizard, path: []const u8) bool {
         _ = self;
-        const dir = std.fs.openDirAbsolute(path, .{}) catch return false;
+        var dir = std.fs.openDirAbsolute(path, .{}) catch return false;
         dir.close();
         return true;
     }
