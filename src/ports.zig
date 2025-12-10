@@ -2349,7 +2349,7 @@ pub const PortsMigrator = struct {
             paths.deinit();
         }
 
-        // Perl modules are in lib/perl5/site_perl/X.YZ and lib/perl5/X.YZ
+        // Perl modules are in lib/perl5/site_perl and lib/perl5/X.YZ
         const perl5_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ lib_dir, "perl5" });
         defer self.allocator.free(perl5_dir);
 
@@ -2360,25 +2360,55 @@ pub const PortsMigrator = struct {
         };
         defer dir.close();
 
-        // Add site_perl directories (where most p5-* packages install)
+        // Add site_perl directories (where p5-* packages install)
+        // FreeBSD perl modules install to:
+        //   site_perl/5.XX/ - pure Perl modules
+        //   site_perl/5.XX/amd64-freebsd/ - architecture-specific XS modules
+        //   site_perl/ - some modules install directly here
         const site_perl_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ perl5_dir, "site_perl" });
         defer self.allocator.free(site_perl_dir);
 
-        // Try to open site_perl and scan for version directories
+        // Try to open site_perl and add it plus version subdirectories
         if (std.fs.cwd().openDir(site_perl_dir, .{ .iterate = true })) |sd| {
             var site_dir = sd;
             defer site_dir.close();
+
+            // Add site_perl itself first (some modules install directly here)
+            const site_perl_copy = try self.allocator.dupe(u8, site_perl_dir);
+            try paths.append(site_perl_copy);
+
+            // Now scan for version directories (5.XX) and add them with arch subdirs
             var site_iter = site_dir.iterate();
             while (try site_iter.next()) |entry| {
                 if (entry.kind != .directory) continue;
-                // Only add version directories (start with digit, like 5.42, 5.40)
-                // Skip other dirs like 'auto', 'mach', 'man' which aren't module paths
+                // Add version directories (start with digit, like 5.42, 5.40)
                 if (entry.name.len == 0 or !std.ascii.isDigit(entry.name[0])) continue;
+
                 const version_path = try std.fs.path.join(self.allocator, &[_][]const u8{
                     site_perl_dir,
                     entry.name,
                 });
                 try paths.append(version_path);
+
+                // Also scan this version dir for architecture subdirs (amd64-freebsd, etc.)
+                if (std.fs.cwd().openDir(version_path, .{ .iterate = true })) |vd| {
+                    var ver_dir = vd;
+                    defer ver_dir.close();
+                    var ver_iter = ver_dir.iterate();
+                    while (try ver_iter.next()) |arch_entry| {
+                        if (arch_entry.kind != .directory) continue;
+                        // Skip special dirs, add architecture dirs (contain XS .so files)
+                        if (std.mem.eql(u8, arch_entry.name, "auto")) continue;
+                        if (std.mem.eql(u8, arch_entry.name, "man")) continue;
+                        // Add arch dirs like amd64-freebsd, amd64-freebsd-thread-multi
+                        const arch_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+                            version_path,
+                            arch_entry.name,
+                        });
+                        // Only add if it's not already in paths (avoid version_path being added twice)
+                        try paths.append(arch_path);
+                    }
+                } else |_| {}
             }
         } else |_| {
             // site_perl doesn't exist, continue to check other locations
