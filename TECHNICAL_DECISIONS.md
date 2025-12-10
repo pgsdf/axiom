@@ -43,30 +43,36 @@ zfs create zroot/axiom/store/pkg
 
 **Problem**: When building ports that depend on Perl modules (like `help2man` needing `Locale::gettext`), the configure script can't find the modules even though they're in the Axiom store.
 
-**Root Cause**: FreeBSD Perl modules install to multiple locations:
+**Root Cause**: FreeBSD Perl modules install to multiple nested directory patterns:
 - `lib/perl5/site_perl/` - base directory
 - `lib/perl5/site_perl/<version>/` - version-specific (e.g., 5.42)
 - `lib/perl5/site_perl/<version>/<arch>/` - architecture-specific (e.g., amd64-freebsd)
-- `lib/perl5/site_perl/mach/` - symlink to current architecture
+- `lib/perl5/site_perl/mach/` - architecture directory (NOT just a symlink!)
+- `lib/perl5/site_perl/mach/<version>/` - **CRITICAL: p5-Locale-gettext uses this pattern!**
 - `lib/perl5/<version>/` - core Perl modules
 
-**Solution**: The `buildPerl5Lib()` function in `ports.zig` must scan and include ALL of these paths:
+**Actual p5-Locale-gettext structure discovered**:
+```
+lib/perl5/site_perl/mach/5.42/Locale/gettext.pm
+lib/perl5/site_perl/mach/5.42/auto/Locale/gettext/gettext.so
+```
+
+**Solution**: The `buildPerl5Lib()` function in `ports.zig` must scan recursively:
 1. `site_perl` itself
-2. All subdirectories under `site_perl` (both version dirs and arch dirs)
-3. Architecture subdirectories within version directories
+2. All subdirectories under `site_perl` (mach, version dirs, etc.)
+3. **All subdirectories within those** (e.g., `site_perl/mach/5.42/`)
 4. `perl5/<version>` directories
 5. Corresponding `site_perl/<version>` when `perl5/<version>` exists
 
-**Important**: Must include symlinks (`.sym_link` kind) not just directories, as `mach` is often a symlink.
+**Key insight**: The code was only scanning inside VERSION directories (starting with digit) for arch subdirs. It was NOT scanning inside ARCH directories (like `mach`) for version subdirs. The fix is to scan ALL subdirectories recursively, not just specific patterns.
+
+**Important**: Must include symlinks (`.sym_link` kind) not just directories.
 
 **Environment variables needed**:
-- `PERL5LIB` - Perl module search path
+- `PERL5LIB` - Perl module search path (passed via MAKE_ENV and CONFIGURE_ENV)
 - `LD_LIBRARY_PATH` - For loading XS module .so files (they depend on libintl, etc.)
 
-**Current Status**: UNRESOLVED - The PERL5LIB paths are being set but Locale::gettext still not found. Need to investigate:
-1. What files are actually in the p5-Locale-gettext package
-2. What directory structure exists in the sysroot
-3. Whether the .pm files are in the expected locations
+**Current Status**: RESOLVED - Fixed by scanning all subdirectories recursively in buildPerl5Lib().
 
 **Diagnostic commands**:
 ```bash
