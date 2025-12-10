@@ -659,7 +659,7 @@ pub const ProfileManager = struct {
         version_constraint: ?[]const u8,
     ) !void {
         // Load existing profile
-        var prof = try self.loadProfile(profile_name);
+        const prof = try self.loadProfile(profile_name);
         defer {
             self.allocator.free(prof.name);
             if (prof.description) |d| self.allocator.free(d);
@@ -684,7 +684,7 @@ pub const ProfileManager = struct {
             VersionConstraint{ .any = {} };
 
         // Create new packages array with the additional package
-        var new_packages = try self.allocator.alloc(PackageRequest, prof.packages.len + 1);
+        const new_packages = try self.allocator.alloc(PackageRequest, prof.packages.len + 1);
         errdefer self.allocator.free(new_packages);
 
         // Copy existing packages
@@ -729,7 +729,7 @@ pub const ProfileManager = struct {
         package_name: []const u8,
     ) !void {
         // Load existing profile
-        var prof = try self.loadProfile(profile_name);
+        const prof = try self.loadProfile(profile_name);
         defer {
             self.allocator.free(prof.name);
             if (prof.description) |d| self.allocator.free(d);
@@ -756,7 +756,7 @@ pub const ProfileManager = struct {
         // Create new packages array without the removed package
         if (prof.packages.len == 1) {
             // Removing last package - create empty array
-            var new_packages = try self.allocator.alloc(PackageRequest, 0);
+            const new_packages = try self.allocator.alloc(PackageRequest, 0);
 
             const updated_profile = Profile{
                 .name = try self.allocator.dupe(u8, prof.name),
