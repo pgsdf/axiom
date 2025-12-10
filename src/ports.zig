@@ -2863,6 +2863,13 @@ pub const PortsMigrator = struct {
         var configure_perl5lib_arg: ?[]const u8 = null;
         defer if (configure_perl5lib_arg) |f| self.allocator.free(f);
 
+        // LD_LIBRARY_PATH for loading shared libraries (needed for XS modules)
+        var make_ld_library_path_arg: ?[]const u8 = null;
+        defer if (make_ld_library_path_arg) |f| self.allocator.free(f);
+
+        var configure_ld_library_path_arg: ?[]const u8 = null;
+        defer if (configure_ld_library_path_arg) |f| self.allocator.free(f);
+
         // CMAKE_PREFIX_PATH for cmake-based builds
         var cmake_prefix_arg: ?[]const u8 = null;
         defer if (cmake_prefix_arg) |f| self.allocator.free(f);
@@ -3021,6 +3028,24 @@ pub const PortsMigrator = struct {
                 try args.append(configure_perl5lib_arg.?);
             }
 
+            // LD_LIBRARY_PATH for loading shared libraries during configure
+            // This is needed for Perl XS modules (like Locale::gettext) that load .so files
+            if (env.ld_library_path.len > 0) {
+                make_ld_library_path_arg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "MAKE_ENV+=LD_LIBRARY_PATH=\"{s}\"",
+                    .{env.ld_library_path},
+                );
+                try args.append(make_ld_library_path_arg.?);
+
+                configure_ld_library_path_arg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "CONFIGURE_ENV+=LD_LIBRARY_PATH=\"{s}\"",
+                    .{env.ld_library_path},
+                );
+                try args.append(configure_ld_library_path_arg.?);
+            }
+
             // CMAKE_PREFIX_PATH for cmake-based builds (like cmake-core itself)
             // cmake's find_library/find_path doesn't use LDFLAGS/CPPFLAGS,
             // it needs CMAKE_PREFIX_PATH to find packages in the sysroot
@@ -3053,6 +3078,10 @@ pub const PortsMigrator = struct {
             if (env.perl5lib.len > 0) {
                 std.debug.print("    [DEBUG]   MAKE_ENV+=PERL5LIB=\"{s}\"\n", .{env.perl5lib});
                 std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PERL5LIB=\"{s}\"\n", .{env.perl5lib});
+            }
+            if (env.ld_library_path.len > 0) {
+                std.debug.print("    [DEBUG]   MAKE_ENV+=LD_LIBRARY_PATH=\"{s}\"\n", .{env.ld_library_path});
+                std.debug.print("    [DEBUG]   CONFIGURE_ENV+=LD_LIBRARY_PATH=\"{s}\"\n", .{env.ld_library_path});
             }
             std.debug.print("    [DEBUG]   CMAKE_PREFIX_PATH={s}\n", .{env.sysroot});
         }
