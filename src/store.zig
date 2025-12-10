@@ -363,33 +363,35 @@ pub const PackageStore = struct {
         };
         defer revision_dir.close();
 
-        // Find first build-id
+        // Iterate through all build-ids to find one with an origin
+        // (older builds may not have origin, newer ones do)
         var build_iter = revision_dir.iterate();
-        const build_entry = (build_iter.next() catch return null) orelse return null;
-        if (build_entry.kind != .directory) return null;
+        while (build_iter.next() catch null) |build_entry| {
+            if (build_entry.kind != .directory) continue;
 
-        // Read manifest.yaml
-        const manifest_path = std.fs.path.join(self.allocator, &[_][]const u8{
-            revision_path,
-            build_entry.name,
-            "manifest.yaml",
-        }) catch return null;
-        defer self.allocator.free(manifest_path);
+            // Read manifest.yaml
+            const manifest_path = std.fs.path.join(self.allocator, &[_][]const u8{
+                revision_path,
+                build_entry.name,
+                "manifest.yaml",
+            }) catch continue;
+            defer self.allocator.free(manifest_path);
 
-        const manifest_content = std.fs.cwd().readFileAlloc(self.allocator, manifest_path, 1024 * 1024) catch {
-            return null;
-        };
-        defer self.allocator.free(manifest_content);
+            const manifest_content = std.fs.cwd().readFileAlloc(self.allocator, manifest_path, 1024 * 1024) catch {
+                continue;
+            };
+            defer self.allocator.free(manifest_content);
 
-        // Parse manifest to get origin
-        var pkg_manifest = Manifest.parse(self.allocator, manifest_content) catch {
-            return null;
-        };
-        defer pkg_manifest.deinit(self.allocator);
+            // Parse manifest to get origin
+            var pkg_manifest = Manifest.parse(self.allocator, manifest_content) catch {
+                continue;
+            };
+            defer pkg_manifest.deinit(self.allocator);
 
-        // Return duplicated origin (or null if not set)
-        if (pkg_manifest.origin) |origin| {
-            return try self.allocator.dupe(u8, origin);
+            // Return duplicated origin if found
+            if (pkg_manifest.origin) |origin| {
+                return try self.allocator.dupe(u8, origin);
+            }
         }
         return null;
     }
