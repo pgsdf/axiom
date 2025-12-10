@@ -28,7 +28,33 @@ zroot/axiom/
 └── env/<name>/             # Realized environments (clones)
 ```
 
-### Building
+## Quick Start
+
+```bash
+# 1. Build Axiom
+zig build
+
+# 2. Install the CLI
+sudo cp zig-out/bin/axiom /usr/local/bin/axiom
+
+# 3. Run the setup wizard (creates ZFS datasets)
+sudo axiom setup
+
+# 4. Import packages from FreeBSD ports
+sudo axiom ports-import shells/bash
+sudo axiom ports-import editors/vim
+
+# 5. Create a profile and environment
+sudo axiom profile-create myprofile
+# Edit /axiom/profiles/myprofile/profile.yaml to add packages
+sudo axiom resolve myprofile
+sudo axiom realize myenv myprofile
+
+# 6. Activate the environment
+source /axiom/env/myenv/activate
+```
+
+## Building
 
 Requires:
 - Zig 0.13.0 or later
