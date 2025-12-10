@@ -2196,6 +2196,7 @@ pub const PortsMigrator = struct {
                 .ldflags = try self.allocator.dupe(u8, "-L/usr/local/lib"),
                 .cppflags = try self.allocator.dupe(u8, "-I/usr/local/include"),
                 .pythonpath = "",
+                .perl5lib = "",
                 .allocator = self.allocator,
             };
         }
