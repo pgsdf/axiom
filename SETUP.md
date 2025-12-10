@@ -21,19 +21,29 @@ The setup wizard will:
 
 ### After Setup: Bootstrap Build Tools
 
-Before importing packages from FreeBSD ports, you need to bootstrap essential build tools:
+**CRITICAL**: Before importing packages from FreeBSD ports, you MUST bootstrap essential build tools in this exact order:
 
 ```bash
-# Import minimal build dependencies first
+# Step 1: Bootstrap help2man first (required by m4)
+sudo axiom ports-import misc/help2man
+
+# Step 2: Bootstrap m4 (macro processor, required by autoconf)
 sudo axiom ports-import devel/m4
+
+# Step 3: Bootstrap gmake (GNU make, required by GNU software)
 sudo axiom ports-import devel/gmake
 
-# Now you can import other packages
+# Step 4: Now you can import other packages
 sudo axiom ports-import shells/bash
 sudo axiom ports-import editors/vim
 ```
 
-**Why bootstrap first?** Packages like `bash` require `m4` and other build tools during compilation. If these aren't in the Axiom store, builds may fail or fall back to system tools (which defeats the purpose of isolated environments).
+**Why this order matters:**
+- `help2man` generates man pages and is required to build `m4`
+- `m4` is a macro processor required by autoconf and many configure scripts
+- `gmake` (GNU make) is required by most GNU software including bash
+- If you try to build packages without these bootstrap tools, builds will fail
+- These bootstrap packages have minimal dependencies and can build with system tools
 
 ### Creating Your First Environment
 
@@ -189,18 +199,23 @@ When you create a profile and try to resolve it, the resolver looks in the store
 ### Recommended First-Time Setup Flow
 
 ```bash
-# 1. Complete ZFS setup (above)
+# 1. Complete ZFS setup (use 'sudo axiom setup' or manual steps above)
 
 # 2. Build and install Axiom
 zig build
 sudo cp zig-out/bin/axiom /usr/local/bin/axiom
 
-# 3. Import packages FIRST (choose one method)
+# 3. BOOTSTRAP FIRST - These must be imported before other packages!
+sudo axiom ports-import misc/help2man # Required by m4
+sudo axiom ports-import devel/m4      # Required by autoconf, configure scripts
+sudo axiom ports-import devel/gmake   # Required by GNU software
+
+# 4. Import packages (choose one method)
 
 # Option A: Import from FreeBSD Ports
-axiom ports-import shells/bash
-axiom ports-import editors/vim
-axiom ports-import devel/git
+sudo axiom ports-import shells/bash
+sudo axiom ports-import editors/vim
+sudo axiom ports-import devel/git
 
 # Option B: Import pre-built packages
 sudo axiom import /path/to/bash-5.2.0.tar.gz
@@ -210,30 +225,49 @@ sudo axiom import /path/to/vim-9.0.tar.gz
 sudo axiom cache-add https://cache.pgsdf.org 1
 sudo axiom cache-fetch bash@5.2.0 --install
 
-# 4. NOW create profiles (packages are available)
+# 5. NOW create profiles (packages are available)
 sudo axiom profile-create development
 
-# 5. Edit profile to add the packages you imported
-sudo vi /axiom/profiles/development/profile.yaml
+# 6. Add packages to the profile
+sudo axiom profile-add-package development bash
+sudo axiom profile-add-package development vim
 
-# 6. Resolve and realize
+# 7. Resolve and realize
 sudo axiom resolve development
 sudo axiom realize dev-env development
 ```
 
-### Common Mistake
+### Common Mistakes
 
+**Mistake 1: Skipping bootstrap packages**
 ```bash
-# WRONG ORDER - This will fail!
+# WRONG - This will fail!
+sudo axiom ports-import shells/bash
+# Error: Build fails - m4 not found, gmake not found
+
+# CORRECT - Bootstrap first!
+sudo axiom ports-import misc/help2man
+sudo axiom ports-import devel/m4
+sudo axiom ports-import devel/gmake
+sudo axiom ports-import shells/bash    # Now this works
+```
+
+**Mistake 2: Creating profiles before importing packages**
+```bash
+# WRONG - This will fail!
 sudo axiom profile-create development
-# Edit profile.yaml to include bash, vim, git...
+sudo axiom profile-add-package development bash
 sudo axiom resolve development
 # Error: PackageNotFound - bash not in store
 
-# CORRECT ORDER
-axiom ports-import shells/bash    # First import packages
+# CORRECT - Import packages first!
+sudo axiom ports-import misc/help2man  # Bootstrap
+sudo axiom ports-import devel/m4       # Bootstrap
+sudo axiom ports-import devel/gmake    # Bootstrap
+sudo axiom ports-import shells/bash    # Import package
 sudo axiom profile-create development
-sudo axiom resolve development    # Now resolution succeeds
+sudo axiom profile-add-package development bash
+sudo axiom resolve development         # Now resolution succeeds
 ```
 
 ## Importing from FreeBSD Ports

@@ -2371,7 +2371,9 @@ pub const PortsMigrator = struct {
             var site_iter = site_dir.iterate();
             while (try site_iter.next()) |entry| {
                 if (entry.kind != .directory) continue;
-                // Add version directories like 5.42, 5.40, etc.
+                // Only add version directories (start with digit, like 5.42, 5.40)
+                // Skip other dirs like 'auto', 'mach', 'man' which aren't module paths
+                if (entry.name.len == 0 or !std.ascii.isDigit(entry.name[0])) continue;
                 const version_path = try std.fs.path.join(self.allocator, &[_][]const u8{
                     site_perl_dir,
                     entry.name,
@@ -2382,16 +2384,13 @@ pub const PortsMigrator = struct {
             // site_perl doesn't exist, continue to check other locations
         }
 
-        // Also add lib/perl5 itself (some modules install directly there)
-        const perl5_path = try self.allocator.dupe(u8, perl5_dir);
-        try paths.append(perl5_path);
-
         // Scan for versioned directories directly under perl5 (like 5.42)
         var perl5_iter = dir.iterate();
         while (try perl5_iter.next()) |entry| {
             if (entry.kind != .directory) continue;
             if (std.mem.eql(u8, entry.name, "site_perl")) continue; // Already handled
-            // Add version directories like 5.42
+            // Only add version directories (start with digit)
+            if (entry.name.len == 0 or !std.ascii.isDigit(entry.name[0])) continue;
             const version_path = try std.fs.path.join(self.allocator, &[_][]const u8{
                 perl5_dir,
                 entry.name,
