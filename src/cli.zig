@@ -21,6 +21,7 @@ const bundle_pkg = @import("bundle.zig");
 const ports_pkg = @import("ports.zig");
 const bootstrap_pkg = @import("bootstrap.zig");
 const hsm = @import("hsm.zig");
+const service_pkg = @import("service.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageStore = store.PackageStore;
@@ -46,6 +47,7 @@ const BundleBuilder = bundle_pkg.BundleBuilder;
 const BundleFormat = bundle_pkg.BundleFormat;
 const PortsMigrator = ports_pkg.PortsMigrator;
 const BootstrapManager = bootstrap_pkg.BootstrapManager;
+const ServiceManager = service_pkg.ServiceManager;
 
 /// CLI command enumeration
 pub const Command = enum {
@@ -114,6 +116,15 @@ pub const Command = enum {
 
     // Shell completions
     shell_completions,
+
+    // Service management (Phase 38)
+    service_list,
+    service_status,
+    service_enable,
+    service_disable,
+    service_start,
+    service_stop,
+    service_restart,
 
     // User operations (per-user, no root required)
     user_profile_create,
@@ -239,6 +250,17 @@ pub fn parseCommand(cmd: []const u8) Command {
 
     // Shell completions
     if (std.mem.eql(u8, cmd, "completions")) return .shell_completions;
+
+    // Service management (Phase 38)
+    if (std.mem.eql(u8, cmd, "service-list")) return .service_list;
+    if (std.mem.eql(u8, cmd, "service-status")) return .service_status;
+    if (std.mem.eql(u8, cmd, "service-enable")) return .service_enable;
+    if (std.mem.eql(u8, cmd, "service-disable")) return .service_disable;
+    if (std.mem.eql(u8, cmd, "service-start")) return .service_start;
+    if (std.mem.eql(u8, cmd, "service-stop")) return .service_stop;
+    if (std.mem.eql(u8, cmd, "service-restart")) return .service_restart;
+    // Also support "service <action>" style
+    if (std.mem.eql(u8, cmd, "service")) return .service_list;
 
     // User commands (per-user, no root required)
     if (std.mem.eql(u8, cmd, "user")) return .user_profile_list;
@@ -447,6 +469,15 @@ pub const CLI = struct {
             .cache_clean => try self.cacheClean(args[1..]),
 
             .shell_completions => try self.generateCompletions(args[1..]),
+
+            // Service management (Phase 38)
+            .service_list => try self.serviceList(args[1..]),
+            .service_status => try self.serviceStatus(args[1..]),
+            .service_enable => try self.serviceEnable(args[1..]),
+            .service_disable => try self.serviceDisable(args[1..]),
+            .service_start => try self.serviceStart(args[1..]),
+            .service_stop => try self.serviceStop(args[1..]),
+            .service_restart => try self.serviceRestart(args[1..]),
 
             // User commands
             .user_profile_create => try self.userProfileCreate(args[1..]),
@@ -2743,6 +2774,192 @@ pub const CLI = struct {
         }
 
         std.debug.print("{d} key(s) found\n", .{keys.len});
+    }
+
+    // Service Management (Phase 38)
+
+    fn serviceList(self: *CLI, args: []const []const u8) !void {
+        var profile_path: []const u8 = "/axiom/profiles/default";
+
+        // Parse arguments
+        var i: usize = 0;
+        while (i < args.len) {
+            const arg = args[i];
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom service-list [options]\n", .{});
+                std.debug.print("\nList services from the current profile\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --profile <path>   Profile path (default: /axiom/profiles/default)\n", .{});
+                std.debug.print("\nExample:\n", .{});
+                std.debug.print("  axiom service-list\n", .{});
+                std.debug.print("  axiom service-list --profile /axiom/profiles/myprofile\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--profile") and i + 1 < args.len) {
+                profile_path = args[i + 1];
+                i += 2;
+            } else {
+                i += 1;
+            }
+        }
+
+        std.debug.print("Services\n", .{});
+        std.debug.print("========\n\n", .{});
+        std.debug.print("Profile: {s}\n\n", .{profile_path});
+
+        var svc_mgr = ServiceManager.init(self.allocator);
+        const services = svc_mgr.listServicesFromProfile(profile_path) catch |err| {
+            std.debug.print("Error listing services: {}\n", .{err});
+            return;
+        };
+        defer self.allocator.free(services);
+
+        if (services.len == 0) {
+            std.debug.print("No services found.\n", .{});
+            return;
+        }
+
+        for (services) |svc| {
+            const status_icon = switch (svc.status) {
+                .running => "+",
+                .stopped => "-",
+                .failed => "!",
+                else => "?",
+            };
+            const enabled_str = if (svc.enabled) "enabled" else "disabled";
+            std.debug.print("{s} {s} ({s}, {s})\n", .{ status_icon, svc.name, svc.status.toString(), enabled_str });
+        }
+
+        std.debug.print("\n{d} service(s) found\n", .{services.len});
+
+        // Free service info
+        for (services) |*svc| {
+            var s = svc.*;
+            s.deinit(self.allocator);
+        }
+    }
+
+    fn serviceStatus(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom service-status <service-name>\n", .{});
+            std.debug.print("\nShow status of a service\n", .{});
+            std.debug.print("\nExample:\n", .{});
+            std.debug.print("  axiom service-status nginx\n", .{});
+            return;
+        }
+
+        const service_name = args[0];
+        var svc_mgr = ServiceManager.init(self.allocator);
+
+        const status = svc_mgr.getServiceStatus(service_name) catch |err| {
+            std.debug.print("Error getting status for {s}: {}\n", .{ service_name, err });
+            return;
+        };
+
+        const enabled = svc_mgr.isServiceEnabled(service_name) catch false;
+
+        std.debug.print("Service: {s}\n", .{service_name});
+        std.debug.print("Status:  {s}\n", .{status.toString()});
+        std.debug.print("Enabled: {}\n", .{enabled});
+    }
+
+    fn serviceEnable(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom service-enable <service-name>\n", .{});
+            std.debug.print("\nEnable a service to start at boot\n", .{});
+            std.debug.print("\nExample:\n", .{});
+            std.debug.print("  axiom service-enable nginx\n", .{});
+            return;
+        }
+
+        const service_name = args[0];
+        var svc_mgr = ServiceManager.init(self.allocator);
+
+        svc_mgr.enableService(service_name) catch |err| {
+            std.debug.print("Error enabling service {s}: {}\n", .{ service_name, err });
+            return;
+        };
+
+        std.debug.print("Service {s} enabled\n", .{service_name});
+    }
+
+    fn serviceDisable(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom service-disable <service-name>\n", .{});
+            std.debug.print("\nDisable a service from starting at boot\n", .{});
+            std.debug.print("\nExample:\n", .{});
+            std.debug.print("  axiom service-disable nginx\n", .{});
+            return;
+        }
+
+        const service_name = args[0];
+        var svc_mgr = ServiceManager.init(self.allocator);
+
+        svc_mgr.disableService(service_name) catch |err| {
+            std.debug.print("Error disabling service {s}: {}\n", .{ service_name, err });
+            return;
+        };
+
+        std.debug.print("Service {s} disabled\n", .{service_name});
+    }
+
+    fn serviceStart(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom service-start <service-name>\n", .{});
+            std.debug.print("\nStart a service\n", .{});
+            std.debug.print("\nExample:\n", .{});
+            std.debug.print("  axiom service-start nginx\n", .{});
+            return;
+        }
+
+        const service_name = args[0];
+        var svc_mgr = ServiceManager.init(self.allocator);
+
+        svc_mgr.startService(service_name) catch |err| {
+            std.debug.print("Error starting service {s}: {}\n", .{ service_name, err });
+            return;
+        };
+
+        std.debug.print("Service {s} started\n", .{service_name});
+    }
+
+    fn serviceStop(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom service-stop <service-name>\n", .{});
+            std.debug.print("\nStop a running service\n", .{});
+            std.debug.print("\nExample:\n", .{});
+            std.debug.print("  axiom service-stop nginx\n", .{});
+            return;
+        }
+
+        const service_name = args[0];
+        var svc_mgr = ServiceManager.init(self.allocator);
+
+        svc_mgr.stopService(service_name) catch |err| {
+            std.debug.print("Error stopping service {s}: {}\n", .{ service_name, err });
+            return;
+        };
+
+        std.debug.print("Service {s} stopped\n", .{service_name});
+    }
+
+    fn serviceRestart(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom service-restart <service-name>\n", .{});
+            std.debug.print("\nRestart a service\n", .{});
+            std.debug.print("\nExample:\n", .{});
+            std.debug.print("  axiom service-restart nginx\n", .{});
+            return;
+        }
+
+        const service_name = args[0];
+        var svc_mgr = ServiceManager.init(self.allocator);
+
+        svc_mgr.restartService(service_name) catch |err| {
+            std.debug.print("Error restarting service {s}: {}\n", .{ service_name, err });
+            return;
+        };
+
+        std.debug.print("Service {s} restarted\n", .{service_name});
     }
 
     // Cache operations
