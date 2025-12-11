@@ -1,9 +1,11 @@
 const std = @import("std");
 const types = @import("types.zig");
+const service_mod = @import("service.zig");
 
 const Version = types.Version;
 const Dependency = types.Dependency;
 const VersionConstraint = types.VersionConstraint;
+const ServiceDeclaration = service_mod.ServiceDeclaration;
 
 /// Virtual package relationship with optional version constraint
 pub const VirtualPackage = struct {
@@ -106,6 +108,9 @@ pub const Manifest = struct {
 
     /// Kernel module compatibility (null for userland packages)
     kernel: ?KernelCompat = null,
+
+    /// Services provided by this package (Phase 38)
+    services: []ServiceDeclaration = &[_]ServiceDeclaration{},
 
     /// Parse manifest from YAML content
     ///
@@ -281,6 +286,9 @@ pub const Manifest = struct {
             manifest.kernel = kc.*;
         }
 
+        // Parse services section (Phase 38)
+        manifest.services = service_mod.parseServiceDeclarations(allocator, yaml_content) catch &[_]ServiceDeclaration{};
+
         return manifest;
     }
 
@@ -322,6 +330,11 @@ pub const Manifest = struct {
             var kernel_mut = k;
             kernel_mut.deinit(allocator);
         }
+        for (self.services) |*svc| {
+            var s = svc.*;
+            s.deinit(allocator);
+        }
+        allocator.free(self.services);
     }
 
     /// Check if this package provides a virtual package

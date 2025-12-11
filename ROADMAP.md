@@ -37,7 +37,7 @@ This document outlines the planned enhancements for Axiom beyond the core 8 phas
 | 35 | Dependency Graph Visualization | Low | Medium | Phase 16 | ✓ Complete |
 | 36 | HSM/PKCS#11 Signing | Medium | High | Phase 15 | ✓ Complete |
 | 37 | Multi-Party Signing | Medium | High | Phase 36 | ✓ Complete |
-| 38 | Service Management Integration | High | High | Phase 22 | Planned |
+| 38 | Service Management Integration | High | High | Phase 22 | ✓ Complete |
 | 39 | Boot Environment Support | High | Medium | None | Planned |
 | 40 | Remote Binary Cache Protocol | High | High | Phase 17 | Planned |
 
@@ -3583,36 +3583,64 @@ Require multiple signatures for critical packages, implementing threshold signin
 
 **Priority**: High
 **Complexity**: High
-**Status**: Planned
+**Status**: ✓ Complete
 
 ### Purpose
 
 Integrate with FreeBSD rc.d service management for packages that provide services.
 
-### Requirements
+### Implementation
 
-1. **Service Declaration**
+1. **Service Module** (`src/service.zig`)
+   - `ServiceDeclaration`: Service definition in package manifests
+   - `ServiceType`: daemon, oneshot, periodic, network
+   - `ServiceStatus`: running, stopped, starting, stopping, failed, unknown
+   - `ServiceManager`: FreeBSD rc.d integration
+   - `ServiceConfig`: rc.conf.d configuration generator
+
+2. **Manifest Integration**
    ```yaml
    # manifest.yaml
    services:
      - name: nginx
        type: daemon
        rc_script: etc/rc.d/nginx
-       dependencies: [networking]
+       description: "Web server"
+       default_enabled: true
+       dependencies:
+         - networking
+         - syslogd
+       ports:
+         - 80
+         - 443
+       user: www
+       group: www
    ```
 
-2. **Service Commands**
+3. **CLI Commands**
    ```bash
-   axiom service list                  # List services from profile
-   axiom service enable nginx          # Enable service
-   axiom service start nginx           # Start service
-   axiom service status                # Show all service status
+   axiom service-list                  # List services from profile
+   axiom service-status nginx          # Show service status
+   axiom service-enable nginx          # Enable service at boot
+   axiom service-disable nginx         # Disable service
+   axiom service-start nginx           # Start service
+   axiom service-stop nginx            # Stop service
+   axiom service-restart nginx         # Restart service
    ```
 
-3. **Environment Activation**
-   - Automatically configure rc.conf.d
-   - Handle service conflicts between environments
-   - Support service restart on package update
+4. **rc.conf.d Integration**
+   - Generates `/etc/rc.conf.d/<service>` configuration files
+   - Non-destructive: doesn't modify main rc.conf
+   - Supports custom service variables
+
+### Features
+
+- **Service Declaration**: Packages can declare services in manifest
+- **FreeBSD rc.d Integration**: Uses native `service` command
+- **rc.conf.d Management**: Clean separation of Axiom-managed config
+- **Service Dependencies**: Tracks service dependencies
+- **Conflict Detection**: Prevents conflicting services
+- **Status Monitoring**: Check running state of services
 
 ---
 

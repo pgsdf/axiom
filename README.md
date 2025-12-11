@@ -254,6 +254,47 @@ required_signers:
   - pgsd-release-key
 ```
 
+## Service Management
+
+Axiom integrates with FreeBSD's rc.d service management system.
+
+### List Services
+
+```bash
+axiom service-list                              # List all services
+axiom service-list --profile /axiom/profiles/myprofile
+```
+
+### Service Control
+
+```bash
+axiom service-status nginx                      # Show service status
+axiom service-enable nginx                      # Enable at boot
+axiom service-disable nginx                     # Disable at boot
+axiom service-start nginx                       # Start service
+axiom service-stop nginx                        # Stop service
+axiom service-restart nginx                     # Restart service
+```
+
+### Service Declaration in Manifest
+
+Packages can declare services in their manifest:
+
+```yaml
+# manifest.yaml
+services:
+  - name: nginx
+    type: daemon
+    rc_script: etc/rc.d/nginx
+    description: "Web server"
+    default_enabled: true
+    dependencies:
+      - networking
+    ports:
+      - 80
+      - 443
+```
+
 ## Building
 
 Requires:
