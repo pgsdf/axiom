@@ -180,10 +180,8 @@ pub fn validateVersion(format_type: FormatType, file_version_str: ?[]const u8) V
     };
 
     const result = checkCompatibility(format_type, version_str) catch |err| {
-        return switch (err) {
-            error.InvalidVersion => VersionError.InvalidVersion,
-            else => VersionError.InvalidVersion,
-        };
+        _ = err;
+        return VersionError.InvalidVersion;
     };
 
     if (!result.compatible) {
