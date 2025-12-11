@@ -4365,12 +4365,23 @@ pub const CLI = struct {
             };
             defer result.deinit(self.allocator);
 
-            if (result.success) {
-                std.debug.print("  ✓ Successfully built and imported\n", .{});
-                success_count += 1;
-            } else {
-                std.debug.print("  ✗ Build failed\n", .{});
-                fail_count += 1;
+            switch (result.status) {
+                .imported => {
+                    std.debug.print("  ✓ Successfully built and imported\n", .{});
+                    success_count += 1;
+                },
+                .skipped => {
+                    std.debug.print("  ○ Skipped\n", .{});
+                    skip_count += 1;
+                },
+                .failed => {
+                    std.debug.print("  ✗ Build failed\n", .{});
+                    fail_count += 1;
+                },
+                else => {
+                    std.debug.print("  ? Unexpected status: {}\n", .{result.status});
+                    fail_count += 1;
+                },
             }
         }
 
