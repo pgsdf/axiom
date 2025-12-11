@@ -42,7 +42,7 @@ This document outlines the planned enhancements for Axiom beyond the core 8 phas
 | 40 | Remote Binary Cache Protocol | High | High | Phase 17 | ✓ Complete |
 | 41 | Format Versioning | High | Low | None | ✓ Complete |
 | 42 | Store Invariants & GC Guarantees | High | Medium | None | ✓ Complete |
-| 43 | Advanced Resolver Semantics | Medium | High | Phase 16 | Planned |
+| 43 | Advanced Resolver Semantics | Medium | High | Phase 16 | ✓ Complete |
 | 44 | Realization Specification | High | Medium | None | Planned |
 | 45 | Build Provenance Enforcement | High | Medium | Phase 15 | Planned |
 | 46 | Binary Cache Trust Model | High | Medium | Phase 40 | Planned |
@@ -4135,7 +4135,7 @@ axiom refs <package> --verbose  # Include reference details
 
 **Priority**: Medium
 **Complexity**: High
-**Status**: Planned
+**Status**: ✓ Complete
 
 ### Purpose
 
@@ -4264,16 +4264,67 @@ axiom alternatives ssl-library         # List virtual providers
 
 ### Deliverables
 
-- [ ] Extend manifest schema for `provides`, `conflicts`, `features`
-- [ ] Extend profile schema for `preferences`, `pins`
-- [ ] Implement virtual provider resolution
-- [ ] Implement optional dependency handling
-- [ ] Implement feature flag system
-- [ ] Implement conflict detection
-- [ ] Implement preference/pin weighting
-- [ ] Add `why-depends` command
-- [ ] Add `alternatives` command
-- [ ] Document advanced resolver semantics
+- [x] Extend manifest schema for `provides`, `conflicts`, `features`
+- [x] Extend profile schema for `preferences`, `pins`
+- [x] Implement virtual provider resolution
+- [x] Implement optional dependency handling
+- [x] Implement feature flag system
+- [x] Implement conflict detection
+- [x] Implement preference/pin weighting
+- [x] Add `why-depends` command
+- [x] Add `alternatives` command
+- [x] Document advanced resolver semantics
+
+### Implementation Notes
+
+**Files Created/Modified:**
+- `src/types.zig` - Extended Dependency struct with optional, virtual, description, feature fields
+- `src/manifest.zig` - Added Feature struct with implies/conflicts_with, added features/default_features to Manifest
+- `src/profile.zig` - Added Preference, Pin structs and features/disabled_features to PackageRequest
+- `src/resolver_advanced.zig` - New module with advanced resolver components
+- `src/cli.zig` - Added why-depends and alternatives commands
+
+**Key Components:**
+
+1. **Extended Dependency**
+   ```zig
+   pub const Dependency = struct {
+       name: []const u8,
+       constraint: VersionConstraint,
+       optional: bool = false,       // Can be omitted
+       virtual: bool = false,        // Satisfied by providers
+       description: ?[]const u8,     // For optional deps
+       feature: ?[]const u8,         // Feature-gated
+   };
+   ```
+
+2. **Feature System**
+   - Features have dependencies, implies (auto-enable), and conflicts_with
+   - Packages declare default_features enabled by default
+   - Profiles can enable/disable features per-package
+   - Transitive closure of implies relationships computed
+
+3. **Virtual Provider Index**
+   - Builds index from manifest 'provides' declarations
+   - Supports priority-based provider selection
+   - Used by resolver to satisfy virtual dependencies
+
+4. **Preference Handler**
+   - Supports 'prefer' patterns (e.g., "3.11.*")
+   - Supports 'avoid' patterns
+   - Calculates weight adjustments for SAT optimization
+
+5. **Dependency Explanation**
+   - Traces paths from root packages to target
+   - Distinguishes direct, dependency, virtual, feature reasons
+
+**CLI Commands:**
+```bash
+axiom why-depends <source> <target>  # Explain dependency chain
+axiom why <source> <target>          # Alias
+axiom alternatives <virtual>         # List providers
+axiom providers <virtual>            # Alias
+```
 
 ---
 

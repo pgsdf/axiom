@@ -24,6 +24,51 @@ pub const ProfileError = error{
 pub const PackageRequest = struct {
     name: []const u8,
     constraint: VersionConstraint,
+
+    /// Features to enable for this package
+    features: []const []const u8 = &[_][]const u8{},
+
+    /// Features to explicitly disable (overrides defaults)
+    disabled_features: []const []const u8 = &[_][]const u8{},
+};
+
+/// Version preference for resolver optimization (Phase 43)
+pub const Preference = struct {
+    /// Package name this preference applies to
+    name: []const u8,
+
+    /// Preferred version pattern (e.g., "3.11.*")
+    prefer: ?[]const u8 = null,
+
+    /// Version pattern to avoid (e.g., "3.12.*")
+    avoid: ?[]const u8 = null,
+
+    /// Weight for preference (higher = stronger preference)
+    weight: i32 = 100,
+
+    pub fn deinit(self: *Preference, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        if (self.prefer) |p| allocator.free(p);
+        if (self.avoid) |a| allocator.free(a);
+    }
+};
+
+/// Version pin for exact version locking (Phase 43)
+pub const Pin = struct {
+    /// Package name to pin
+    name: []const u8,
+
+    /// Exact version to pin to
+    version: []const u8,
+
+    /// Optional reason for the pin
+    reason: ?[]const u8 = null,
+
+    pub fn deinit(self: *Pin, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        allocator.free(self.version);
+        if (self.reason) |r| allocator.free(r);
+    }
 };
 
 /// A resolved package (after dependency resolution)
@@ -40,6 +85,12 @@ pub const Profile = struct {
     name: []const u8,
     description: ?[]const u8 = null,
     packages: []PackageRequest,
+
+    /// Version preferences for resolver optimization (Phase 43)
+    preferences: []Preference = &[_]Preference{},
+
+    /// Version pins for exact version locking (Phase 43)
+    pins: []Pin = &[_]Pin{},
 
     /// Parse profile from YAML content
     ///

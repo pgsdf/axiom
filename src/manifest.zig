@@ -16,6 +16,41 @@ pub const VirtualPackage = struct {
     constraint: ?VersionConstraint = null,
 };
 
+/// Feature flag definition for conditional compilation/dependencies
+pub const Feature = struct {
+    /// Feature name (e.g., "gui", "ssl", "debug")
+    name: []const u8,
+
+    /// Human-readable description
+    description: ?[]const u8 = null,
+
+    /// Dependencies required when this feature is enabled
+    dependencies: []Dependency = &[_]Dependency{},
+
+    /// Other features this feature implies (auto-enables)
+    implies: []const []const u8 = &[_][]const u8{},
+
+    /// Features that conflict with this one
+    conflicts_with: []const []const u8 = &[_][]const u8{},
+
+    /// Free allocated memory
+    pub fn deinit(self: *Feature, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        if (self.description) |desc| {
+            allocator.free(desc);
+        }
+        allocator.free(self.dependencies);
+        for (self.implies) |imp| {
+            allocator.free(imp);
+        }
+        allocator.free(self.implies);
+        for (self.conflicts_with) |conf| {
+            allocator.free(conf);
+        }
+        allocator.free(self.conflicts_with);
+    }
+};
+
 /// Kernel module compatibility metadata
 /// Used for packages that install .ko kernel modules
 pub const KernelCompat = struct {
@@ -118,6 +153,12 @@ pub const Manifest = struct {
 
     /// Services provided by this package (Phase 38)
     services: []ServiceDeclaration = &[_]ServiceDeclaration{},
+
+    /// Feature flags supported by this package (Phase 43)
+    features: []Feature = &[_]Feature{},
+
+    /// Default features enabled when not explicitly specified
+    default_features: [][]const u8 = &[_][]const u8{},
 
     /// Parse manifest from YAML content
     ///
