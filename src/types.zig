@@ -128,6 +128,51 @@ pub const VersionConstraint = union(enum) {
 pub const Dependency = struct {
     name: []const u8,
     constraint: VersionConstraint,
+
+    /// If true, this dependency is optional (can be omitted)
+    optional: bool = false,
+
+    /// If true, this is a virtual dependency (satisfied by providers)
+    virtual: bool = false,
+
+    /// Human-readable description (mainly for optional dependencies)
+    description: ?[]const u8 = null,
+
+    /// Feature that enables this dependency (null = always enabled)
+    feature: ?[]const u8 = null,
+
+    /// Create a simple required dependency
+    pub fn required(name: []const u8, constraint: VersionConstraint) Dependency {
+        return .{ .name = name, .constraint = constraint };
+    }
+
+    /// Create an optional dependency
+    pub fn optionalDep(name: []const u8, constraint: VersionConstraint, desc: ?[]const u8) Dependency {
+        return .{
+            .name = name,
+            .constraint = constraint,
+            .optional = true,
+            .description = desc,
+        };
+    }
+
+    /// Create a virtual dependency
+    pub fn virtualDep(name: []const u8) Dependency {
+        return .{
+            .name = name,
+            .constraint = .any,
+            .virtual = true,
+        };
+    }
+
+    /// Create a feature-gated dependency
+    pub fn forFeature(name: []const u8, constraint: VersionConstraint, feat: []const u8) Dependency {
+        return .{
+            .name = name,
+            .constraint = constraint,
+            .feature = feat,
+        };
+    }
 };
 
 /// Unique package identifier
