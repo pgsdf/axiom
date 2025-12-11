@@ -153,6 +153,47 @@ sudo axiom resolve myprofile --stats
 
 See `axiom resolve --help` for all options.
 
+## Dependency Visualization
+
+Axiom provides tools for visualizing and debugging dependency graphs:
+
+### View Dependency Tree
+
+```bash
+axiom deps-graph myprofile                    # ASCII tree (default)
+axiom deps-graph myprofile --format dot       # Graphviz DOT format
+axiom deps-graph myprofile --format json      # JSON for tooling
+axiom deps-graph myprofile --depth 2          # Limit depth
+```
+
+### Analyze Dependencies
+
+```bash
+axiom deps-analyze myprofile
+# Shows: package count, depth, fanout, most depended-on package
+```
+
+### Trace Package Inclusion
+
+```bash
+axiom deps-why myprofile openssl
+# Shows why openssl is included and which packages depend on it
+```
+
+### Find Dependency Path
+
+```bash
+axiom deps-path myprofile bash openssl
+# Shows shortest path: bash → readline → ncurses → openssl
+```
+
+### Generate Graphviz Diagram
+
+```bash
+axiom deps-graph myprofile --format dot > deps.dot
+dot -Tpng deps.dot -o deps.png    # Requires graphviz
+```
+
 ## Building
 
 Requires:

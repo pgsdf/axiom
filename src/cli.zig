@@ -75,7 +75,13 @@ pub const Command = enum {
     activate,
     env_list,
     env_destroy,
-    
+
+    // Dependency visualization (Phase 35)
+    deps_graph,
+    deps_analyze,
+    deps_why,
+    deps_path,
+
     // Signature operations
     key_list,
     key_add,
@@ -187,6 +193,12 @@ pub fn parseCommand(cmd: []const u8) Command {
     if (std.mem.eql(u8, cmd, "realize")) return .realize;
     if (std.mem.eql(u8, cmd, "activate")) return .activate;
     if (std.mem.eql(u8, cmd, "env")) return .env_list;
+
+    // Dependency visualization commands (Phase 35)
+    if (std.mem.eql(u8, cmd, "deps-graph")) return .deps_graph;
+    if (std.mem.eql(u8, cmd, "deps-analyze")) return .deps_analyze;
+    if (std.mem.eql(u8, cmd, "deps-why")) return .deps_why;
+    if (std.mem.eql(u8, cmd, "deps-path")) return .deps_path;
     if (std.mem.eql(u8, cmd, "env-destroy")) return .env_destroy;
     
     // Signature commands
@@ -389,6 +401,12 @@ pub const CLI = struct {
             .realize => try self.realizeEnv(args[1..]),
             .activate => try self.activateEnv(args[1..]),
             .env_list => try self.listEnvs(args[1..]),
+
+            // Dependency visualization (Phase 35)
+            .deps_graph => try self.depsGraph(args[1..]),
+            .deps_analyze => try self.depsAnalyze(args[1..]),
+            .deps_why => try self.depsWhy(args[1..]),
+            .deps_path => try self.depsPath(args[1..]),
             .env_destroy => try self.destroyEnv(args[1..]),
             
             .key_list => try self.keyList(args[1..]),
@@ -1388,6 +1406,652 @@ pub const CLI = struct {
                 std.debug.print("Cancelled\n", .{});
             }
         }
+    }
+
+    // Dependency visualization (Phase 35)
+
+    fn depsGraph(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom deps-graph <profile> [options]\n", .{});
+            std.debug.print("\nOptions:\n", .{});
+            std.debug.print("  --format <fmt>  Output format: dot, json, tree (default: tree)\n", .{});
+            std.debug.print("  --depth <n>     Maximum depth to display (default: unlimited)\n", .{});
+            std.debug.print("  --output <file> Write to file instead of stdout\n", .{});
+            std.debug.print("\nExamples:\n", .{});
+            std.debug.print("  axiom deps-graph myprofile\n", .{});
+            std.debug.print("  axiom deps-graph myprofile --format dot > deps.dot\n", .{});
+            std.debug.print("  axiom deps-graph myprofile --format json --output deps.json\n", .{});
+            return;
+        }
+
+        const profile_name = args[0];
+
+        // Parse options
+        var format: enum { tree, dot, json } = .tree;
+        var max_depth: ?u32 = null;
+        var output_file: ?[]const u8 = null;
+
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--format") and i + 1 < args.len) {
+                const fmt = args[i + 1];
+                if (std.mem.eql(u8, fmt, "dot")) {
+                    format = .dot;
+                } else if (std.mem.eql(u8, fmt, "json")) {
+                    format = .json;
+                } else if (std.mem.eql(u8, fmt, "tree")) {
+                    format = .tree;
+                } else {
+                    std.debug.print("Unknown format: {s}\n", .{fmt});
+                    std.debug.print("Valid formats: dot, json, tree\n", .{});
+                    return;
+                }
+                i += 1;
+            } else if (std.mem.eql(u8, args[i], "--depth") and i + 1 < args.len) {
+                max_depth = std.fmt.parseInt(u32, args[i + 1], 10) catch {
+                    std.debug.print("Invalid depth: {s}\n", .{args[i + 1]});
+                    return;
+                };
+                i += 1;
+            } else if (std.mem.eql(u8, args[i], "--output") and i + 1 < args.len) {
+                output_file = args[i + 1];
+                i += 1;
+            }
+        }
+
+        // Load profile lock file
+        var lock = self.profile_mgr.loadLock(profile_name) catch |err| {
+            if (err == error.FileNotFound) {
+                std.debug.print("Error: Profile '{s}' has no lock file.\n", .{profile_name});
+                std.debug.print("Run 'axiom resolve {s}' first.\n", .{profile_name});
+                return;
+            }
+            return err;
+        };
+        defer lock.deinit(self.allocator);
+
+        // Build dependency graph
+        var graph = try self.buildDependencyGraph(lock);
+        defer graph.deinit();
+
+        // Output the graph
+        const stdout = std.io.getStdOut().writer();
+        var file_writer: ?std.fs.File.Writer = null;
+        var file_handle: ?std.fs.File = null;
+
+        if (output_file) |path| {
+            file_handle = try std.fs.cwd().createFile(path, .{});
+            file_writer = file_handle.?.writer();
+        }
+
+        const writer = if (file_writer) |fw| fw else stdout;
+
+        switch (format) {
+            .tree => try self.outputTreeFormat(writer, graph, lock, max_depth),
+            .dot => try self.outputDotFormat(writer, graph, lock),
+            .json => try self.outputJsonFormat(writer, graph, lock),
+        }
+
+        if (file_handle) |fh| {
+            fh.close();
+            std.debug.print("Graph written to: {s}\n", .{output_file.?});
+        }
+    }
+
+    fn depsAnalyze(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom deps-analyze <profile>\n", .{});
+            std.debug.print("\nAnalyze the dependency graph of a resolved profile.\n", .{});
+            std.debug.print("Shows statistics like depth, breadth, and potential issues.\n", .{});
+            return;
+        }
+
+        const profile_name = args[0];
+
+        // Load profile lock file
+        var lock = self.profile_mgr.loadLock(profile_name) catch |err| {
+            if (err == error.FileNotFound) {
+                std.debug.print("Error: Profile '{s}' has no lock file.\n", .{profile_name});
+                std.debug.print("Run 'axiom resolve {s}' first.\n", .{profile_name});
+                return;
+            }
+            return err;
+        };
+        defer lock.deinit(self.allocator);
+
+        // Build dependency graph
+        var graph = try self.buildDependencyGraph(lock);
+        defer graph.deinit();
+
+        // Calculate statistics
+        const stats = try self.calculateGraphStats(graph, lock);
+
+        // Output analysis
+        std.debug.print("Dependency Analysis: {s}\n", .{profile_name});
+        std.debug.print("════════════════════════════════════════\n", .{});
+        std.debug.print("\n", .{});
+        std.debug.print("Package Count:     {d}\n", .{lock.resolved.len});
+        std.debug.print("Direct Dependencies: {d}\n", .{stats.direct_deps});
+        std.debug.print("Transitive Dependencies: {d}\n", .{lock.resolved.len - stats.direct_deps});
+        std.debug.print("\n", .{});
+        std.debug.print("Maximum Depth:     {d}\n", .{stats.max_depth});
+        std.debug.print("Average Depth:     {d:.1}\n", .{stats.avg_depth});
+        std.debug.print("Maximum Fanout:    {d}\n", .{stats.max_fanout});
+        std.debug.print("Average Fanout:    {d:.1}\n", .{stats.avg_fanout});
+        std.debug.print("\n", .{});
+
+        if (stats.leaf_count > 0) {
+            std.debug.print("Leaf Packages:     {d} (no dependencies)\n", .{stats.leaf_count});
+        }
+
+        if (stats.most_depended) |pkg| {
+            std.debug.print("Most Depended On:  {s} ({d} dependents)\n", .{ pkg, stats.most_depended_count });
+        }
+
+        if (stats.deepest_chain.len > 0) {
+            std.debug.print("\nDeepest Dependency Chain:\n", .{});
+            for (stats.deepest_chain, 0..) |pkg, idx| {
+                var indent: usize = 0;
+                while (indent < idx) : (indent += 1) {
+                    std.debug.print("  ", .{});
+                }
+                std.debug.print("└─ {s}\n", .{pkg});
+            }
+        }
+    }
+
+    fn depsWhy(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 2) {
+            std.debug.print("Usage: axiom deps-why <profile> <package>\n", .{});
+            std.debug.print("\nExplain why a package is included in the profile.\n", .{});
+            std.debug.print("Shows the dependency chain(s) leading to the package.\n", .{});
+            return;
+        }
+
+        const profile_name = args[0];
+        const target_pkg = args[1];
+
+        // Load profile lock file
+        var lock = self.profile_mgr.loadLock(profile_name) catch |err| {
+            if (err == error.FileNotFound) {
+                std.debug.print("Error: Profile '{s}' has no lock file.\n", .{profile_name});
+                std.debug.print("Run 'axiom resolve {s}' first.\n", .{profile_name});
+                return;
+            }
+            return err;
+        };
+        defer lock.deinit(self.allocator);
+
+        // Check if package exists in lock
+        var found = false;
+        var is_requested = false;
+        for (lock.resolved) |pkg| {
+            if (std.mem.eql(u8, pkg.name, target_pkg)) {
+                found = true;
+                is_requested = pkg.requested;
+                break;
+            }
+        }
+
+        if (!found) {
+            std.debug.print("Package '{s}' is not in profile '{s}'.\n", .{ target_pkg, profile_name });
+            return;
+        }
+
+        std.debug.print("Why is '{s}' in profile '{s}'?\n", .{ target_pkg, profile_name });
+        std.debug.print("════════════════════════════════════════\n\n", .{});
+
+        if (is_requested) {
+            std.debug.print("• Directly requested in profile\n\n", .{});
+        }
+
+        // Build dependency graph and find paths
+        var graph = try self.buildDependencyGraph(lock);
+        defer graph.deinit();
+
+        // Find all packages that depend on target
+        var dependents = std.ArrayList([]const u8).init(self.allocator);
+        defer dependents.deinit();
+
+        for (lock.resolved) |pkg| {
+            if (graph.edges.get(pkg.name)) |deps| {
+                for (deps.items) |dep| {
+                    if (std.mem.eql(u8, dep, target_pkg)) {
+                        try dependents.append(pkg.name);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (dependents.items.len > 0) {
+            std.debug.print("Required by:\n", .{});
+            for (dependents.items) |dep| {
+                // Check if this dependent is requested
+                var dep_requested = false;
+                for (lock.resolved) |pkg| {
+                    if (std.mem.eql(u8, pkg.name, dep)) {
+                        dep_requested = pkg.requested;
+                        break;
+                    }
+                }
+                if (dep_requested) {
+                    std.debug.print("  • {s} (requested)\n", .{dep});
+                } else {
+                    std.debug.print("  • {s}\n", .{dep});
+                }
+            }
+            std.debug.print("\n", .{});
+        }
+
+        // Show full chain from requested packages
+        std.debug.print("Dependency chains from requested packages:\n", .{});
+        var chains_found: u32 = 0;
+        for (lock.resolved) |pkg| {
+            if (pkg.requested) {
+                var path = std.ArrayList([]const u8).init(self.allocator);
+                defer path.deinit();
+                if (try self.findDependencyPath(graph, pkg.name, target_pkg, &path)) {
+                    chains_found += 1;
+                    std.debug.print("\n  {s}", .{pkg.name});
+                    for (path.items[1..]) |p| {
+                        std.debug.print(" → {s}", .{p});
+                    }
+                    std.debug.print("\n", .{});
+                }
+            }
+        }
+
+        if (chains_found == 0 and !is_requested) {
+            std.debug.print("  (no chain found - may be an orphan)\n", .{});
+        }
+    }
+
+    fn depsPath(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 3) {
+            std.debug.print("Usage: axiom deps-path <profile> <from> <to>\n", .{});
+            std.debug.print("\nFind the dependency path between two packages.\n", .{});
+            return;
+        }
+
+        const profile_name = args[0];
+        const from_pkg = args[1];
+        const to_pkg = args[2];
+
+        // Load profile lock file
+        var lock = self.profile_mgr.loadLock(profile_name) catch |err| {
+            if (err == error.FileNotFound) {
+                std.debug.print("Error: Profile '{s}' has no lock file.\n", .{profile_name});
+                std.debug.print("Run 'axiom resolve {s}' first.\n", .{profile_name});
+                return;
+            }
+            return err;
+        };
+        defer lock.deinit(self.allocator);
+
+        // Verify both packages exist
+        var from_found = false;
+        var to_found = false;
+        for (lock.resolved) |pkg| {
+            if (std.mem.eql(u8, pkg.name, from_pkg)) from_found = true;
+            if (std.mem.eql(u8, pkg.name, to_pkg)) to_found = true;
+        }
+
+        if (!from_found) {
+            std.debug.print("Package '{s}' is not in profile '{s}'.\n", .{ from_pkg, profile_name });
+            return;
+        }
+        if (!to_found) {
+            std.debug.print("Package '{s}' is not in profile '{s}'.\n", .{ to_pkg, profile_name });
+            return;
+        }
+
+        // Build dependency graph
+        var graph = try self.buildDependencyGraph(lock);
+        defer graph.deinit();
+
+        // Find path
+        var path = std.ArrayList([]const u8).init(self.allocator);
+        defer path.deinit();
+
+        if (try self.findDependencyPath(graph, from_pkg, to_pkg, &path)) {
+            std.debug.print("Dependency path: {s} → {s}\n", .{ from_pkg, to_pkg });
+            std.debug.print("════════════════════════════════════════\n\n", .{});
+
+            for (path.items, 0..) |pkg, idx| {
+                var indent: usize = 0;
+                while (indent < idx) : (indent += 1) {
+                    std.debug.print("  ", .{});
+                }
+                if (idx == 0) {
+                    std.debug.print("{s}\n", .{pkg});
+                } else {
+                    std.debug.print("└─ {s}\n", .{pkg});
+                }
+            }
+            std.debug.print("\nPath length: {d}\n", .{path.items.len - 1});
+        } else {
+            std.debug.print("No dependency path from '{s}' to '{s}'.\n", .{ from_pkg, to_pkg });
+            std.debug.print("\nNote: This means '{s}' does not depend on '{s}'.\n", .{ from_pkg, to_pkg });
+            std.debug.print("Try reversing the order: axiom deps-path {s} {s} {s}\n", .{ profile_name, to_pkg, from_pkg });
+        }
+    }
+
+    // Helper: Build dependency graph from lock file
+    const DependencyGraph = struct {
+        edges: std.StringHashMap(std.ArrayList([]const u8)),
+        allocator: std.mem.Allocator,
+
+        fn init(allocator: std.mem.Allocator) DependencyGraph {
+            return .{
+                .edges = std.StringHashMap(std.ArrayList([]const u8)).init(allocator),
+                .allocator = allocator,
+            };
+        }
+
+        fn deinit(self: *DependencyGraph) void {
+            var it = self.edges.iterator();
+            while (it.next()) |entry| {
+                entry.value_ptr.deinit();
+            }
+            self.edges.deinit();
+        }
+    };
+
+    fn buildDependencyGraph(self: *CLI, lock: anytype) !DependencyGraph {
+        var graph = DependencyGraph.init(self.allocator);
+
+        for (lock.resolved) |pkg| {
+            var deps = std.ArrayList([]const u8).init(self.allocator);
+
+            // Get package manifest to find dependencies
+            if (self.store.getPackageManifest(pkg.name, pkg.version)) |manifest| {
+                if (manifest.dependencies) |dependencies| {
+                    for (dependencies) |dep| {
+                        try deps.append(dep.name);
+                    }
+                }
+            }
+
+            try graph.edges.put(pkg.name, deps);
+        }
+
+        return graph;
+    }
+
+    // Helper: Calculate graph statistics
+    const GraphStats = struct {
+        direct_deps: u32,
+        max_depth: u32,
+        avg_depth: f64,
+        max_fanout: u32,
+        avg_fanout: f64,
+        leaf_count: u32,
+        most_depended: ?[]const u8,
+        most_depended_count: u32,
+        deepest_chain: []const []const u8,
+    };
+
+    fn calculateGraphStats(self: *CLI, graph: DependencyGraph, lock: anytype) !GraphStats {
+        var stats = GraphStats{
+            .direct_deps = 0,
+            .max_depth = 0,
+            .avg_depth = 0,
+            .max_fanout = 0,
+            .avg_fanout = 0,
+            .leaf_count = 0,
+            .most_depended = null,
+            .most_depended_count = 0,
+            .deepest_chain = &[_][]const u8{},
+        };
+
+        // Count direct deps (requested packages)
+        for (lock.resolved) |pkg| {
+            if (pkg.requested) {
+                stats.direct_deps += 1;
+            }
+        }
+
+        // Calculate fanout statistics
+        var total_fanout: u32 = 0;
+        var it = graph.edges.iterator();
+        while (it.next()) |entry| {
+            const fanout: u32 = @intCast(entry.value_ptr.items.len);
+            total_fanout += fanout;
+            if (fanout > stats.max_fanout) {
+                stats.max_fanout = fanout;
+            }
+            if (fanout == 0) {
+                stats.leaf_count += 1;
+            }
+        }
+
+        if (graph.edges.count() > 0) {
+            stats.avg_fanout = @as(f64, @floatFromInt(total_fanout)) / @as(f64, @floatFromInt(graph.edges.count()));
+        }
+
+        // Count how many packages depend on each package
+        var dependent_counts = std.StringHashMap(u32).init(self.allocator);
+        defer dependent_counts.deinit();
+
+        var it2 = graph.edges.iterator();
+        while (it2.next()) |entry| {
+            for (entry.value_ptr.items) |dep| {
+                const current = dependent_counts.get(dep) orelse 0;
+                try dependent_counts.put(dep, current + 1);
+            }
+        }
+
+        // Find most depended-on package
+        var it3 = dependent_counts.iterator();
+        while (it3.next()) |entry| {
+            if (entry.value_ptr.* > stats.most_depended_count) {
+                stats.most_depended_count = entry.value_ptr.*;
+                stats.most_depended = entry.key_ptr.*;
+            }
+        }
+
+        // Calculate depth (simplified - just find max depth from any requested package)
+        var total_depth: u32 = 0;
+        var depth_count: u32 = 0;
+        for (lock.resolved) |pkg| {
+            if (pkg.requested) {
+                const depth = self.calculateDepth(graph, pkg.name, 0);
+                total_depth += depth;
+                depth_count += 1;
+                if (depth > stats.max_depth) {
+                    stats.max_depth = depth;
+                }
+            }
+        }
+
+        if (depth_count > 0) {
+            stats.avg_depth = @as(f64, @floatFromInt(total_depth)) / @as(f64, @floatFromInt(depth_count));
+        }
+
+        return stats;
+    }
+
+    fn calculateDepth(self: *CLI, graph: DependencyGraph, pkg: []const u8, current_depth: u32) u32 {
+        _ = self;
+        if (current_depth > 100) return current_depth; // Prevent infinite recursion
+
+        if (graph.edges.get(pkg)) |deps| {
+            if (deps.items.len == 0) return current_depth;
+
+            var max_child_depth: u32 = current_depth;
+            for (deps.items) |dep| {
+                const child_depth = self.calculateDepth(graph, dep, current_depth + 1);
+                if (child_depth > max_child_depth) {
+                    max_child_depth = child_depth;
+                }
+            }
+            return max_child_depth;
+        }
+        return current_depth;
+    }
+
+    // Helper: Find path between two packages (BFS)
+    fn findDependencyPath(self: *CLI, graph: DependencyGraph, from: []const u8, to: []const u8, path: *std.ArrayList([]const u8)) !bool {
+        if (std.mem.eql(u8, from, to)) {
+            try path.append(from);
+            return true;
+        }
+
+        // BFS to find shortest path
+        var visited = std.StringHashMap([]const u8).init(self.allocator);
+        defer visited.deinit();
+
+        var queue = std.ArrayList([]const u8).init(self.allocator);
+        defer queue.deinit();
+
+        try queue.append(from);
+        try visited.put(from, from); // parent of start is itself
+
+        while (queue.items.len > 0) {
+            const current = queue.orderedRemove(0);
+
+            if (graph.edges.get(current)) |deps| {
+                for (deps.items) |dep| {
+                    if (visited.contains(dep)) continue;
+
+                    try visited.put(dep, current);
+
+                    if (std.mem.eql(u8, dep, to)) {
+                        // Reconstruct path
+                        var reconstruct = std.ArrayList([]const u8).init(self.allocator);
+                        defer reconstruct.deinit();
+
+                        var node: []const u8 = to;
+                        while (!std.mem.eql(u8, node, from)) {
+                            try reconstruct.append(node);
+                            node = visited.get(node).?;
+                        }
+                        try reconstruct.append(from);
+
+                        // Reverse the path
+                        var j: usize = reconstruct.items.len;
+                        while (j > 0) {
+                            j -= 1;
+                            try path.append(reconstruct.items[j]);
+                        }
+                        return true;
+                    }
+
+                    try queue.append(dep);
+                }
+            }
+        }
+
+        return false;
+    }
+
+    // Output formatters
+    fn outputTreeFormat(self: *CLI, writer: anytype, graph: DependencyGraph, lock: anytype, max_depth: ?u32) !void {
+        _ = self;
+        try writer.print("Dependency Tree: {s}\n", .{lock.profile_name});
+        try writer.print("════════════════════════════════════════\n\n", .{});
+
+        // Print requested packages first
+        for (lock.resolved) |pkg| {
+            if (pkg.requested) {
+                try self.printTreeNode(writer, graph, pkg.name, 0, max_depth, &std.StringHashMap(void).init(self.allocator));
+                try writer.print("\n", .{});
+            }
+        }
+    }
+
+    fn printTreeNode(self: *CLI, writer: anytype, graph: DependencyGraph, pkg: []const u8, depth: u32, max_depth: ?u32, visited: *std.StringHashMap(void)) !void {
+        _ = self;
+        if (max_depth) |md| {
+            if (depth > md) return;
+        }
+
+        // Print indentation
+        var i: u32 = 0;
+        while (i < depth) : (i += 1) {
+            try writer.print("│   ", .{});
+        }
+
+        const already_visited = visited.contains(pkg);
+        if (already_visited) {
+            try writer.print("├── {s} (circular)\n", .{pkg});
+            return;
+        }
+
+        try visited.put(pkg, {});
+        try writer.print("├── {s}\n", .{pkg});
+
+        if (graph.edges.get(pkg)) |deps| {
+            for (deps.items) |dep| {
+                try self.printTreeNode(writer, graph, dep, depth + 1, max_depth, visited);
+            }
+        }
+
+        _ = visited.remove(pkg);
+    }
+
+    fn outputDotFormat(self: *CLI, writer: anytype, graph: DependencyGraph, lock: anytype) !void {
+        _ = self;
+        try writer.print("digraph dependencies {{\n", .{});
+        try writer.print("    rankdir=LR;\n", .{});
+        try writer.print("    node [shape=box];\n", .{});
+        try writer.print("\n", .{});
+
+        // Mark requested packages with different style
+        try writer.print("    // Requested packages\n", .{});
+        for (lock.resolved) |pkg| {
+            if (pkg.requested) {
+                try writer.print("    \"{s}\" [style=filled, fillcolor=lightblue];\n", .{pkg.name});
+            }
+        }
+        try writer.print("\n", .{});
+
+        // Output edges
+        try writer.print("    // Dependencies\n", .{});
+        var it = graph.edges.iterator();
+        while (it.next()) |entry| {
+            for (entry.value_ptr.items) |dep| {
+                try writer.print("    \"{s}\" -> \"{s}\";\n", .{ entry.key_ptr.*, dep });
+            }
+        }
+
+        try writer.print("}}\n", .{});
+    }
+
+    fn outputJsonFormat(self: *CLI, writer: anytype, graph: DependencyGraph, lock: anytype) !void {
+        _ = self;
+        try writer.print("{{\n", .{});
+        try writer.print("  \"profile\": \"{s}\",\n", .{lock.profile_name});
+        try writer.print("  \"package_count\": {d},\n", .{lock.resolved.len});
+        try writer.print("  \"packages\": [\n", .{});
+
+        for (lock.resolved, 0..) |pkg, idx| {
+            try writer.print("    {{\n", .{});
+            try writer.print("      \"name\": \"{s}\",\n", .{pkg.name});
+            try writer.print("      \"version\": \"{s}\",\n", .{pkg.version});
+            try writer.print("      \"requested\": {s},\n", .{if (pkg.requested) "true" else "false"});
+            try writer.print("      \"dependencies\": [", .{});
+
+            if (graph.edges.get(pkg.name)) |deps| {
+                for (deps.items, 0..) |dep, dep_idx| {
+                    try writer.print("\"{s}\"", .{dep});
+                    if (dep_idx < deps.items.len - 1) {
+                        try writer.print(", ", .{});
+                    }
+                }
+            }
+            try writer.print("]\n", .{});
+
+            if (idx < lock.resolved.len - 1) {
+                try writer.print("    }},\n", .{});
+            } else {
+                try writer.print("    }}\n", .{});
+            }
+        }
+
+        try writer.print("  ]\n", .{});
+        try writer.print("}}\n", .{});
     }
 
     // Garbage collection

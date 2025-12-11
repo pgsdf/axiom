@@ -34,7 +34,7 @@ This document outlines the planned enhancements for Axiom beyond the core 8 phas
 | 32 | Bootstrap Automation | High | Low | Phase 22 | ✓ Complete |
 | 33 | Unified Test Infrastructure | Medium | Low | None | ✓ Complete |
 | 34 | CLI Resolution Options | Medium | Low | Phase 31 | ✓ Complete |
-| 35 | Dependency Graph Visualization | Low | Medium | Phase 16 | Planned |
+| 35 | Dependency Graph Visualization | Low | Medium | Phase 16 | ✓ Complete |
 | 36 | HSM/PKCS#11 Signing | Medium | High | Phase 15 | Planned |
 | 37 | Multi-Party Signing | Medium | High | Phase 36 | Planned |
 | 38 | Service Management Integration | High | High | Phase 22 | Planned |
@@ -3411,31 +3411,60 @@ resolver:
 
 **Priority**: Low
 **Complexity**: Medium
-**Status**: Planned
+**Status**: Complete
 
 ### Purpose
 
 Provide tools to visualize and analyze dependency graphs for debugging and optimization.
 
-### Requirements
+### Changes Made
 
-1. **Graph Export**
+1. **Graph Export** - `axiom deps-graph` command:
    ```bash
-   axiom deps-graph myprofile --format dot > deps.dot
-   axiom deps-graph myprofile --format json > deps.json
+   axiom deps-graph myprofile                    # ASCII tree (default)
+   axiom deps-graph myprofile --format dot       # Graphviz DOT format
+   axiom deps-graph myprofile --format json      # JSON for tooling
+   axiom deps-graph myprofile --depth 3          # Limit tree depth
+   axiom deps-graph myprofile --output deps.dot  # Write to file
    ```
 
-2. **Analysis Tools**
+2. **Graph Analysis** - `axiom deps-analyze` command:
    ```bash
-   axiom deps-analyze myprofile    # Show depth, breadth, cycles
-   axiom deps-why myprofile pkg    # Why is pkg included?
-   axiom deps-path myprofile a b   # Path from a to b
+   axiom deps-analyze myprofile
+   # Output:
+   # Package Count:     47
+   # Direct Dependencies: 5
+   # Transitive Dependencies: 42
+   # Maximum Depth:     8
+   # Average Depth:     4.2
+   # Maximum Fanout:    12
+   # Most Depended On:  libc (23 dependents)
    ```
 
-3. **Output Formats**
-   - DOT (Graphviz)
-   - JSON (for tooling)
-   - ASCII tree (for terminal)
+3. **Dependency Explanation** - `axiom deps-why` command:
+   ```bash
+   axiom deps-why myprofile openssl
+   # Shows:
+   # - Whether directly requested
+   # - Which packages depend on it
+   # - Full dependency chains from requested packages
+   ```
+
+4. **Path Finding** - `axiom deps-path` command:
+   ```bash
+   axiom deps-path myprofile bash openssl
+   # Shows shortest dependency path:
+   # bash
+   # └─ readline
+   #    └─ ncurses
+   #       └─ openssl
+   ```
+
+### Output Formats
+
+- **tree**: ASCII tree with box-drawing characters (default)
+- **dot**: Graphviz DOT format for visualization with `dot -Tpng deps.dot -o deps.png`
+- **json**: Machine-readable JSON with full package metadata
 
 ---
 
