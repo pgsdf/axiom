@@ -3721,7 +3721,7 @@ Created `src/bootenv.zig` with complete ZFS boot environment management:
 
 **Priority**: High
 **Complexity**: High
-**Status**: Planned
+**Status**: ✅ Implemented
 
 ### Purpose
 
@@ -3758,6 +3758,69 @@ Define and implement a standard protocol for Axiom binary caches, enabling effic
    axiom cache push bash@5.2.0        # Push to cache
    axiom cache sync                   # Sync metadata
    ```
+
+### Implementation
+
+Created `src/cache_protocol.zig` with complete binary cache protocol:
+
+**Protocol Specification (v1.0):**
+- `PROTOCOL_VERSION` - Protocol version for compatibility
+- `Endpoints` - RESTful API endpoint definitions
+- `HttpStatus` - Standard HTTP response codes
+- `CacheRequest` / `CacheResponse` - HTTP request/response handling
+
+**Data Types:**
+- `CacheInfo` - Server information (name, version, package count, features)
+- `PackageMeta` - Package metadata (name, version, hash, size, compression, signatures)
+- `CacheSource` - Cache source configuration (URL, priority, trust key)
+- `CacheConfig` - Full configuration with YAML parsing
+- `FetchResult` - Result of fetch operations with metadata and data
+- `SyncResult` - Result of metadata synchronization
+
+**Cache Server:**
+- `CacheServer.init()` - Initialize server with store path and port
+- `CacheServer.start()` - Start listening for connections
+- `CacheServer.getInfo()` - Return server information
+- `CacheServer.listPackages()` - List all available packages
+- `CacheServer.getPackageMeta()` - Get package metadata
+- `CacheServer.getPackageNar()` - Get package archive
+- `CacheServer.handleRequest()` - Route and handle HTTP requests
+
+**Cache Client:**
+- `CacheClient.init()` / `initWithTrust()` - Initialize with optional trust store
+- `CacheClient.fetchPackage()` - Fetch from configured sources by priority
+- `CacheClient.pushPackage()` - Push package to remote cache
+- `CacheClient.syncMetadata()` - Sync metadata from all sources
+
+**CLI Commands:**
+- `axiom cache-server` - Start binary cache server
+  - `--port <n>` - Listen port (default: 8080)
+  - `--store <path>` - Package store path
+- `axiom cache-info [url]` - Get cache server information
+- `axiom remote-fetch <pkg>[@ver]` - Fetch package from remote cache
+  - `--source <url>` - Specific cache URL
+- `axiom remote-push <pkg>[@ver]` - Push package to remote cache
+  - `--target <url>` - Target cache URL
+- `axiom remote-sync` - Sync metadata from all sources
+- `axiom remote-sources` - Manage cache source configuration
+  - `--add <url>` - Add new source
+  - `--remove <url>` - Remove source
+
+**API Endpoints:**
+- `GET /api/v1/info` - Cache server information
+- `GET /api/v1/packages` - List all packages
+- `GET /api/v1/packages/{name}/{version}` - Package metadata
+- `GET /api/v1/packages/{name}/{version}/nar` - Package archive
+- `GET /api/v1/packages/{name}/{version}/meta` - Package metadata
+- `GET /api/v1/packages/{name}/{version}/sig` - Package signatures
+- `POST /api/v1/upload/{name}/{version}` - Upload package
+
+**Features:**
+- Multi-source support with priority ordering
+- Signature verification integration
+- Compression support (zstd, gzip, xz)
+- YAML configuration file parsing
+- HTTP range requests for efficient transfers
 
 ---
 
