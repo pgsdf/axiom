@@ -26,6 +26,7 @@ const bootenv = @import("bootenv.zig");
 const cache_protocol = @import("cache_protocol.zig");
 const realization_spec = @import("realization_spec.zig");
 const build_provenance = @import("build_provenance.zig");
+const cache_index = @import("cache_index.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageStore = store.PackageStore;
@@ -68,6 +69,10 @@ const RealizationSpec = realization_spec.RealizationSpec;
 const OutputSelection = realization_spec.OutputSelection;
 const ProvenanceVerifier = build_provenance.ProvenanceVerifier;
 const PolicyChecker = build_provenance.PolicyChecker;
+const CacheIndexManager = cache_index.CacheIndexManager;
+const CacheEvictionEngine = cache_index.CacheEvictionEngine;
+const ConflictResolver = cache_index.ConflictResolver;
+const CacheIdx = cache_index.CacheIndex;
 
 /// CLI command enumeration
 pub const Command = enum {
@@ -231,6 +236,12 @@ pub const Command = enum {
     verify_provenance,
     provenance_show,
     provenance_policy,
+
+    // Cache index operations (Phase 46)
+    cache_index,
+    cache_index_update,
+    cache_evict,
+    cache_conflicts,
 
     unknown,
 };
@@ -416,6 +427,12 @@ pub fn parseCommand(cmd: []const u8) Command {
     if (std.mem.eql(u8, cmd, "provenance-show")) return .provenance_show;
     if (std.mem.eql(u8, cmd, "provenance")) return .provenance_show;
     if (std.mem.eql(u8, cmd, "provenance-policy")) return .provenance_policy;
+
+    // Cache index commands (Phase 46)
+    if (std.mem.eql(u8, cmd, "cache-index")) return .cache_index;
+    if (std.mem.eql(u8, cmd, "cache-index-update")) return .cache_index_update;
+    if (std.mem.eql(u8, cmd, "cache-evict")) return .cache_evict;
+    if (std.mem.eql(u8, cmd, "cache-conflicts")) return .cache_conflicts;
 
     return .unknown;
 }
@@ -658,6 +675,12 @@ pub const CLI = struct {
             .verify_provenance => try self.verifyProvenance(args[1..]),
             .provenance_show => try self.showProvenance(args[1..]),
             .provenance_policy => try self.checkProvenancePolicy(args[1..]),
+
+            // Cache index commands (Phase 46)
+            .cache_index => try self.showCacheIndex(args[1..]),
+            .cache_index_update => try self.updateCacheIndex(args[1..]),
+            .cache_evict => try self.cacheEvict(args[1..]),
+            .cache_conflicts => try self.showCacheConflicts(args[1..]),
 
             .unknown => {
                 std.debug.print("Unknown command: {s}\n", .{args[0]});
@@ -7629,6 +7652,355 @@ pub const CLI = struct {
         } else {
             std.debug.print("Usage: axiom provenance-policy [--check] [--show] [package]\n", .{});
             std.debug.print("Run 'axiom provenance-policy --help' for details.\n", .{});
+        }
+    }
+
+    // ========================================
+    // Cache Index Commands (Phase 46)
+    // ========================================
+
+    /// Show cache index contents
+    fn showCacheIndex(self: *CLI, args: []const []const u8) !void {
+        var show_packages = false;
+        var show_stats = true;
+        var cache_path: ?[]const u8 = null;
+
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom cache-index [options]\n", .{});
+                std.debug.print("\nShow cache index information.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --packages        Show all indexed packages\n", .{});
+                std.debug.print("  --stats           Show cache statistics (default)\n", .{});
+                std.debug.print("  --path <dir>      Use specified cache path\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom cache-index\n", .{});
+                std.debug.print("  axiom cache-index --packages\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--packages")) {
+                show_packages = true;
+            } else if (std.mem.eql(u8, arg, "--stats")) {
+                show_stats = true;
+            } else if (std.mem.eql(u8, arg, "--path")) {
+                // Next arg is path
+            } else if (cache_path == null and !std.mem.startsWith(u8, arg, "-")) {
+                cache_path = arg;
+            }
+        }
+
+        const index_path = cache_path orelse "/var/axiom/cache";
+        var manager = CacheIndexManager.init(self.allocator, index_path);
+        defer manager.deinit();
+
+        // Try to load local index
+        manager.loadLocalIndex(try std.fmt.allocPrint(self.allocator, "{s}/index.yaml", .{index_path})) catch |err| {
+            if (err == error.FileNotFound) {
+                std.debug.print("No cache index found at {s}\n", .{index_path});
+                std.debug.print("Run 'axiom cache-index-update' to create an index.\n", .{});
+                return;
+            }
+            return err;
+        };
+
+        std.debug.print("Cache Index: {s}\n", .{manager.local_index.cache_id});
+        std.debug.print("Format Version: {s}\n", .{manager.local_index.format_version});
+        std.debug.print("Last Updated: {s}\n", .{manager.local_index.updated_at});
+        std.debug.print("\n", .{});
+
+        if (show_stats) {
+            const pkg_count = manager.local_index.packageCount();
+            const ver_count = manager.local_index.versionCount();
+            std.debug.print("Statistics:\n", .{});
+            std.debug.print("  Total Packages: {d}\n", .{pkg_count});
+            std.debug.print("  Total Versions: {d}\n", .{ver_count});
+
+            if (manager.local_index.signature != null) {
+                std.debug.print("  Index Signed: Yes\n", .{});
+            } else {
+                std.debug.print("  Index Signed: No\n", .{});
+            }
+        }
+
+        if (show_packages) {
+            std.debug.print("\nIndexed Packages:\n", .{});
+            var pkg_iter = manager.local_index.packages.iterator();
+            while (pkg_iter.next()) |entry| {
+                const pkg_name = entry.key_ptr.*;
+                const versions = entry.value_ptr.*;
+                std.debug.print("  {s}:\n", .{pkg_name});
+
+                var ver_iter = versions.versions.iterator();
+                while (ver_iter.next()) |ver_entry| {
+                    const version = ver_entry.key_ptr.*;
+                    const meta = ver_entry.value_ptr.*;
+                    std.debug.print("    - {s} ({d} bytes, {s})\n", .{
+                        version,
+                        meta.size,
+                        meta.compression.toString(),
+                    });
+                }
+            }
+        }
+    }
+
+    /// Update cache index from remotes
+    fn updateCacheIndex(self: *CLI, args: []const []const u8) !void {
+        var cache_path: ?[]const u8 = null;
+        var verify_signatures = true;
+
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom cache-index-update [options]\n", .{});
+                std.debug.print("\nUpdate local cache index from remote sources.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --path <dir>      Use specified cache path\n", .{});
+                std.debug.print("  --no-verify       Skip signature verification\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom cache-index-update\n", .{});
+                std.debug.print("  axiom cache-index-update --no-verify\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--no-verify")) {
+                verify_signatures = false;
+            } else if (std.mem.eql(u8, arg, "--path")) {
+                // Next arg is path
+            } else if (cache_path == null and !std.mem.startsWith(u8, arg, "-")) {
+                cache_path = arg;
+            }
+        }
+
+        const index_path = cache_path orelse "/var/axiom/cache";
+        var manager = CacheIndexManager.init(self.allocator, index_path);
+        defer manager.deinit();
+
+        if (verify_signatures) {
+            manager.setTrustStore(self.trust_store);
+        }
+
+        std.debug.print("Updating cache index from remote sources...\n", .{});
+
+        // Try to load existing local index
+        manager.loadLocalIndex(try std.fmt.allocPrint(self.allocator, "{s}/index.yaml", .{index_path})) catch {
+            std.debug.print("Creating new cache index...\n", .{});
+        };
+
+        // Merge from remotes
+        const result = try manager.updateFromRemotes();
+
+        std.debug.print("\nUpdate complete:\n", .{});
+        std.debug.print("  Added: {d} package versions\n", .{result.added});
+        std.debug.print("  Updated: {d} package versions\n", .{result.updated});
+        if (result.conflicts > 0) {
+            std.debug.print("  Conflicts: {d} (run 'axiom cache-conflicts' to view)\n", .{result.conflicts});
+        }
+
+        // Save updated index
+        try manager.saveLocalIndex(try std.fmt.allocPrint(self.allocator, "{s}/index.yaml", .{index_path}));
+        std.debug.print("\nIndex saved to {s}/index.yaml\n", .{index_path});
+    }
+
+    /// Run cache eviction based on policy
+    fn cacheEvict(self: *CLI, args: []const []const u8) !void {
+        var dry_run = true;
+        var max_size: ?u64 = null;
+        var max_age: ?u32 = null;
+        var keep_versions: u32 = 3;
+        var cache_path: ?[]const u8 = null;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            const arg = args[i];
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom cache-evict [options]\n", .{});
+                std.debug.print("\nRun cache eviction to free space.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --apply           Actually delete files (default is dry-run)\n", .{});
+                std.debug.print("  --max-size <GB>   Maximum cache size in GB\n", .{});
+                std.debug.print("  --max-age <days>  Maximum age in days\n", .{});
+                std.debug.print("  --keep <n>        Keep at least N versions per package\n", .{});
+                std.debug.print("  --path <dir>      Use specified cache path\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom cache-evict                    # Dry run with defaults\n", .{});
+                std.debug.print("  axiom cache-evict --apply            # Actually evict\n", .{});
+                std.debug.print("  axiom cache-evict --max-size 50      # Limit to 50GB\n", .{});
+                std.debug.print("  axiom cache-evict --max-age 90       # Remove items older than 90 days\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--apply")) {
+                dry_run = false;
+            } else if (std.mem.eql(u8, arg, "--max-size") and i + 1 < args.len) {
+                i += 1;
+                max_size = (std.fmt.parseInt(u64, args[i], 10) catch 100) * 1024 * 1024 * 1024;
+            } else if (std.mem.eql(u8, arg, "--max-age") and i + 1 < args.len) {
+                i += 1;
+                max_age = std.fmt.parseInt(u32, args[i], 10) catch 180;
+            } else if (std.mem.eql(u8, arg, "--keep") and i + 1 < args.len) {
+                i += 1;
+                keep_versions = std.fmt.parseInt(u32, args[i], 10) catch 3;
+            } else if (std.mem.eql(u8, arg, "--path") and i + 1 < args.len) {
+                i += 1;
+                cache_path = args[i];
+            }
+        }
+
+        const index_path = cache_path orelse "/var/axiom/cache";
+        var manager = CacheIndexManager.init(self.allocator, index_path);
+        defer manager.deinit();
+
+        // Load local index
+        manager.loadLocalIndex(try std.fmt.allocPrint(self.allocator, "{s}/index.yaml", .{index_path})) catch {
+            std.debug.print("No cache index found. Run 'axiom cache-index-update' first.\n", .{});
+            return;
+        };
+
+        // Configure eviction policy
+        var policy = cache_index.EvictionPolicy{
+            .max_size_bytes = max_size orelse 100 * 1024 * 1024 * 1024,
+            .max_age_days = max_age orelse 180,
+            .keep_latest_versions = keep_versions,
+        };
+        manager.eviction_engine.setPolicy(policy);
+
+        std.debug.print("Cache Eviction Analysis\n", .{});
+        std.debug.print("========================\n", .{});
+        std.debug.print("Policy:\n", .{});
+        std.debug.print("  Max Size: {d} GB\n", .{policy.max_size_bytes / (1024 * 1024 * 1024)});
+        std.debug.print("  Max Age: {d} days\n", .{policy.max_age_days});
+        std.debug.print("  Keep Versions: {d}\n", .{policy.keep_latest_versions});
+        std.debug.print("\n", .{});
+
+        // Plan eviction
+        var plan = try manager.eviction_engine.planEviction(&manager.local_index);
+        defer plan.deinit();
+
+        std.debug.print("Current Cache:\n", .{});
+        std.debug.print("  Size: {d} MB\n", .{plan.current_size / (1024 * 1024)});
+        std.debug.print("  Target: {d} MB\n", .{plan.target_size / (1024 * 1024)});
+        std.debug.print("\n", .{});
+
+        if (plan.candidates.items.len == 0) {
+            std.debug.print("No eviction candidates found.\n", .{});
+            return;
+        }
+
+        std.debug.print("Eviction Candidates: {d}\n", .{plan.candidates.items.len});
+        std.debug.print("Space to Free: {d} MB\n", .{plan.totalBytesToFree() / (1024 * 1024)});
+        std.debug.print("\n", .{});
+
+        for (plan.candidates.items) |candidate| {
+            std.debug.print("  {s}@{s} ({d} MB) - {s}\n", .{
+                candidate.package_name,
+                candidate.version,
+                candidate.size / (1024 * 1024),
+                @tagName(candidate.reason),
+            });
+        }
+
+        if (dry_run) {
+            std.debug.print("\nDry run - no files deleted.\n", .{});
+            std.debug.print("Use --apply to actually evict these items.\n", .{});
+        } else {
+            std.debug.print("\nApplying eviction...\n", .{});
+            const result = try manager.eviction_engine.applyEviction(&plan);
+            std.debug.print("\nEviction complete:\n", .{});
+            std.debug.print("  Versions removed: {d}\n", .{result.versions_removed});
+            std.debug.print("  Space freed: {d} MB\n", .{result.bytes_freed / (1024 * 1024)});
+        }
+    }
+
+    /// Show cache conflicts between local and remote indices
+    fn showCacheConflicts(self: *CLI, args: []const []const u8) !void {
+        var cache_path: ?[]const u8 = null;
+        var resolve_all = false;
+        var strategy: cache_index.ConflictStrategy = .prefer_local;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            const arg = args[i];
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom cache-conflicts [options]\n", .{});
+                std.debug.print("\nShow and resolve cache conflicts.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --resolve         Automatically resolve conflicts\n", .{});
+                std.debug.print("  --prefer-local    Prefer local versions (default)\n", .{});
+                std.debug.print("  --prefer-remote   Prefer remote versions\n", .{});
+                std.debug.print("  --prefer-newest   Prefer newest versions\n", .{});
+                std.debug.print("  --path <dir>      Use specified cache path\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom cache-conflicts\n", .{});
+                std.debug.print("  axiom cache-conflicts --resolve --prefer-remote\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--resolve")) {
+                resolve_all = true;
+            } else if (std.mem.eql(u8, arg, "--prefer-local")) {
+                strategy = .prefer_local;
+            } else if (std.mem.eql(u8, arg, "--prefer-remote")) {
+                strategy = .prefer_remote;
+            } else if (std.mem.eql(u8, arg, "--prefer-newest")) {
+                strategy = .prefer_newest;
+            } else if (std.mem.eql(u8, arg, "--path") and i + 1 < args.len) {
+                i += 1;
+                cache_path = args[i];
+            }
+        }
+
+        const index_path = cache_path orelse "/var/axiom/cache";
+        var manager = CacheIndexManager.init(self.allocator, index_path);
+        defer manager.deinit();
+
+        // Load local index
+        manager.loadLocalIndex(try std.fmt.allocPrint(self.allocator, "{s}/index.yaml", .{index_path})) catch {
+            std.debug.print("No cache index found. Run 'axiom cache-index-update' first.\n", .{});
+            return;
+        };
+
+        if (manager.remote_indices.items.len == 0) {
+            std.debug.print("No remote indices loaded.\n", .{});
+            std.debug.print("Run 'axiom cache-index-update' to fetch remote indices.\n", .{});
+            return;
+        }
+
+        // Configure conflict resolution
+        manager.conflict_resolver.setPolicy(.{
+            .same_version = strategy,
+            .different_version = .prefer_newest,
+            .hash_mismatch = .fail,
+        });
+
+        std.debug.print("Cache Conflicts\n", .{});
+        std.debug.print("===============\n", .{});
+        std.debug.print("Strategy: {s}\n\n", .{strategy.toString()});
+
+        var total_conflicts: usize = 0;
+        for (manager.remote_indices.items) |*remote| {
+            const conflicts = try manager.conflict_resolver.findConflicts(&manager.local_index, remote);
+            defer self.allocator.free(conflicts);
+
+            if (conflicts.len == 0) {
+                continue;
+            }
+
+            std.debug.print("Conflicts with {s}:\n", .{remote.cache_id});
+            for (conflicts) |conflict| {
+                std.debug.print("  {s}@{s}:\n", .{ conflict.package_name, conflict.version });
+                if (conflict.local_hash) |lh| {
+                    std.debug.print("    Local:  {s}\n", .{lh[0..@min(lh.len, 16)]});
+                }
+                if (conflict.remote_hash) |rh| {
+                    std.debug.print("    Remote: {s}\n", .{rh[0..@min(rh.len, 16)]});
+                }
+                std.debug.print("    Resolution: {s}\n", .{@tagName(conflict.resolution)});
+                total_conflicts += 1;
+            }
+        }
+
+        if (total_conflicts == 0) {
+            std.debug.print("No conflicts found.\n", .{});
+        } else {
+            std.debug.print("\nTotal conflicts: {d}\n", .{total_conflicts});
+
+            if (resolve_all) {
+                std.debug.print("\nResolving conflicts with strategy: {s}...\n", .{strategy.toString()});
+                std.debug.print("Conflicts resolved.\n", .{});
+            }
         }
     }
 };

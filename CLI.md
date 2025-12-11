@@ -816,6 +816,124 @@ axiom cache-clean
 2. Removes entries exceeding size limit
 3. Reports space freed
 
+#### `axiom cache-index [options]`
+
+Show cache index information and statistics.
+
+```bash
+axiom cache-index
+axiom cache-index --packages
+```
+
+**Options:**
+- `--packages` - Show all indexed packages
+- `--stats` - Show cache statistics (default)
+- `--path <dir>` - Use specified cache path
+
+**Example output:**
+```
+Cache Index: pgsd-official-cache
+Format Version: 1.0
+Last Updated: 2025-01-15T12:00:00Z
+
+Statistics:
+  Total Packages: 1847
+  Total Versions: 4523
+  Index Signed: Yes
+```
+
+#### `axiom cache-index-update [options]`
+
+Update local cache index from remote sources.
+
+```bash
+axiom cache-index-update
+axiom cache-index-update --no-verify
+```
+
+**Options:**
+- `--path <dir>` - Use specified cache path
+- `--no-verify` - Skip signature verification
+
+**Process:**
+1. Fetches latest index from all configured remotes
+2. Verifies index signatures (unless --no-verify)
+3. Merges new package entries into local index
+4. Reports added/updated/conflicting entries
+
+#### `axiom cache-evict [options]`
+
+Run cache eviction to free space based on policy.
+
+```bash
+axiom cache-evict                    # Dry run with defaults
+axiom cache-evict --apply            # Actually evict
+axiom cache-evict --max-size 50      # Limit to 50GB
+axiom cache-evict --max-age 90       # Remove items older than 90 days
+```
+
+**Options:**
+- `--apply` - Actually delete files (default is dry-run)
+- `--max-size <GB>` - Maximum cache size in GB
+- `--max-age <days>` - Maximum age in days
+- `--keep <n>` - Keep at least N versions per package (default: 3)
+- `--path <dir>` - Use specified cache path
+
+**Example output (dry-run):**
+```
+Cache Eviction Analysis
+========================
+Policy:
+  Max Size: 100 GB
+  Max Age: 180 days
+  Keep Versions: 3
+
+Current Cache:
+  Size: 127456 MB
+  Target: 102400 MB
+
+Eviction Candidates: 23
+Space to Free: 28156 MB
+
+  old-pkg@1.0.0 (1024 MB) - excess_versions
+  legacy-tool@2.1.0 (512 MB) - age_limit
+  ...
+
+Dry run - no files deleted.
+Use --apply to actually evict these items.
+```
+
+#### `axiom cache-conflicts [options]`
+
+Show and resolve cache conflicts between local and remote indices.
+
+```bash
+axiom cache-conflicts
+axiom cache-conflicts --resolve --prefer-remote
+```
+
+**Options:**
+- `--resolve` - Automatically resolve conflicts
+- `--prefer-local` - Prefer local versions (default)
+- `--prefer-remote` - Prefer remote versions
+- `--prefer-newest` - Prefer newest versions
+- `--path <dir>` - Use specified cache path
+
+**Example output:**
+```
+Cache Conflicts
+===============
+Strategy: prefer_local
+
+Conflicts with mirror.example.com:
+  openssl@3.0.8:
+    Local:  sha256:abc123...
+    Remote: sha256:def456...
+    Resolution: use_local
+
+Total conflicts: 1
+```
+
 ---
 
 ### Build Operations
