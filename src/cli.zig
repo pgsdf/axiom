@@ -8062,9 +8062,9 @@ pub const CLI = struct {
             return;
         }
 
-        const profile = profile_name orelse "system";
+        const selected_profile = profile_name orelse "system";
 
-        std.debug.print("Snapshotting profile '{s}' to boot environment '{s}'...\n", .{ profile, be_name.? });
+        std.debug.print("Snapshotting profile '{s}' to boot environment '{s}'...\n", .{ selected_profile, be_name.? });
 
         // In full implementation, would use BeProfileManager
         var be_mgr = bootenv.BootEnvManager.init(self.allocator, self.zfs_handle);
@@ -8072,7 +8072,7 @@ pub const CLI = struct {
 
         std.debug.print("Creating BE directory structure...\n", .{});
         std.debug.print("Copying profile.lock.yaml...\n", .{});
-        std.debug.print("\n✓ Profile '{s}' snapshotted to BE '{s}'.\n", .{ profile, be_name.? });
+        std.debug.print("\n✓ Profile '{s}' snapshotted to BE '{s}'.\n", .{ selected_profile, be_name.? });
     }
 
     /// Show profile differences between boot environments
@@ -8125,6 +8125,8 @@ pub const CLI = struct {
         std.debug.print("  (none)\n\n", .{});
 
         std.debug.print("Summary: 0 added, 0 removed, 0 changed\n", .{});
+
+        _ = self;
     }
 
     /// Run health checks for boot environment
