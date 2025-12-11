@@ -6971,15 +6971,23 @@ pub const CLI = struct {
             if (std.mem.eql(u8, pkg.name, source_name)) {
                 source_found = true;
 
-                // Get manifest and check dependencies
-                const manifest_opt = self.store.getManifest(self.allocator, pkg) catch null;
-                if (manifest_opt) |m| {
-                    defer m.deinit(self.allocator);
+                // Get package metadata which includes manifest
+                var metadata = self.store.getPackage(pkg) catch |err| {
+                    std.debug.print("Could not get package metadata: {}\n", .{err});
+                    break;
+                };
+                defer {
+                    metadata.manifest.deinit(self.allocator);
+                    self.allocator.free(metadata.dataset_path);
+                }
 
-                    std.debug.print("Dependencies of {s} {}:\n", .{ pkg.name, pkg.version });
-                    // Note: manifest doesn't have dependencies field directly exposed
-                    // This is a simplified implementation
-                    std.debug.print("  (dependency analysis requires full resolution)\n", .{});
+                std.debug.print("Dependencies of {s} {}:\n", .{ pkg.name, pkg.version });
+                if (metadata.dependencies.len > 0) {
+                    for (metadata.dependencies) |dep| {
+                        std.debug.print("  - {s}\n", .{dep.name});
+                    }
+                } else {
+                    std.debug.print("  (no dependencies)\n", .{});
                 }
                 break;
             }

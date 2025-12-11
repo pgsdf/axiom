@@ -68,13 +68,15 @@ pub const VirtualProviderIndex = struct {
         }
 
         for (packages) |pkg| {
-            const manifest_opt = pkg_store.getManifest(self.allocator, pkg) catch null;
-            if (manifest_opt) |m| {
-                defer m.deinit(self.allocator);
+            // Get package metadata which includes manifest
+            var metadata = pkg_store.getPackage(pkg) catch continue;
+            defer {
+                metadata.manifest.deinit(self.allocator);
+                self.allocator.free(metadata.dataset_path);
+            }
 
-                for (m.provides) |virtual_name| {
-                    try self.addProvider(virtual_name, pkg, 0);
-                }
+            for (metadata.manifest.provides) |virtual_name| {
+                try self.addProvider(virtual_name, pkg, 0);
             }
         }
     }
