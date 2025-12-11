@@ -36,7 +36,7 @@ This document outlines the planned enhancements for Axiom beyond the core 8 phas
 | 34 | CLI Resolution Options | Medium | Low | Phase 31 | ✓ Complete |
 | 35 | Dependency Graph Visualization | Low | Medium | Phase 16 | ✓ Complete |
 | 36 | HSM/PKCS#11 Signing | Medium | High | Phase 15 | ✓ Complete |
-| 37 | Multi-Party Signing | Medium | High | Phase 36 | Planned |
+| 37 | Multi-Party Signing | Medium | High | Phase 36 | ✓ Complete |
 | 38 | Service Management Integration | High | High | Phase 22 | Planned |
 | 39 | Boot Environment Support | High | Medium | None | Planned |
 | 40 | Remote Binary Cache Protocol | High | High | Phase 17 | Planned |
@@ -3524,36 +3524,58 @@ Support hardware security modules for package signing in high-security environme
 
 **Priority**: Medium
 **Complexity**: High
-**Status**: Planned
+**Status**: ✓ Complete
 
 ### Purpose
 
 Require multiple signatures for critical packages, implementing threshold signing.
 
-### Requirements
+### Implementation
 
-1. **Threshold Configuration**
+1. **Multi-Signature Data Structures** (`src/signature.zig`)
+   - `MultiSignatureConfig`: Threshold and authorized signer configuration
+   - `MultiSignature`: Container for multiple signatures on a package
+   - `SignatureEntry`: Individual signature with metadata
+   - `MultiSignatureResult`: Verification result with detailed status
+   - `MultiSignatureVerifier`: Verify packages against multi-party policies
+   - `MultiSignatureSigner`: Add signatures to packages
+
+2. **Configuration Format**
    ```yaml
-   # Package requires 2-of-3 signatures
-   signing:
-     threshold: 2
-     signers:
-       - pgsd-release-key
-       - security-team-key
-       - qa-team-key
+   # Multi-party signing policy
+   threshold: 2
+   policy_name: "Release Policy"
+   signers:
+     - pgsd-release-key
+     - security-team-key
+     - qa-team-key
+   required_signers:
+     - pgsd-release-key
    ```
 
-2. **Verification**
-   - Count valid signatures
-   - Verify threshold met
-   - Report which signers approved
-
-3. **CLI**
+3. **CLI Commands**
    ```bash
-   axiom sign mypackage --key my-key    # Add signature
-   axiom verify mypackage --threshold 2  # Verify threshold
-   axiom signatures mypackage           # List all signatures
+   # List all signatures on a package
+   axiom signatures mypackage
+
+   # Verify threshold requirement
+   axiom signatures mypackage --threshold 2
+
+   # Add signature (existing command, creates .msig for multi-sig)
+   axiom sign mypackage --key my-key
    ```
+
+4. **File Format**
+   - Single signature: `manifest.sig` (YAML)
+   - Multi-signature: `manifest.msig` (YAML with multiple signature entries)
+
+### Features
+
+- **Threshold Verification**: M-of-N signature requirements
+- **Authorized Signers**: Restrict which keys can sign
+- **Required Signers**: Mandate specific key signatures
+- **Backward Compatible**: Falls back to single signature verification
+- **Trust Level Tracking**: Each signature tracks key trust level
 
 ---
 

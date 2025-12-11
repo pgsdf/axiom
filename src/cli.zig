@@ -91,6 +91,7 @@ pub const Command = enum {
     key_generate,
     sign,
     verify,
+    signatures,  // Phase 37: List all signatures
 
     // HSM operations (Phase 36)
     hsm_list,
@@ -214,6 +215,7 @@ pub fn parseCommand(cmd: []const u8) Command {
     if (std.mem.eql(u8, cmd, "key-generate")) return .key_generate;
     if (std.mem.eql(u8, cmd, "sign")) return .sign;
     if (std.mem.eql(u8, cmd, "verify")) return .verify;
+    if (std.mem.eql(u8, cmd, "signatures")) return .signatures;
 
     // HSM commands (Phase 36)
     if (std.mem.eql(u8, cmd, "hsm-list")) return .hsm_list;
@@ -426,6 +428,7 @@ pub const CLI = struct {
             .key_generate => try self.keyGenerate(args[1..]),
             .sign => try self.signPackage(args[1..]),
             .verify => try self.verifyPackage(args[1..]),
+            .signatures => try self.listSignatures(args[1..]),
 
             // HSM operations (Phase 36)
             .hsm_list => try self.hsmListSlots(args[1..]),
@@ -2474,6 +2477,98 @@ pub const CLI = struct {
         } else {
             std.debug.print("\n✗ Package verification failed\n", .{});
             if (result.error_message) |msg| std.debug.print("Error: {s}\n", .{msg});
+        }
+    }
+
+    // Phase 37: Multi-Party Signing
+
+    fn listSignatures(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom signatures <package-path> [--threshold <n>]\n", .{});
+            std.debug.print("\nList all signatures on a package\n", .{});
+            std.debug.print("\nOptions:\n", .{});
+            std.debug.print("  --threshold <n>    Verify that package has at least n trusted signatures\n", .{});
+            std.debug.print("\nExample:\n", .{});
+            std.debug.print("  axiom signatures /axiom/store/mypackage-1.0.0\n", .{});
+            std.debug.print("  axiom signatures mypackage --threshold 2\n", .{});
+            return;
+        }
+
+        const pkg_path = args[0];
+        var threshold: ?u32 = null;
+
+        // Parse options
+        var i: usize = 1;
+        while (i < args.len) {
+            const arg = args[i];
+            if (std.mem.eql(u8, arg, "--threshold") and i + 1 < args.len) {
+                threshold = std.fmt.parseInt(u32, args[i + 1], 10) catch {
+                    std.debug.print("Invalid threshold: {s}\n", .{args[i + 1]});
+                    return;
+                };
+                i += 2;
+            } else {
+                std.debug.print("Unknown option: {s}\n", .{arg});
+                return;
+            }
+        }
+
+        std.debug.print("Package Signatures\n", .{});
+        std.debug.print("==================\n\n", .{});
+        std.debug.print("Package: {s}\n\n", .{pkg_path});
+
+        var multi_verifier = signature.MultiSignatureVerifier.init(self.allocator, self.trust_store);
+        const sigs = multi_verifier.listSignatures(pkg_path) catch |err| {
+            std.debug.print("Error listing signatures: {}\n", .{err});
+            return;
+        };
+        defer self.allocator.free(sigs);
+
+        if (sigs.len == 0) {
+            std.debug.print("No signatures found.\n", .{});
+            std.debug.print("\nSign with: axiom sign {s} --key <key-file>\n", .{pkg_path});
+            return;
+        }
+
+        var trusted_count: usize = 0;
+        for (sigs, 0..) |sig, idx| {
+            const trust_marker = if (self.trust_store.isKeyTrusted(sig.key_id)) "✓" else " ";
+            std.debug.print("{d}. {s} {s}\n", .{ idx + 1, trust_marker, sig.key_id });
+            if (sig.signer_name) |name| {
+                std.debug.print("   Signer: {s}\n", .{name});
+            }
+            std.debug.print("   Trust:  {s}\n", .{sig.trust_level.description()});
+            if (sig.timestamp > 0) {
+                std.debug.print("   Time:   {d}\n", .{sig.timestamp});
+            }
+            std.debug.print("\n", .{});
+
+            if (self.trust_store.isKeyTrusted(sig.key_id)) {
+                trusted_count += 1;
+            }
+        }
+
+        std.debug.print("Total: {d} signature(s), {d} trusted\n", .{ sigs.len, trusted_count });
+
+        // Verify threshold if requested
+        if (threshold) |t| {
+            std.debug.print("\nThreshold Check\n", .{});
+            std.debug.print("---------------\n", .{});
+            std.debug.print("Required: {d} trusted signature(s)\n", .{t});
+            std.debug.print("Found:    {d} trusted signature(s)\n", .{trusted_count});
+
+            if (trusted_count >= t) {
+                std.debug.print("\n✓ Threshold requirement met\n", .{});
+            } else {
+                std.debug.print("\n✗ Threshold requirement NOT met\n", .{});
+                std.debug.print("  Need {d} more trusted signature(s)\n", .{t - @as(u32, @intCast(trusted_count))});
+            }
+        }
+
+        // Free signature entries
+        for (sigs) |*sig| {
+            var s = sig.*;
+            s.deinit(self.allocator);
         }
     }
 

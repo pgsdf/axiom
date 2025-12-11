@@ -1363,3 +1363,874 @@ pub fn importPublicKey(allocator: std.mem.Allocator, path: []const u8) !PublicKe
 
     return key;
 }
+
+// ============================================================================
+// Phase 37: Multi-Party Signing
+// ============================================================================
+
+/// Multi-signature errors
+pub const MultiSignatureError = error{
+    ThresholdNotMet,
+    DuplicateSignature,
+    SignerNotAuthorized,
+    NoSignatures,
+    InvalidThreshold,
+};
+
+/// Configuration for multi-party signing requirements
+pub const MultiSignatureConfig = struct {
+    /// Minimum number of valid signatures required (M-of-N threshold)
+    threshold: u32,
+    /// List of authorized signer key IDs (if empty, any trusted key is accepted)
+    authorized_signers: []const []const u8,
+    /// Require signatures from specific keys (not just any M-of-N)
+    required_signers: []const []const u8,
+    /// Human-readable name for this policy
+    policy_name: ?[]const u8,
+
+    pub fn deinit(self: *MultiSignatureConfig, allocator: std.mem.Allocator) void {
+        for (self.authorized_signers) |signer| {
+            allocator.free(signer);
+        }
+        allocator.free(self.authorized_signers);
+        for (self.required_signers) |signer| {
+            allocator.free(signer);
+        }
+        allocator.free(self.required_signers);
+        if (self.policy_name) |name| {
+            allocator.free(name);
+        }
+    }
+
+    /// Parse config from YAML
+    pub fn fromYaml(allocator: std.mem.Allocator, content: []const u8) !MultiSignatureConfig {
+        var config = MultiSignatureConfig{
+            .threshold = 1,
+            .authorized_signers = &[_][]const u8{},
+            .required_signers = &[_][]const u8{},
+            .policy_name = null,
+        };
+
+        var authorized = std.ArrayList([]const u8).init(allocator);
+        defer authorized.deinit();
+        var required = std.ArrayList([]const u8).init(allocator);
+        defer required.deinit();
+
+        var in_signers = false;
+        var in_required = false;
+
+        var lines = std.mem.splitSequence(u8, content, "\n");
+        while (lines.next()) |line| {
+            const trimmed = std.mem.trim(u8, line, " \t\r");
+            if (trimmed.len == 0 or trimmed[0] == '#') continue;
+
+            if (std.mem.startsWith(u8, trimmed, "threshold:")) {
+                const value = std.mem.trim(u8, trimmed[10..], " \t");
+                config.threshold = std.fmt.parseInt(u32, value, 10) catch 1;
+                in_signers = false;
+                in_required = false;
+            } else if (std.mem.startsWith(u8, trimmed, "policy_name:")) {
+                var value = std.mem.trim(u8, trimmed[12..], " \t");
+                if (value.len >= 2 and value[0] == '"' and value[value.len - 1] == '"') {
+                    value = value[1 .. value.len - 1];
+                }
+                config.policy_name = try allocator.dupe(u8, value);
+                in_signers = false;
+                in_required = false;
+            } else if (std.mem.startsWith(u8, trimmed, "signers:") or std.mem.startsWith(u8, trimmed, "authorized_signers:")) {
+                in_signers = true;
+                in_required = false;
+            } else if (std.mem.startsWith(u8, trimmed, "required_signers:")) {
+                in_signers = false;
+                in_required = true;
+            } else if (std.mem.startsWith(u8, trimmed, "- ")) {
+                var value = std.mem.trim(u8, trimmed[2..], " \t");
+                if (value.len >= 2 and value[0] == '"' and value[value.len - 1] == '"') {
+                    value = value[1 .. value.len - 1];
+                }
+                if (in_signers) {
+                    try authorized.append(try allocator.dupe(u8, value));
+                } else if (in_required) {
+                    try required.append(try allocator.dupe(u8, value));
+                }
+            }
+        }
+
+        config.authorized_signers = try authorized.toOwnedSlice();
+        config.required_signers = try required.toOwnedSlice();
+
+        return config;
+    }
+
+    /// Serialize config to YAML
+    pub fn toYaml(self: MultiSignatureConfig, allocator: std.mem.Allocator) ![]u8 {
+        var result = std.ArrayList(u8).init(allocator);
+        defer result.deinit();
+        const writer = result.writer();
+
+        try writer.writeAll("# Multi-Party Signing Policy\n");
+        try writer.print("threshold: {d}\n", .{self.threshold});
+        if (self.policy_name) |name| {
+            try writer.print("policy_name: \"{s}\"\n", .{name});
+        }
+        if (self.authorized_signers.len > 0) {
+            try writer.writeAll("signers:\n");
+            for (self.authorized_signers) |signer| {
+                try writer.print("  - {s}\n", .{signer});
+            }
+        }
+        if (self.required_signers.len > 0) {
+            try writer.writeAll("required_signers:\n");
+            for (self.required_signers) |signer| {
+                try writer.print("  - {s}\n", .{signer});
+            }
+        }
+
+        return result.toOwnedSlice();
+    }
+
+    /// Check if a key ID is authorized to sign
+    pub fn isSignerAuthorized(self: MultiSignatureConfig, key_id: []const u8) bool {
+        // If no authorized signers specified, any key is allowed
+        if (self.authorized_signers.len == 0) return true;
+
+        for (self.authorized_signers) |authorized| {
+            if (std.mem.eql(u8, authorized, key_id)) return true;
+        }
+        return false;
+    }
+};
+
+/// Individual signature entry in a multi-signature set
+pub const SignatureEntry = struct {
+    key_id: []const u8,
+    signer_name: ?[]const u8,
+    signature: [64]u8,
+    timestamp: i64,
+    valid: bool,
+    trust_level: TrustLevel,
+
+    pub fn deinit(self: *SignatureEntry, allocator: std.mem.Allocator) void {
+        allocator.free(self.key_id);
+        if (self.signer_name) |name| {
+            allocator.free(name);
+        }
+    }
+};
+
+/// Multi-signature container for a package
+pub const MultiSignature = struct {
+    version: u32 = 1,
+    algorithm: []const u8,
+    files: []FileHash,
+    signatures: []SignatureEntry,
+
+    pub fn deinit(self: *MultiSignature, allocator: std.mem.Allocator) void {
+        allocator.free(self.algorithm);
+        for (self.files) |*f| {
+            f.deinit(allocator);
+        }
+        allocator.free(self.files);
+        for (self.signatures) |*sig| {
+            sig.deinit(allocator);
+        }
+        allocator.free(self.signatures);
+    }
+
+    /// Serialize to YAML format
+    pub fn toYaml(self: MultiSignature, allocator: std.mem.Allocator) ![]u8 {
+        var result = std.ArrayList(u8).init(allocator);
+        defer result.deinit();
+        const writer = result.writer();
+
+        try writer.writeAll("# Axiom Multi-Party Signature\n");
+        try writer.print("version: {d}\n", .{self.version});
+        try writer.print("algorithm: {s}\n", .{self.algorithm});
+
+        try writer.writeAll("\nfiles:\n");
+        for (self.files) |f| {
+            try writer.print("  - path: \"{s}\"\n", .{f.path});
+            try writer.print("    sha256: {s}\n", .{std.fmt.fmtSliceHexLower(&f.hash)});
+        }
+
+        try writer.writeAll("\nsignatures:\n");
+        for (self.signatures) |sig| {
+            try writer.print("  - key_id: {s}\n", .{sig.key_id});
+            if (sig.signer_name) |name| {
+                try writer.print("    signer: \"{s}\"\n", .{name});
+            }
+            try writer.print("    timestamp: {d}\n", .{sig.timestamp});
+            try writer.print("    signature: {s}\n", .{std.fmt.fmtSliceHexLower(&sig.signature)});
+        }
+
+        return result.toOwnedSlice();
+    }
+
+    /// Parse from YAML
+    pub fn fromYaml(allocator: std.mem.Allocator, content: []const u8) !MultiSignature {
+        var multi_sig = MultiSignature{
+            .algorithm = undefined,
+            .files = undefined,
+            .signatures = undefined,
+        };
+
+        var files = std.ArrayList(FileHash).init(allocator);
+        defer files.deinit();
+        var signatures = std.ArrayList(SignatureEntry).init(allocator);
+        defer signatures.deinit();
+
+        var current_file_path: ?[]const u8 = null;
+        var current_sig: ?SignatureEntry = null;
+        var in_files = false;
+        var in_signatures = false;
+
+        var lines = std.mem.splitSequence(u8, content, "\n");
+        while (lines.next()) |line| {
+            const trimmed = std.mem.trim(u8, line, " \t\r");
+            if (trimmed.len == 0 or trimmed[0] == '#') continue;
+
+            if (std.mem.startsWith(u8, trimmed, "version:")) {
+                const value = std.mem.trim(u8, trimmed[8..], " \t");
+                multi_sig.version = std.fmt.parseInt(u32, value, 10) catch 1;
+            } else if (std.mem.startsWith(u8, trimmed, "algorithm:")) {
+                const value = std.mem.trim(u8, trimmed[10..], " \t");
+                multi_sig.algorithm = try allocator.dupe(u8, value);
+            } else if (std.mem.eql(u8, trimmed, "files:")) {
+                in_files = true;
+                in_signatures = false;
+            } else if (std.mem.eql(u8, trimmed, "signatures:")) {
+                in_files = false;
+                in_signatures = true;
+            } else if (std.mem.startsWith(u8, trimmed, "- path:")) {
+                if (current_file_path) |path| {
+                    allocator.free(path);
+                }
+                var value = std.mem.trim(u8, trimmed[7..], " \t");
+                if (value.len >= 2 and value[0] == '"' and value[value.len - 1] == '"') {
+                    value = value[1 .. value.len - 1];
+                }
+                current_file_path = try allocator.dupe(u8, value);
+            } else if (std.mem.startsWith(u8, trimmed, "sha256:") and current_file_path != null) {
+                const value = std.mem.trim(u8, trimmed[7..], " \t");
+                if (value.len == 64) {
+                    var hash: [32]u8 = undefined;
+                    _ = std.fmt.hexToBytes(&hash, value) catch {
+                        allocator.free(current_file_path.?);
+                        current_file_path = null;
+                        continue;
+                    };
+                    try files.append(.{
+                        .path = current_file_path.?,
+                        .hash = hash,
+                    });
+                    current_file_path = null;
+                }
+            } else if (std.mem.startsWith(u8, trimmed, "- key_id:") and in_signatures) {
+                // Save previous signature if any
+                if (current_sig) |sig| {
+                    try signatures.append(sig);
+                }
+                const value = std.mem.trim(u8, trimmed[9..], " \t");
+                current_sig = SignatureEntry{
+                    .key_id = try allocator.dupe(u8, value),
+                    .signer_name = null,
+                    .signature = undefined,
+                    .timestamp = 0,
+                    .valid = false,
+                    .trust_level = .unknown,
+                };
+            } else if (std.mem.startsWith(u8, trimmed, "signer:") and current_sig != null) {
+                var value = std.mem.trim(u8, trimmed[7..], " \t");
+                if (value.len >= 2 and value[0] == '"' and value[value.len - 1] == '"') {
+                    value = value[1 .. value.len - 1];
+                }
+                current_sig.?.signer_name = try allocator.dupe(u8, value);
+            } else if (std.mem.startsWith(u8, trimmed, "timestamp:") and current_sig != null) {
+                const value = std.mem.trim(u8, trimmed[10..], " \t");
+                current_sig.?.timestamp = std.fmt.parseInt(i64, value, 10) catch 0;
+            } else if (std.mem.startsWith(u8, trimmed, "signature:") and current_sig != null) {
+                const value = std.mem.trim(u8, trimmed[10..], " \t");
+                if (value.len == 128) {
+                    _ = std.fmt.hexToBytes(&current_sig.?.signature, value) catch continue;
+                }
+            }
+        }
+
+        // Save last signature
+        if (current_sig) |sig| {
+            try signatures.append(sig);
+        }
+
+        // Clean up any leftover file path
+        if (current_file_path) |path| {
+            allocator.free(path);
+        }
+
+        multi_sig.files = try files.toOwnedSlice();
+        multi_sig.signatures = try signatures.toOwnedSlice();
+
+        return multi_sig;
+    }
+
+    /// Count valid signatures
+    pub fn validSignatureCount(self: MultiSignature) usize {
+        var count: usize = 0;
+        for (self.signatures) |sig| {
+            if (sig.valid) count += 1;
+        }
+        return count;
+    }
+
+    /// Get list of signers
+    pub fn getSignerKeyIds(self: MultiSignature, allocator: std.mem.Allocator) ![][]const u8 {
+        var result = std.ArrayList([]const u8).init(allocator);
+        defer result.deinit();
+        for (self.signatures) |sig| {
+            try result.append(sig.key_id);
+        }
+        return result.toOwnedSlice();
+    }
+};
+
+/// Result of multi-signature verification
+pub const MultiSignatureResult = struct {
+    /// Overall verification success (threshold met and all required signers present)
+    success: bool,
+    /// Total number of signatures found
+    total_signatures: usize,
+    /// Number of cryptographically valid signatures
+    valid_signatures: usize,
+    /// Number of signatures from trusted keys
+    trusted_signatures: usize,
+    /// Required threshold
+    threshold: u32,
+    /// Whether threshold was met
+    threshold_met: bool,
+    /// Missing required signers (if any)
+    missing_required: []const []const u8,
+    /// Details for each signature
+    signature_details: []SignatureEntry,
+    /// Error message if verification failed
+    error_message: ?[]const u8,
+
+    pub fn deinit(self: *MultiSignatureResult, allocator: std.mem.Allocator) void {
+        allocator.free(self.missing_required);
+        for (self.signature_details) |*detail| {
+            detail.deinit(allocator);
+        }
+        allocator.free(self.signature_details);
+        if (self.error_message) |msg| {
+            allocator.free(msg);
+        }
+    }
+};
+
+/// Multi-signature verifier
+pub const MultiSignatureVerifier = struct {
+    allocator: std.mem.Allocator,
+    trust_store: *TrustStore,
+
+    pub fn init(allocator: std.mem.Allocator, trust_store: *TrustStore) MultiSignatureVerifier {
+        return MultiSignatureVerifier{
+            .allocator = allocator,
+            .trust_store = trust_store,
+        };
+    }
+
+    /// Verify a package against a multi-signature policy
+    pub fn verifyPackage(
+        self: *MultiSignatureVerifier,
+        pkg_path: []const u8,
+        config: MultiSignatureConfig,
+    ) !MultiSignatureResult {
+        std.debug.print("Verifying package with multi-party policy: {s}\n", .{pkg_path});
+        if (config.policy_name) |name| {
+            std.debug.print("  Policy: {s}\n", .{name});
+        }
+        std.debug.print("  Required threshold: {d}\n", .{config.threshold});
+
+        // Load multi-signature file
+        const sig_path = try std.fs.path.join(self.allocator, &[_][]const u8{ pkg_path, "manifest.msig" });
+        defer self.allocator.free(sig_path);
+
+        const sig_file = std.fs.cwd().openFile(sig_path, .{}) catch {
+            // Fall back to regular signature file
+            return self.verifyFallbackSingleSignature(pkg_path, config);
+        };
+        defer sig_file.close();
+
+        const sig_content = try sig_file.readToEndAlloc(self.allocator, 1024 * 1024);
+        defer self.allocator.free(sig_content);
+
+        var multi_sig = try MultiSignature.fromYaml(self.allocator, sig_content);
+        defer multi_sig.deinit(self.allocator);
+
+        return self.verifyMultiSignature(pkg_path, &multi_sig, config);
+    }
+
+    /// Verify a multi-signature structure
+    fn verifyMultiSignature(
+        self: *MultiSignatureVerifier,
+        pkg_path: []const u8,
+        multi_sig: *MultiSignature,
+        config: MultiSignatureConfig,
+    ) !MultiSignatureResult {
+        var signature_details = std.ArrayList(SignatureEntry).init(self.allocator);
+        defer signature_details.deinit();
+
+        var valid_count: usize = 0;
+        var trusted_count: usize = 0;
+
+        // Build message to verify (same as single signature)
+        var message = std.ArrayList(u8).init(self.allocator);
+        defer message.deinit();
+
+        for (multi_sig.files) |f| {
+            try message.appendSlice(&f.hash);
+            try message.appendSlice(f.path);
+        }
+
+        // Verify each signature
+        for (multi_sig.signatures) |*sig| {
+            var entry = SignatureEntry{
+                .key_id = try self.allocator.dupe(u8, sig.key_id),
+                .signer_name = if (sig.signer_name) |n| try self.allocator.dupe(u8, n) else null,
+                .signature = sig.signature,
+                .timestamp = sig.timestamp,
+                .valid = false,
+                .trust_level = .unknown,
+            };
+
+            // Check if signer is authorized
+            if (!config.isSignerAuthorized(sig.key_id)) {
+                std.debug.print("  Signature from {s}: unauthorized signer\n", .{sig.key_id});
+                try signature_details.append(entry);
+                continue;
+            }
+
+            // Get public key
+            const public_key = self.trust_store.getKey(sig.key_id) orelse {
+                std.debug.print("  Signature from {s}: key not found\n", .{sig.key_id});
+                try signature_details.append(entry);
+                continue;
+            };
+
+            entry.trust_level = public_key.trust_level;
+
+            // Verify cryptographic signature
+            const pub_key = std.crypto.sign.Ed25519.PublicKey.fromBytes(public_key.key_data) catch {
+                std.debug.print("  Signature from {s}: invalid key format\n", .{sig.key_id});
+                try signature_details.append(entry);
+                continue;
+            };
+
+            const ed_sig = std.crypto.sign.Ed25519.Signature.fromBytes(sig.signature);
+            ed_sig.verify(message.items, pub_key) catch {
+                std.debug.print("  Signature from {s}: cryptographic verification failed\n", .{sig.key_id});
+                try signature_details.append(entry);
+                continue;
+            };
+
+            entry.valid = true;
+            valid_count += 1;
+            std.debug.print("  Signature from {s}: valid\n", .{sig.key_id});
+
+            // Check if key is trusted
+            if (self.trust_store.isKeyTrusted(sig.key_id)) {
+                trusted_count += 1;
+            }
+
+            try signature_details.append(entry);
+        }
+
+        // Check for missing required signers
+        var missing_required = std.ArrayList([]const u8).init(self.allocator);
+        defer missing_required.deinit();
+
+        for (config.required_signers) |required| {
+            var found = false;
+            for (signature_details.items) |detail| {
+                if (std.mem.eql(u8, detail.key_id, required) and detail.valid) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                try missing_required.append(required);
+            }
+        }
+
+        const threshold_met = trusted_count >= config.threshold;
+        const required_met = missing_required.items.len == 0;
+        const success = threshold_met and required_met;
+
+        std.debug.print("  Total signatures: {d}\n", .{multi_sig.signatures.len});
+        std.debug.print("  Valid signatures: {d}\n", .{valid_count});
+        std.debug.print("  Trusted signatures: {d}\n", .{trusted_count});
+        std.debug.print("  Threshold met: {}\n", .{threshold_met});
+        std.debug.print("  Required signers present: {}\n", .{required_met});
+
+        _ = pkg_path;
+
+        return MultiSignatureResult{
+            .success = success,
+            .total_signatures = multi_sig.signatures.len,
+            .valid_signatures = valid_count,
+            .trusted_signatures = trusted_count,
+            .threshold = config.threshold,
+            .threshold_met = threshold_met,
+            .missing_required = try missing_required.toOwnedSlice(),
+            .signature_details = try signature_details.toOwnedSlice(),
+            .error_message = if (!success)
+                try self.allocator.dupe(u8, if (!threshold_met) "Threshold not met" else "Missing required signers")
+            else
+                null,
+        };
+    }
+
+    /// Fall back to verifying single signature against multi-party policy
+    fn verifyFallbackSingleSignature(
+        self: *MultiSignatureVerifier,
+        pkg_path: []const u8,
+        config: MultiSignatureConfig,
+    ) !MultiSignatureResult {
+        // Try to load regular signature file
+        const sig_path = try std.fs.path.join(self.allocator, &[_][]const u8{ pkg_path, "manifest.sig" });
+        defer self.allocator.free(sig_path);
+
+        const sig_file = std.fs.cwd().openFile(sig_path, .{}) catch {
+            return MultiSignatureResult{
+                .success = false,
+                .total_signatures = 0,
+                .valid_signatures = 0,
+                .trusted_signatures = 0,
+                .threshold = config.threshold,
+                .threshold_met = false,
+                .missing_required = &[_][]const u8{},
+                .signature_details = &[_]SignatureEntry{},
+                .error_message = try self.allocator.dupe(u8, "No signature file found"),
+            };
+        };
+        defer sig_file.close();
+
+        const sig_content = try sig_file.readToEndAlloc(self.allocator, 1024 * 1024);
+        defer self.allocator.free(sig_content);
+
+        var signature = try Signature.fromYaml(self.allocator, sig_content);
+        defer signature.deinit(self.allocator);
+
+        // Convert single signature to multi-signature format
+        var sigs = try self.allocator.alloc(SignatureEntry, 1);
+        sigs[0] = SignatureEntry{
+            .key_id = try self.allocator.dupe(u8, signature.key_id),
+            .signer_name = if (signature.signer) |s| try self.allocator.dupe(u8, s) else null,
+            .signature = signature.signature,
+            .timestamp = signature.timestamp,
+            .valid = false,
+            .trust_level = .unknown,
+        };
+
+        var multi_sig = MultiSignature{
+            .algorithm = try self.allocator.dupe(u8, signature.algorithm),
+            .files = try self.allocator.alloc(FileHash, signature.files.len),
+            .signatures = sigs,
+        };
+
+        // Copy files
+        for (signature.files, 0..) |f, i| {
+            multi_sig.files[i] = FileHash{
+                .path = try self.allocator.dupe(u8, f.path),
+                .hash = f.hash,
+            };
+        }
+
+        defer multi_sig.deinit(self.allocator);
+
+        return self.verifyMultiSignature(pkg_path, &multi_sig, config);
+    }
+
+    /// List all signatures on a package
+    pub fn listSignatures(self: *MultiSignatureVerifier, pkg_path: []const u8) ![]SignatureEntry {
+        var signatures = std.ArrayList(SignatureEntry).init(self.allocator);
+        defer signatures.deinit();
+
+        // Try multi-signature file first
+        const msig_path = try std.fs.path.join(self.allocator, &[_][]const u8{ pkg_path, "manifest.msig" });
+        defer self.allocator.free(msig_path);
+
+        if (std.fs.cwd().openFile(msig_path, .{})) |file| {
+            defer file.close();
+            const content = try file.readToEndAlloc(self.allocator, 1024 * 1024);
+            defer self.allocator.free(content);
+
+            var multi_sig = try MultiSignature.fromYaml(self.allocator, content);
+            defer multi_sig.deinit(self.allocator);
+
+            for (multi_sig.signatures) |sig| {
+                try signatures.append(SignatureEntry{
+                    .key_id = try self.allocator.dupe(u8, sig.key_id),
+                    .signer_name = if (sig.signer_name) |n| try self.allocator.dupe(u8, n) else null,
+                    .signature = sig.signature,
+                    .timestamp = sig.timestamp,
+                    .valid = false,
+                    .trust_level = self.trust_store.getKeyTrustLevel(sig.key_id),
+                });
+            }
+        } else |_| {
+            // Try single signature file
+            const sig_path = try std.fs.path.join(self.allocator, &[_][]const u8{ pkg_path, "manifest.sig" });
+            defer self.allocator.free(sig_path);
+
+            if (std.fs.cwd().openFile(sig_path, .{})) |file| {
+                defer file.close();
+                const content = try file.readToEndAlloc(self.allocator, 1024 * 1024);
+                defer self.allocator.free(content);
+
+                var sig = try Signature.fromYaml(self.allocator, content);
+                defer sig.deinit(self.allocator);
+
+                try signatures.append(SignatureEntry{
+                    .key_id = try self.allocator.dupe(u8, sig.key_id),
+                    .signer_name = if (sig.signer) |s| try self.allocator.dupe(u8, s) else null,
+                    .signature = sig.signature,
+                    .timestamp = sig.timestamp,
+                    .valid = false,
+                    .trust_level = self.trust_store.getKeyTrustLevel(sig.key_id),
+                });
+            } else |_| {}
+        }
+
+        return signatures.toOwnedSlice();
+    }
+};
+
+/// Multi-signature signer - adds signatures to a package
+pub const MultiSignatureSigner = struct {
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) MultiSignatureSigner {
+        return MultiSignatureSigner{
+            .allocator = allocator,
+        };
+    }
+
+    /// Add a signature to an existing multi-signature file or create a new one
+    pub fn addSignature(
+        self: *MultiSignatureSigner,
+        pkg_path: []const u8,
+        key_pair: KeyPair,
+        signer_name: ?[]const u8,
+    ) !void {
+        std.debug.print("Adding signature to package: {s}\n", .{pkg_path});
+
+        // Try to load existing multi-signature
+        const msig_path = try std.fs.path.join(self.allocator, &[_][]const u8{ pkg_path, "manifest.msig" });
+        defer self.allocator.free(msig_path);
+
+        var multi_sig: MultiSignature = undefined;
+        var have_existing = false;
+
+        if (std.fs.cwd().openFile(msig_path, .{})) |file| {
+            defer file.close();
+            const content = try file.readToEndAlloc(self.allocator, 1024 * 1024);
+            defer self.allocator.free(content);
+            multi_sig = try MultiSignature.fromYaml(self.allocator, content);
+            have_existing = true;
+            std.debug.print("  Loaded existing multi-signature with {d} signatures\n", .{multi_sig.signatures.len});
+        } else |_| {
+            // Try to convert from single signature
+            const sig_path = try std.fs.path.join(self.allocator, &[_][]const u8{ pkg_path, "manifest.sig" });
+            defer self.allocator.free(sig_path);
+
+            if (std.fs.cwd().openFile(sig_path, .{})) |file| {
+                defer file.close();
+                const content = try file.readToEndAlloc(self.allocator, 1024 * 1024);
+                defer self.allocator.free(content);
+
+                var sig = try Signature.fromYaml(self.allocator, content);
+                defer sig.deinit(self.allocator);
+
+                // Convert to multi-signature
+                var sigs = try self.allocator.alloc(SignatureEntry, 1);
+                sigs[0] = SignatureEntry{
+                    .key_id = try self.allocator.dupe(u8, sig.key_id),
+                    .signer_name = if (sig.signer) |s| try self.allocator.dupe(u8, s) else null,
+                    .signature = sig.signature,
+                    .timestamp = sig.timestamp,
+                    .valid = true,
+                    .trust_level = .unknown,
+                };
+
+                multi_sig = MultiSignature{
+                    .algorithm = try self.allocator.dupe(u8, sig.algorithm),
+                    .files = try self.allocator.alloc(FileHash, sig.files.len),
+                    .signatures = sigs,
+                };
+
+                for (sig.files, 0..) |f, i| {
+                    multi_sig.files[i] = FileHash{
+                        .path = try self.allocator.dupe(u8, f.path),
+                        .hash = f.hash,
+                    };
+                }
+                have_existing = true;
+                std.debug.print("  Converted single signature to multi-signature\n", .{});
+            } else |_| {
+                // No existing signature - create new one
+                multi_sig = try self.createNewMultiSignature(pkg_path);
+                have_existing = false;
+            }
+        }
+
+        defer if (!have_existing) multi_sig.deinit(self.allocator);
+
+        // Get key ID
+        const key_id = try key_pair.keyId(self.allocator);
+        defer self.allocator.free(key_id);
+
+        // Check for duplicate signature
+        for (multi_sig.signatures) |sig| {
+            if (std.mem.eql(u8, sig.key_id, key_id)) {
+                std.debug.print("  Warning: Key {s} has already signed this package\n", .{key_id});
+                return MultiSignatureError.DuplicateSignature;
+            }
+        }
+
+        // Build message to sign
+        var message = std.ArrayList(u8).init(self.allocator);
+        defer message.deinit();
+
+        for (multi_sig.files) |f| {
+            try message.appendSlice(&f.hash);
+            try message.appendSlice(f.path);
+        }
+
+        // Sign the message
+        const secret_key = std.crypto.sign.Ed25519.SecretKey.fromBytes(key_pair.secret_key) catch {
+            return SignatureError.SigningFailed;
+        };
+        const ed_key_pair = std.crypto.sign.Ed25519.KeyPair.fromSecretKey(secret_key) catch {
+            return SignatureError.SigningFailed;
+        };
+        const sig = ed_key_pair.sign(message.items, null) catch {
+            return SignatureError.SigningFailed;
+        };
+
+        // Add new signature entry
+        var new_sigs = try self.allocator.alloc(SignatureEntry, multi_sig.signatures.len + 1);
+        for (multi_sig.signatures, 0..) |existing, i| {
+            new_sigs[i] = existing;
+        }
+        new_sigs[multi_sig.signatures.len] = SignatureEntry{
+            .key_id = try self.allocator.dupe(u8, key_id),
+            .signer_name = if (signer_name) |n| try self.allocator.dupe(u8, n) else null,
+            .signature = sig.toBytes(),
+            .timestamp = std.time.timestamp(),
+            .valid = true,
+            .trust_level = .unknown,
+        };
+
+        // Free old signatures array (but not the entries - they're moved)
+        self.allocator.free(multi_sig.signatures);
+        multi_sig.signatures = new_sigs;
+
+        // Save multi-signature file
+        const yaml = try multi_sig.toYaml(self.allocator);
+        defer self.allocator.free(yaml);
+
+        const file = try std.fs.cwd().createFile(msig_path, .{});
+        defer file.close();
+        try file.writeAll(yaml);
+
+        std.debug.print("  Signature added by {s}\n", .{key_id});
+        std.debug.print("  Total signatures: {d}\n", .{multi_sig.signatures.len});
+
+        // Clean up if we converted/created
+        if (have_existing) {
+            multi_sig.deinit(self.allocator);
+        }
+    }
+
+    /// Create a new multi-signature by hashing the package files
+    fn createNewMultiSignature(self: *MultiSignatureSigner, pkg_path: []const u8) !MultiSignature {
+        var files = std.ArrayList(FileHash).init(self.allocator);
+        defer files.deinit();
+
+        try self.hashDirectory(pkg_path, "", &files);
+
+        return MultiSignature{
+            .algorithm = try self.allocator.dupe(u8, "ed25519"),
+            .files = try files.toOwnedSlice(),
+            .signatures = try self.allocator.alloc(SignatureEntry, 0),
+        };
+    }
+
+    /// Hash all files in a directory recursively
+    fn hashDirectory(
+        self: *MultiSignatureSigner,
+        base_path: []const u8,
+        rel_path: []const u8,
+        files: *std.ArrayList(FileHash),
+    ) !void {
+        const full_path = if (rel_path.len > 0)
+            try std.fs.path.join(self.allocator, &[_][]const u8{ base_path, rel_path })
+        else
+            try self.allocator.dupe(u8, base_path);
+        defer self.allocator.free(full_path);
+
+        var dir = std.fs.cwd().openDir(full_path, .{ .iterate = true }) catch return;
+        defer dir.close();
+
+        var iter = dir.iterate();
+        while (try iter.next()) |entry| {
+            // Skip signature files
+            if (std.mem.eql(u8, entry.name, "manifest.sig") or
+                std.mem.eql(u8, entry.name, "manifest.msig"))
+            {
+                continue;
+            }
+
+            const entry_rel = if (rel_path.len > 0)
+                try std.fs.path.join(self.allocator, &[_][]const u8{ rel_path, entry.name })
+            else
+                try self.allocator.dupe(u8, entry.name);
+
+            switch (entry.kind) {
+                .file => {
+                    const hash = try self.hashFile(base_path, entry_rel);
+                    try files.append(.{
+                        .path = entry_rel,
+                        .hash = hash,
+                    });
+                },
+                .directory => {
+                    defer self.allocator.free(entry_rel);
+                    try self.hashDirectory(base_path, entry_rel, files);
+                },
+                else => {
+                    self.allocator.free(entry_rel);
+                },
+            }
+        }
+    }
+
+    /// Hash a single file
+    fn hashFile(self: *MultiSignatureSigner, base_path: []const u8, rel_path: []const u8) ![32]u8 {
+        const full_path = try std.fs.path.join(self.allocator, &[_][]const u8{ base_path, rel_path });
+        defer self.allocator.free(full_path);
+
+        const file = try std.fs.cwd().openFile(full_path, .{});
+        defer file.close();
+
+        var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+        var buffer: [8192]u8 = undefined;
+
+        while (true) {
+            const bytes_read = try file.read(&buffer);
+            if (bytes_read == 0) break;
+            hasher.update(buffer[0..bytes_read]);
+        }
+
+        return hasher.finalResult();
+    }
+};
