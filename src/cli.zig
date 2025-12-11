@@ -7852,7 +7852,7 @@ pub const CLI = struct {
         };
 
         // Configure eviction policy
-        var policy = cache_index.EvictionPolicy{
+        const policy = cache_index.EvictionPolicy{
             .max_size_bytes = max_size orelse 100 * 1024 * 1024 * 1024,
             .max_age_days = max_age orelse 180,
             .keep_latest_versions = keep_versions,
@@ -7979,15 +7979,15 @@ pub const CLI = struct {
             }
 
             std.debug.print("Conflicts with {s}:\n", .{remote.cache_id});
-            for (conflicts) |conflict| {
-                std.debug.print("  {s}@{s}:\n", .{ conflict.package_name, conflict.version });
-                if (conflict.local_hash) |lh| {
+            for (conflicts) |c| {
+                std.debug.print("  {s}@{s}:\n", .{ c.package_name, c.version });
+                if (c.local_hash) |lh| {
                     std.debug.print("    Local:  {s}\n", .{lh[0..@min(lh.len, 16)]});
                 }
-                if (conflict.remote_hash) |rh| {
+                if (c.remote_hash) |rh| {
                     std.debug.print("    Remote: {s}\n", .{rh[0..@min(rh.len, 16)]});
                 }
-                std.debug.print("    Resolution: {s}\n", .{@tagName(conflict.resolution)});
+                std.debug.print("    Resolution: {s}\n", .{@tagName(c.resolution)});
                 total_conflicts += 1;
             }
         }
