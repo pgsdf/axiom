@@ -7332,10 +7332,8 @@ pub const CLI = struct {
         var verifier = ProvenanceVerifier.init(self.allocator);
         defer verifier.deinit();
 
-        // Set trust store if available
-        if (self.trust_store) |ts| {
-            verifier.setTrustStore(ts);
-        }
+        // Set trust store
+        verifier.setTrustStore(self.trust_store);
 
         const report = verifier.verify(pkg_mountpoint) catch |err| {
             std.debug.print("Verification failed: {}\n", .{err});
