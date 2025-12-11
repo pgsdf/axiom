@@ -1139,6 +1139,193 @@ Step 4: Set 'upgrade-2025-01' as next boot target
 
 ---
 
+### Multi-User Security Operations (Phase 48)
+
+Commands for managing multi-user security, access control, and setuid binary handling.
+
+#### `axiom user-init [username]`
+
+Initialize user space directory structure.
+
+```bash
+axiom user-init
+axiom user-init alice
+```
+
+**Creates directories:**
+- `/axiom/users/<user>/profiles` - User profiles
+- `/axiom/users/<user>/env` - User environments
+- `/axiom/users/<user>/.config` - User configuration
+
+**Example output:**
+```
+Initializing User Space
+=======================
+
+User: alice
+Base path: /axiom/users/alice
+
+  Creating profiles/...
+  Creating env/...
+  Creating .config/...
+
+✓ User space initialized for 'alice'.
+```
+
+#### `axiom access-check <operation> [target]`
+
+Check if current user can perform an operation.
+
+```bash
+axiom access-check read
+axiom access-check import
+axiom access-check user-space 1001
+```
+
+**Operations:**
+- `read` - Read from package store
+- `import` - Import packages to store
+- `gc` - Garbage collect store
+- `profile-create` - Create system profile
+- `profile-delete` - Delete system profile
+- `user-space` - Access user space (specify target uid)
+
+**Example output:**
+```
+Access Check: import
+========================
+
+Current user: uid=1000 (root=no)
+
+Operation: import
+Status: DENIED (requires root)
+```
+
+#### `axiom access-show`
+
+Show current access control policy configuration.
+
+```bash
+axiom access-show
+```
+
+**Example output:**
+```
+Access Control Policy
+=====================
+
+Store Settings:
+  Owner UID:        0
+  Owner GID:        0
+  Store mode:       0755
+
+User Space Settings:
+  Template mode:    0700
+  User imports:     denied
+
+Setuid Settings:
+  Require sig:      yes
+  Audit setuid:     yes
+```
+
+#### `axiom setuid-list [options]`
+
+List setuid binaries managed by Axiom.
+
+```bash
+axiom setuid-list
+axiom setuid-list --all
+```
+
+**Options:**
+- `--all` - Show all setuid binaries (including system)
+
+**Example output:**
+```
+Setuid Binaries
+===============
+
+Axiom-managed setuid binaries:
+
+  PATH                                     OWNER    MODE     SIGNED
+  ----                                     -----    ----     ------
+  /axiom/store/.../sudo                    0        4755     yes
+  /axiom/store/.../ping                    0        4755     yes
+  /axiom/store/.../passwd                  0        4755     yes
+
+Total: 3 Axiom-managed setuid binaries
+```
+
+#### `axiom setuid-audit [options]`
+
+Show setuid execution audit log.
+
+```bash
+axiom setuid-audit
+axiom setuid-audit --limit 50
+```
+
+**Options:**
+- `--limit <n>` - Number of entries to show (default: 20)
+
+**Log location:** `/var/log/axiom-setuid.log`
+
+**Example output:**
+```
+Setuid Audit Log (last 20 entries)
+=====================================
+
+TIMESTAMP            UID      BINARY                         STATUS
+---------            ---      ------                         ------
+1736600400           1000     /axiom/store/.../sudo          SUCCESS
+1736599200           1001     /axiom/store/.../passwd        SUCCESS
+```
+
+#### `axiom privilege-show [filter]`
+
+Show privilege requirements for Axiom operations.
+
+```bash
+axiom privilege-show
+axiom privilege-show root
+```
+
+**Arguments:**
+- `filter` - Filter by privilege level (root, group, any)
+
+**Privilege levels:**
+- `root_only` - Requires root/sudo
+- `user_with_group` - Requires axiom group membership
+- `any_user` - Any user can perform
+
+**Example output:**
+```
+Operation Privilege Requirements
+================================
+
+Root Only Operations:
+  import               - Import packages to store
+  system-gc            - Garbage collect shared store
+  profile-create       - Create system profile
+  profile-delete       - Delete system profile
+  setuid-install       - Install setuid binaries
+
+Group Membership Operations (axiom group):
+  store-read           - Read from package store
+  cache-fetch          - Fetch from binary cache
+
+Any User Operations:
+  user-profile-create  - Create user profile
+  user-profile-delete  - Delete user profile
+  user-realize         - Realize user environment
+  user-activate        - Activate user environment
+  user-env-list        - List user environments
+
+Note: Per-user operations only affect the user's own space.
+```
+
+---
+
 ### Shell Completions
 
 Generate shell completion scripts for command-line autocompletion.
