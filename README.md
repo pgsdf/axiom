@@ -106,6 +106,53 @@ sudo axiom bootstrap-import axiom-bootstrap-14.2-amd64.tar.zst
 - **Environment activation modifies PATH** - Do NOT activate as root for untrusted packages
 - **The ports tree must exist** - Install with `portsnap fetch extract`
 
+## Dependency Resolution
+
+The `axiom resolve` command supports various strategies and options for resolving package dependencies:
+
+### Basic Usage
+
+```bash
+sudo axiom resolve myprofile                    # Default: auto strategy, newest versions
+sudo axiom resolve myprofile --strategy sat     # Use SAT solver for complex graphs
+sudo axiom resolve myprofile --prefer stable    # Prefer older, stable versions
+```
+
+### Resolution Strategies
+
+| Strategy | Description | Best For |
+|----------|-------------|----------|
+| `greedy` | Fast, picks first satisfying version | Simple dependency graphs |
+| `backtracking` | Tries alternatives on conflicts | Medium complexity graphs |
+| `sat` | SAT solver for optimal solution | Complex constraints |
+| `auto` | Greedy with SAT fallback (default) | General use |
+
+### Version Preferences
+
+| Preference | Description | Use Case |
+|------------|-------------|----------|
+| `newest` | Latest satisfying version (default) | Development |
+| `stable` | Older, proven versions | Production servers |
+| `oldest` | Minimum satisfying version | Compatibility testing |
+
+### Advanced Options
+
+```bash
+# Production-grade resolution
+sudo axiom resolve production --strategy backtracking --prefer stable
+
+# Fine-tune backtracking behavior
+sudo axiom resolve myprofile --max-backtracks 10 --total-backtracks 100
+
+# Resource limits for untrusted manifests
+sudo axiom resolve myprofile --strict --timeout 60 --max-memory 512
+
+# Show resolution statistics
+sudo axiom resolve myprofile --stats
+```
+
+See `axiom resolve --help` for all options.
+
 ## Building
 
 Requires:
