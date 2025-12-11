@@ -1765,8 +1765,8 @@ pub const CLI = struct {
             var deps = std.ArrayList([]const u8).init(self.allocator);
 
             // Get package manifest to find dependencies
-            if (self.store.getPackageManifest(pkg.name, pkg.version)) |manifest| {
-                if (manifest.dependencies) |dependencies| {
+            if (self.store.getPackageManifest(pkg.name, pkg.version)) |pkg_manifest| {
+                if (pkg_manifest.dependencies) |dependencies| {
                     for (dependencies) |dep| {
                         try deps.append(dep.name);
                     }
@@ -1873,7 +1873,6 @@ pub const CLI = struct {
     }
 
     fn calculateDepth(self: *CLI, graph: DependencyGraph, pkg: []const u8, current_depth: u32) u32 {
-        _ = self;
         if (current_depth > 100) return current_depth; // Prevent infinite recursion
 
         if (graph.edges.get(pkg)) |deps| {
@@ -1948,7 +1947,6 @@ pub const CLI = struct {
 
     // Output formatters
     fn outputTreeFormat(self: *CLI, writer: anytype, graph: DependencyGraph, lock: anytype, max_depth: ?u32) !void {
-        _ = self;
         try writer.print("Dependency Tree: {s}\n", .{lock.profile_name});
         try writer.print("════════════════════════════════════════\n\n", .{});
 
@@ -1962,7 +1960,6 @@ pub const CLI = struct {
     }
 
     fn printTreeNode(self: *CLI, writer: anytype, graph: DependencyGraph, pkg: []const u8, depth: u32, max_depth: ?u32, visited: *std.StringHashMap(void)) !void {
-        _ = self;
         if (max_depth) |md| {
             if (depth > md) return;
         }
