@@ -50,6 +50,12 @@ This document outlines the planned enhancements for Axiom beyond the core 8 phas
 | 48 | Multi-User Security Model | High | High | Phase 12 | Planned |
 | 49 | Error Model & Recovery | High | Medium | None | Planned |
 | 50 | Testing & Validation Framework | Critical | High | None | Planned |
+| 51 | Critical Security Fixes | Critical | Medium | None | Planned |
+| 52 | Error Handling Overhaul | High | Medium | None | Planned |
+| 53 | Input Validation Framework | High | Medium | None | Planned |
+| 54 | Memory Safety Audit | High | Medium | None | Planned |
+| 55 | Concurrency Safety | High | Medium | Phase 30 | Planned |
+| 56 | Module Decoupling | Medium | High | None | Planned |
 
 ---
 
@@ -5145,6 +5151,866 @@ test:
 - [ ] Set up CI pipeline with all test types
 - [ ] Document testing procedures
 - [ ] Achieve >80% code coverage target
+
+---
+
+## Phase 51: Critical Security Fixes
+
+**Priority**: Critical
+**Complexity**: Medium
+**Status**: Planned
+
+### Purpose
+
+Address critical security vulnerabilities identified in the code-boundary assessment that could lead to arbitrary code execution or privilege escalation.
+
+### Issues Identified
+
+1. **Shell Command Injection in zfs.zig**
+   - **Location**: `zfs.zig` lines 208-225, 248-269
+   - **Severity**: Critical
+   - **Issue**: User-provided paths concatenated directly into shell commands without quoting
+   ```zig
+   // VULNERABLE - user path not quoted
+   const cmd = try std.fmt.allocPrint(allocator, "zfs destroy -r {s}", .{path});
+   var child = std.process.Child.init(&[_][]const u8{ "sh", "-c", cmd }, allocator);
+   ```
+   - **Risk**: Arbitrary command execution if path contains `$(...)`, `;`, or backticks
+
+2. **Path Traversal in Tar Extraction**
+   - **Location**: `secure_tar.zig` lines 319-370
+   - **Severity**: Critical
+   - **Issue**: Path validation edge cases may allow escape
+   - **Risk**: Files extracted outside intended directory
+
+3. **Symlink Escape Vulnerability**
+   - **Location**: `secure_tar.zig` lines 282-317
+   - **Severity**: High
+   - **Issue**: Symlink target validation may not catch all escapes
+   - **Risk**: Symlink to sensitive files like `/etc/passwd`
+
+### Implementation
+
+**Fix 1: Shell Command Injection**
+
+```zig
+// BEFORE (vulnerable)
+const cmd = try std.fmt.allocPrint(allocator, "zfs destroy -r {s}", .{path});
+
+// AFTER (safe) - use execve directly, not shell
+pub fn destroyRecursive(allocator: Allocator, dataset: []const u8) !void {
+    // Validate dataset name contains no shell metacharacters
+    if (!isValidDatasetName(dataset)) return error.InvalidDatasetName;
+
+    // Use direct execve, not shell
+    var child = std.process.Child.init(&[_][]const u8{
+        "/sbin/zfs", "destroy", "-r", dataset
+    }, allocator);
+    // ...
+}
+
+fn isValidDatasetName(name: []const u8) bool {
+    // Only allow: alphanumeric, underscore, hyphen, slash, colon
+    for (name) |c| {
+        if (!std.ascii.isAlphanumeric(c) and
+            c != '_' and c != '-' and c != '/' and c != ':' and c != '.') {
+            return false;
+        }
+    }
+    return true;
+}
+```
+
+**Fix 2: Path Traversal Hardening**
+
+```zig
+pub fn validateExtractPath(base: []const u8, target: []const u8) ![]const u8 {
+    // Resolve to absolute path
+    const resolved = try std.fs.path.resolve(allocator, &.{ base, target });
+    defer allocator.free(resolved);
+
+    // Verify resolved path starts with base
+    if (!std.mem.startsWith(u8, resolved, base)) {
+        return error.PathTraversal;
+    }
+
+    // Check no component is ".." after normalization
+    var it = std.mem.split(u8, target, "/");
+    while (it.next()) |component| {
+        if (std.mem.eql(u8, component, "..")) {
+            return error.PathTraversal;
+        }
+    }
+
+    return resolved;
+}
+```
+
+**Fix 3: Symlink Target Validation**
+
+```zig
+pub fn validateSymlinkTarget(base: []const u8, link_path: []const u8, target: []const u8) !void {
+    // Get directory containing the symlink
+    const link_dir = std.fs.path.dirname(link_path) orelse base;
+
+    // Resolve symlink target relative to link location
+    const resolved = try std.fs.path.resolve(allocator, &.{ link_dir, target });
+    defer allocator.free(resolved);
+
+    // Verify target stays within base
+    if (!std.mem.startsWith(u8, resolved, base)) {
+        return error.SymlinkEscape;
+    }
+}
+```
+
+### CLI Commands
+
+```bash
+axiom security-audit               # Run security audit on codebase
+axiom security-audit --fix         # Apply automatic fixes where safe
+```
+
+### Deliverables
+
+- [ ] Replace shell command construction with direct execve in zfs.zig
+- [ ] Add dataset name validation function
+- [ ] Harden path traversal checks in secure_tar.zig
+- [ ] Implement symlink target resolution validation
+- [ ] Add security audit command
+- [ ] Write regression tests for each vulnerability
+- [ ] Document secure coding guidelines
+
+---
+
+## Phase 52: Error Handling Overhaul
+
+**Priority**: High
+**Complexity**: Medium
+**Status**: Planned
+
+### Purpose
+
+Eliminate silent error swallowing and establish consistent error handling patterns across all modules.
+
+### Issues Identified
+
+1. **Silent Error Swallowing (40+ instances)**
+   - **Files**: hsm.zig, bootstrap.zig, desktop.zig, service.zig, import.zig, bundle.zig, launcher.zig, runtime.zig, sat.zig
+   - **Pattern**: `catch {}` blocks silently ignore errors
+   ```zig
+   // PROBLEMATIC - error silently ignored
+   std.fs.deleteTreeAbsolute(tmp_dir) catch {};
+   ```
+
+2. **Inconsistent Error Types**
+   - Each module defines its own error enum: `ZfsError`, `StoreError`, `ServiceError`, `CacheError`
+   - No common error interface for module boundaries
+
+3. **Unchecked C Interop Returns**
+   - **Location**: `zfs.zig` lines 91-125
+   - **Pattern**: `_ = c.nvlist_add_string(...)` ignores return values
+
+### Implementation
+
+**Error Abstraction Layer:**
+
+```zig
+// src/errors.zig - Unified error module
+pub const AxiomError = error{
+    // Categorized errors with context
+    SecurityViolation,
+    PathTraversal,
+    SymlinkEscape,
+    CommandInjection,
+
+    StoreCorruption,
+    PackageNotFound,
+    ManifestInvalid,
+
+    ZfsOperationFailed,
+    DatasetNotFound,
+    PoolNotAvailable,
+
+    NetworkError,
+    CacheUnreachable,
+    FetchTimeout,
+
+    PermissionDenied,
+    InsufficientPrivileges,
+};
+
+pub const ErrorContext = struct {
+    err: AxiomError,
+    message: []const u8,
+    source_file: []const u8,
+    source_line: u32,
+    module: []const u8,
+    recoverable: bool,
+    suggestion: ?[]const u8,
+
+    pub fn format(self: ErrorContext, writer: anytype) !void {
+        try writer.print("{s}:{d}: {s} error: {s}\n", .{
+            self.source_file, self.source_line, self.module, self.message
+        });
+        if (self.suggestion) |s| {
+            try writer.print("  suggestion: {s}\n", .{s});
+        }
+    }
+};
+
+pub fn logError(comptime src: std.builtin.SourceLocation, err: anyerror, msg: []const u8) void {
+    // Log with full context for debugging
+    std.log.err("{s}:{d} in {s}: {s} - {}", .{
+        src.file, src.line, src.fn_name, msg, err
+    });
+}
+```
+
+**Replace Silent Catch Blocks:**
+
+```zig
+// BEFORE
+std.fs.deleteTreeAbsolute(tmp_dir) catch {};
+
+// AFTER - Log and continue if non-critical
+std.fs.deleteTreeAbsolute(tmp_dir) catch |err| {
+    logError(@src(), err, "Failed to clean up temp directory");
+    // Continue - cleanup failure is non-fatal
+};
+
+// OR - Propagate if critical
+std.fs.deleteTreeAbsolute(tmp_dir) catch |err| {
+    return ErrorContext{
+        .err = .CleanupFailed,
+        .message = "Failed to remove temporary directory",
+        .recoverable = true,
+        .suggestion = "Manually remove: " ++ tmp_dir,
+    };
+};
+```
+
+**Check C Interop Returns:**
+
+```zig
+// BEFORE
+_ = c.nvlist_add_string(props, "mountpoint", mountpoint);
+
+// AFTER
+const ret = c.nvlist_add_string(props, "mountpoint", mountpoint);
+if (ret != 0) {
+    return error.NvlistOperationFailed;
+}
+```
+
+### Deliverables
+
+- [ ] Create unified error module (src/errors.zig)
+- [ ] Replace all `catch {}` with logged handlers (40+ instances)
+- [ ] Add return value checks for all C interop calls
+- [ ] Implement ErrorContext for rich error information
+- [ ] Add error aggregation for batch operations
+- [ ] Create error handling style guide
+- [ ] Add linter rule to detect empty catch blocks
+
+---
+
+## Phase 53: Input Validation Framework
+
+**Priority**: High
+**Complexity**: Medium
+**Status**: Planned
+
+### Purpose
+
+Establish comprehensive input validation for all external data including URLs, YAML, JSON, and user-provided paths.
+
+### Issues Identified
+
+1. **URL Parsing Without Validation**
+   - **Location**: `cache_protocol.zig` lines 783-798
+   - **Issue**: Host/port extraction without sanitization
+   ```zig
+   const host = url[host_start..path_start];  // No validation
+   const path = if (path_start < url.len) url[path_start..] else "/";  // Could contain traversal
+   ```
+
+2. **JSON Generation Without Escaping**
+   - **Location**: `cache_protocol.zig` lines 37-62, 117-147
+   - **Issue**: String interpolation without escaping special characters
+   ```zig
+   try std.fmt.format(buffer.writer(), "\"name\":\"{s}\",", .{self.name});  // No escaping!
+   ```
+
+3. **Incomplete YAML Parser**
+   - **Location**: `manifest.zig` lines 117-149
+   - **Issue**: Custom parser with documented limitations, silently ignores constructs
+
+4. **Missing Numeric Bounds Checking**
+   - **Location**: `bootenv.zig` lines 139-140
+   - **Issue**: `parseSize()` and `parseTimestamp()` accept unbounded input
+
+### Implementation
+
+**URL Validator:**
+
+```zig
+// src/validation.zig
+pub const UrlValidator = struct {
+    pub const ValidationResult = struct {
+        valid: bool,
+        scheme: ?[]const u8,
+        host: ?[]const u8,
+        port: ?u16,
+        path: ?[]const u8,
+        error_message: ?[]const u8,
+    };
+
+    pub fn validate(url: []const u8) ValidationResult {
+        // Check scheme
+        if (!std.mem.startsWith(u8, url, "http://") and
+            !std.mem.startsWith(u8, url, "https://")) {
+            return .{ .valid = false, .error_message = "Invalid scheme" };
+        }
+
+        // Parse and validate host
+        const host = extractHost(url) orelse
+            return .{ .valid = false, .error_message = "Invalid host" };
+
+        // Validate host characters (no control chars, null bytes)
+        for (host) |c| {
+            if (c < 0x20 or c == 0x7F) {
+                return .{ .valid = false, .error_message = "Invalid character in host" };
+            }
+        }
+
+        // Validate port range
+        const port = extractPort(url) orelse 80;
+        if (port == 0) {
+            return .{ .valid = false, .error_message = "Invalid port" };
+        }
+
+        // Validate path (no traversal)
+        const path = extractPath(url);
+        if (std.mem.indexOf(u8, path, "..")) |_| {
+            return .{ .valid = false, .error_message = "Path traversal detected" };
+        }
+
+        return .{
+            .valid = true,
+            .scheme = extractScheme(url),
+            .host = host,
+            .port = port,
+            .path = path,
+        };
+    }
+};
+```
+
+**JSON Escaping:**
+
+```zig
+pub fn escapeJsonString(allocator: Allocator, input: []const u8) ![]const u8 {
+    var result = std.ArrayList(u8).init(allocator);
+    errdefer result.deinit();
+
+    for (input) |c| {
+        switch (c) {
+            '"' => try result.appendSlice("\\\""),
+            '\\' => try result.appendSlice("\\\\"),
+            '\n' => try result.appendSlice("\\n"),
+            '\r' => try result.appendSlice("\\r"),
+            '\t' => try result.appendSlice("\\t"),
+            0x00...0x1F => {
+                // Control characters as \uXXXX
+                try result.writer().print("\\u{X:0>4}", .{c});
+            },
+            else => try result.append(c),
+        }
+    }
+
+    return result.toOwnedSlice();
+}
+
+// Usage in cache_protocol.zig
+const escaped_name = try escapeJsonString(allocator, self.name);
+defer allocator.free(escaped_name);
+try std.fmt.format(buffer.writer(), "\"name\":\"{s}\",", .{escaped_name});
+```
+
+**Numeric Bounds Validation:**
+
+```zig
+pub fn parseSize(input: []const u8) !u64 {
+    const max_size: u64 = 1 << 50;  // 1 PB max
+
+    // Parse numeric part
+    var i: usize = 0;
+    while (i < input.len and std.ascii.isDigit(input[i])) : (i += 1) {}
+
+    if (i == 0) return error.InvalidSize;
+
+    const num = std.fmt.parseInt(u64, input[0..i], 10) catch
+        return error.SizeOverflow;
+
+    // Parse suffix
+    const suffix = input[i..];
+    const multiplier: u64 = switch (suffix.len) {
+        0 => 1,
+        else => switch (suffix[0]) {
+            'K', 'k' => 1024,
+            'M', 'm' => 1024 * 1024,
+            'G', 'g' => 1024 * 1024 * 1024,
+            'T', 't' => 1024 * 1024 * 1024 * 1024,
+            else => return error.InvalidSuffix,
+        },
+    };
+
+    // Check overflow
+    if (num > max_size / multiplier) return error.SizeOverflow;
+
+    return num * multiplier;
+}
+```
+
+### Deliverables
+
+- [ ] Create validation module (src/validation.zig)
+- [ ] Implement URL validator with full sanitization
+- [ ] Implement JSON string escaping
+- [ ] Add bounds checking to all numeric parsers
+- [ ] Harden YAML parser or document limitations clearly
+- [ ] Add validation for package names, version strings
+- [ ] Create fuzz tests for all parsers
+- [ ] Document validation requirements per input type
+
+---
+
+## Phase 54: Memory Safety Audit
+
+**Priority**: High
+**Complexity**: Medium
+**Status**: Planned
+
+### Purpose
+
+Audit and fix memory management issues including improper cleanup, missing deinit calls, and allocation tracking.
+
+### Issues Identified
+
+1. **Global Config Lifecycle**
+   - **Location**: `config.zig` lines 188-212
+   - **Issue**: Global mutable state with poor cleanup semantics
+   ```zig
+   var global_config: ?Config = null;  // Never properly freed in production
+   ```
+
+2. **ArrayList Cleanup in Error Paths**
+   - **Locations**: `cli.zig` (17), `service.zig` (14), `manifest.zig` (9), `resolver.zig` (31)
+   - **Issue**: Not all error paths have proper `errdefer` for cleanup
+
+3. **toOwnedSlice Failure Handling**
+   - **Location**: `service.zig` lines 578-580
+   - **Issue**: Failure returns empty slice but original list not freed
+   ```zig
+   svc.dependencies = deps_list.toOwnedSlice() catch &[_][]const u8{};
+   // deps_list still holds allocations if this fails!
+   ```
+
+4. **Fragile Deferred Cleanup**
+   - **Location**: `cache_protocol.zig` lines 816-835
+   - **Issue**: ArrayList deinit timing issues
+
+### Implementation
+
+**Global Config Lifecycle:**
+
+```zig
+// BEFORE
+var global_config: ?Config = null;
+
+// AFTER - Proper lifecycle management
+pub const ConfigManager = struct {
+    config: ?Config = null,
+    allocator: Allocator,
+    ref_count: u32 = 0,
+
+    pub fn acquire(self: *ConfigManager) !*Config {
+        self.ref_count += 1;
+        if (self.config) |*cfg| return cfg;
+
+        self.config = try Config.load(self.allocator);
+        return &self.config.?;
+    }
+
+    pub fn release(self: *ConfigManager) void {
+        if (self.ref_count > 0) self.ref_count -= 1;
+        if (self.ref_count == 0 and self.config != null) {
+            self.config.?.deinit();
+            self.config = null;
+        }
+    }
+};
+
+// Thread-local or passed explicitly
+threadlocal var config_manager: ?ConfigManager = null;
+```
+
+**Safe ArrayList Pattern:**
+
+```zig
+// BEFORE - toOwnedSlice failure leaks
+svc.dependencies = deps_list.toOwnedSlice() catch &[_][]const u8{};
+
+// AFTER - Proper cleanup on failure
+svc.dependencies = deps_list.toOwnedSlice() catch |err| {
+    // Free all items in the list
+    for (deps_list.items) |item| {
+        allocator.free(item);
+    }
+    deps_list.deinit();
+    return err;  // Or return empty and log
+};
+```
+
+**Allocation Tracker for Debug:**
+
+```zig
+pub const TrackedAllocator = struct {
+    backing: Allocator,
+    allocations: std.AutoHashMap(usize, AllocationInfo),
+    mutex: std.Thread.Mutex = .{},
+
+    const AllocationInfo = struct {
+        size: usize,
+        source: std.builtin.SourceLocation,
+        stack_trace: ?*std.builtin.StackTrace,
+    };
+
+    pub fn alloc(self: *TrackedAllocator, len: usize, src: std.builtin.SourceLocation) ![]u8 {
+        const ptr = try self.backing.alloc(len);
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.allocations.put(@intFromPtr(ptr.ptr), .{
+            .size = len,
+            .source = src,
+        });
+        return ptr;
+    }
+
+    pub fn dumpLeaks(self: *TrackedAllocator) void {
+        var it = self.allocations.iterator();
+        while (it.next()) |entry| {
+            std.log.warn("Leak: {d} bytes from {s}:{d}", .{
+                entry.value_ptr.size,
+                entry.value_ptr.source.file,
+                entry.value_ptr.source.line,
+            });
+        }
+    }
+};
+```
+
+### Deliverables
+
+- [ ] Audit all ArrayList/HashMap allocations (264+ instances)
+- [ ] Add errdefer to all allocation error paths
+- [ ] Fix toOwnedSlice failure handling
+- [ ] Implement ConfigManager with proper lifecycle
+- [ ] Create TrackedAllocator for debug builds
+- [ ] Add leak detection to test suite
+- [ ] Document ownership conventions
+- [ ] Add static analysis for missing deinit
+
+---
+
+## Phase 55: Concurrency Safety
+
+**Priority**: High
+**Complexity**: Medium
+**Status**: Planned
+**Dependencies**: Phase 30 (Thread-Safe libzfs)
+
+### Purpose
+
+Address race conditions, mutex handling, and concurrent operation safety throughout the codebase.
+
+### Issues Identified
+
+1. **ZFS Handle Mutex Undocumented**
+   - **Location**: `zfs.zig` line 137
+   - **Issue**: Mutex exists but no documentation on which operations require locking
+
+2. **GC Lock File Race Condition**
+   - **Location**: `gc.zig` lines 85-115, 123
+   - **Issue**: TOCTOU between lock release and file deletion
+   ```zig
+   fn releaseLock(self: *GarbageCollector) void {
+       file.close();
+       self.lock_file = null;
+       std.fs.cwd().deleteFile(GC_LOCK_FILE_PATH) catch {};  // Race here!
+   }
+   ```
+
+3. **Global Config Mutex Panic**
+   - **Location**: `config.zig` lines 189-201
+   - **Issue**: `getGlobalConfig()` may panic if initialization fails
+
+4. **Lock Acquisition Fallback Logic**
+   - **Location**: `gc.zig` lines 85-115
+   - **Issue**: Returns from catch block without verifying lock acquired
+
+### Implementation
+
+**ZFS Operation Locking Documentation:**
+
+```zig
+pub const ZfsHandle = struct {
+    handle: *c.libzfs_handle_t,
+    mutex: std.Thread.Mutex = .{},
+
+    /// Thread-safety documentation:
+    /// - All dataset operations (create, destroy, snapshot) MUST hold mutex
+    /// - Property reads are thread-safe without mutex
+    /// - Multiple ZfsHandle instances can operate concurrently
+    ///
+    /// Operations requiring mutex:
+    /// - createDataset()
+    /// - destroyDataset()
+    /// - createSnapshot()
+    /// - cloneSnapshot()
+    /// - setProperty()
+    ///
+    /// Thread-safe without mutex:
+    /// - getProperty()
+    /// - listDatasets() [read-only]
+    /// - exists()
+
+    pub fn withLock(self: *ZfsHandle, comptime func: anytype) @TypeOf(func).ReturnType {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return func(self);
+    }
+};
+```
+
+**Atomic Lock File Handling:**
+
+```zig
+pub fn acquireLock(self: *GarbageCollector) !void {
+    // Use O_EXCL for atomic creation
+    const lock_file = std.fs.cwd().createFile(GC_LOCK_FILE_PATH, .{
+        .exclusive = true,
+        .lock = .exclusive,
+    }) catch |err| switch (err) {
+        error.PathAlreadyExists => return GCError.GCAlreadyRunning,
+        error.WouldBlock => return GCError.GCAlreadyRunning,
+        else => return err,
+    };
+
+    // Write PID for debugging
+    try lock_file.writer().print("{d}\n", .{std.os.linux.getpid()});
+
+    self.lock_file = lock_file;
+}
+
+pub fn releaseLock(self: *GarbageCollector) void {
+    if (self.lock_file) |file| {
+        // Unlink while still holding lock - atomic
+        std.fs.cwd().deleteFile(GC_LOCK_FILE_PATH) catch {};
+        file.close();
+        self.lock_file = null;
+    }
+}
+```
+
+**Config Initialization Safety:**
+
+```zig
+pub fn getGlobalConfig() !*Config {
+    global_config_mutex.lock();
+    defer global_config_mutex.unlock();
+
+    if (global_config) |*cfg| return cfg;
+
+    global_config = Config.load(default_allocator) catch |err| {
+        // Don't panic - return error
+        std.log.err("Failed to load config: {}", .{err});
+        return err;
+    };
+
+    return &global_config.?;
+}
+```
+
+### Deliverables
+
+- [ ] Document thread-safety requirements for all public APIs
+- [ ] Fix GC lock file race condition
+- [ ] Add withLock() helper for ZfsHandle
+- [ ] Remove panic paths from config initialization
+- [ ] Add thread-safety tests
+- [ ] Implement lock ordering documentation to prevent deadlocks
+- [ ] Add deadlock detection in debug builds
+
+---
+
+## Phase 56: Module Decoupling
+
+**Priority**: Medium
+**Complexity**: High
+**Status**: Planned
+
+### Purpose
+
+Reduce tight coupling between modules, especially in the CLI module which imports 26 other modules directly.
+
+### Issues Identified
+
+1. **CLI Module Coupling**
+   - **Location**: `cli.zig` lines 1-56
+   - **Issue**: CLI imports 26 modules directly
+   ```zig
+   const zfs = @import("zfs.zig");
+   const store = @import("store.zig");
+   const profile = @import("profile.zig");
+   // ... 23 more imports
+   ```
+
+2. **No Abstraction Between Modules**
+   - Each module directly accesses internals of other modules
+   - No interface/trait system for polymorphism
+
+3. **Error Type Fragmentation**
+   - Each module has its own error enum
+   - Errors don't compose at boundaries
+
+### Implementation
+
+**Module Interface Pattern:**
+
+```zig
+// src/interfaces.zig - Define module contracts
+
+pub const PackageStore = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    const VTable = struct {
+        getPackage: *const fn(*anyopaque, []const u8) anyerror!?Package,
+        listPackages: *const fn(*anyopaque) anyerror![]Package,
+        importPackage: *const fn(*anyopaque, ImportSource) anyerror!PackageId,
+    };
+
+    pub fn getPackage(self: PackageStore, name: []const u8) !?Package {
+        return self.vtable.getPackage(self.ptr, name);
+    }
+
+    // ... other methods
+};
+
+// Implementations can vary (real store, mock store, etc.)
+pub fn createRealStore(allocator: Allocator) PackageStore {
+    return .{
+        .ptr = @ptrCast(real_store),
+        .vtable = &real_vtable,
+    };
+}
+
+pub fn createMockStore(allocator: Allocator) PackageStore {
+    return .{
+        .ptr = @ptrCast(mock_store),
+        .vtable = &mock_vtable,
+    };
+}
+```
+
+**CLI Dependency Injection:**
+
+```zig
+// src/cli.zig - Use interfaces instead of direct imports
+
+pub const CliContext = struct {
+    allocator: Allocator,
+    store: interfaces.PackageStore,
+    profile_manager: interfaces.ProfileManager,
+    resolver: interfaces.Resolver,
+    output: interfaces.Output,
+
+    pub fn init(allocator: Allocator) !CliContext {
+        return .{
+            .allocator = allocator,
+            .store = try store_impl.create(allocator),
+            .profile_manager = try profile_impl.create(allocator),
+            .resolver = try resolver_impl.create(allocator),
+            .output = .{ .writer = std.io.getStdOut().writer() },
+        };
+    }
+};
+
+// Commands receive context, not global state
+pub fn cmdResolve(ctx: *CliContext, args: ResolveArgs) !void {
+    const profile = try ctx.profile_manager.load(args.profile_name);
+    const result = try ctx.resolver.resolve(profile, ctx.store);
+    try ctx.output.printResolution(result);
+}
+```
+
+**Layered Architecture:**
+
+```
+┌─────────────────────────────────────────┐
+│              CLI Layer                   │
+│  (cli.zig - thin, uses interfaces)      │
+└─────────────────┬───────────────────────┘
+                  │ depends on
+┌─────────────────▼───────────────────────┐
+│           Service Layer                  │
+│  (interfaces.zig - contracts)           │
+└─────────────────┬───────────────────────┘
+                  │ implemented by
+┌─────────────────▼───────────────────────┐
+│         Implementation Layer             │
+│  (store.zig, resolver.zig, etc.)        │
+└─────────────────┬───────────────────────┘
+                  │ depends on
+┌─────────────────▼───────────────────────┐
+│          Foundation Layer                │
+│  (zfs.zig, errors.zig, validation.zig)  │
+└─────────────────────────────────────────┘
+```
+
+### Deliverables
+
+- [ ] Create interfaces.zig with module contracts
+- [ ] Refactor CLI to use dependency injection
+- [ ] Create mock implementations for testing
+- [ ] Reduce direct imports in CLI from 26 to ~5
+- [ ] Document module boundaries and dependencies
+- [ ] Create architecture diagram
+- [ ] Add circular dependency detection to build
+
+---
+
+## Code-Boundary Assessment Summary
+
+| Phase | Category | Severity | Issues | Files Affected |
+|-------|----------|----------|--------|----------------|
+| 51 | Security | Critical | 3 | zfs.zig, secure_tar.zig |
+| 52 | Error Handling | High | 40+ | Multiple (hsm, bootstrap, desktop, service, etc.) |
+| 53 | Input Validation | High | 5+ | cache_protocol, manifest, bootenv |
+| 54 | Memory Safety | High | 3+ | config, service, cache_protocol |
+| 55 | Concurrency | High | 4 | gc, config, zfs |
+| 56 | Architecture | Medium | Multiple | cli, all modules |
+
+### Priority Order
+
+1. **Phase 51** - Critical security fixes (command injection, path traversal)
+2. **Phase 53** - Input validation (prevents exploitation)
+3. **Phase 52** - Error handling (enables debugging)
+4. **Phase 54** - Memory safety (stability)
+5. **Phase 55** - Concurrency safety (reliability)
+6. **Phase 56** - Module decoupling (maintainability)
 
 ---
 
