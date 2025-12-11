@@ -38,8 +38,18 @@ This document outlines the planned enhancements for Axiom beyond the core 8 phas
 | 36 | HSM/PKCS#11 Signing | Medium | High | Phase 15 | ✓ Complete |
 | 37 | Multi-Party Signing | Medium | High | Phase 36 | ✓ Complete |
 | 38 | Service Management Integration | High | High | Phase 22 | ✓ Complete |
-| 39 | Boot Environment Support | High | Medium | None | Planned |
-| 40 | Remote Binary Cache Protocol | High | High | Phase 17 | Planned |
+| 39 | Boot Environment Support | High | Medium | None | ✓ Complete |
+| 40 | Remote Binary Cache Protocol | High | High | Phase 17 | ✓ Complete |
+| 41 | Format Versioning | High | Low | None | Planned |
+| 42 | Store Invariants & GC Guarantees | High | Medium | None | Planned |
+| 43 | Advanced Resolver Semantics | Medium | High | Phase 16 | Planned |
+| 44 | Realization Specification | High | Medium | None | Planned |
+| 45 | Build Provenance Enforcement | High | Medium | Phase 15 | Planned |
+| 46 | Binary Cache Trust Model | High | Medium | Phase 40 | Planned |
+| 47 | Boot Environment Deep Integration | Medium | High | Phase 39 | Planned |
+| 48 | Multi-User Security Model | High | High | Phase 12 | Planned |
+| 49 | Error Model & Recovery | High | Medium | None | Planned |
+| 50 | Testing & Validation Framework | Critical | High | None | Planned |
 
 ---
 
@@ -3821,6 +3831,1320 @@ Created `src/cache_protocol.zig` with complete binary cache protocol:
 - Compression support (zstd, gzip, xz)
 - YAML configuration file parsing
 - HTTP range requests for efficient transfers
+
+---
+
+## Phase 41: Format Versioning
+
+**Priority**: High
+**Complexity**: Low
+**Status**: Planned
+
+### Purpose
+
+Define version identifiers for all on-disk formats to enable future migrations, compatibility checking, and graceful upgrades.
+
+### Requirements
+
+1. **Manifest Format Versioning**
+   ```yaml
+   # manifest.yaml
+   format_version: "1.0"
+   name: bash
+   version: "5.2.0"
+   ...
+   ```
+
+2. **Profile Format Versioning**
+   ```yaml
+   # profile.yaml
+   format_version: "1.0"
+   name: development
+   ...
+   ```
+
+3. **Store Layout Versioning**
+   ```
+   /axiom/store/
+   ├── .store_version    # Contains "1.0"
+   ├── pkg/
+   └── meta/
+   ```
+
+4. **Lock File Versioning**
+   ```yaml
+   # profile.lock.yaml
+   format_version: "1.0"
+   resolved_at: "2025-01-15T10:30:00Z"
+   ...
+   ```
+
+### Implementation
+
+**Required Changes:**
+
+1. **Version Constants**
+   ```zig
+   pub const FormatVersions = struct {
+       pub const manifest: []const u8 = "1.0";
+       pub const profile: []const u8 = "1.0";
+       pub const lock: []const u8 = "1.0";
+       pub const store: []const u8 = "1.0";
+       pub const provenance: []const u8 = "1.0";
+   };
+   ```
+
+2. **Version Validation**
+   - Parse version field first in all YAML files
+   - Reject incompatible versions with clear error
+   - Warn on older-but-compatible versions
+
+3. **Migration Framework**
+   ```zig
+   pub const Migration = struct {
+       from_version: []const u8,
+       to_version: []const u8,
+       migrate: *const fn(allocator: Allocator, data: []const u8) anyerror![]const u8,
+   };
+   ```
+
+4. **CLI Commands**
+   ```bash
+   axiom store-version              # Show store format version
+   axiom migrate --check            # Check if migration needed
+   axiom migrate --dry-run          # Show migration plan
+   axiom migrate                    # Perform migration
+   ```
+
+### Deliverables
+
+- [ ] Add `format_version` field to manifest.yaml schema
+- [ ] Add `format_version` field to profile.yaml schema
+- [ ] Add `format_version` field to profile.lock.yaml schema
+- [ ] Add `format_version` field to provenance.yaml schema
+- [ ] Create `.store_version` file in store root
+- [ ] Implement version parsing and validation
+- [ ] Implement migration framework
+- [ ] Document version compatibility matrix
+
+---
+
+## Phase 42: Store Invariants & GC Guarantees
+
+**Priority**: High
+**Complexity**: Medium
+**Status**: Planned
+
+### Purpose
+
+Define and enforce formal invariants for the package store, providing strong guarantees for garbage collection, concurrent operations, and crash recovery.
+
+### Requirements
+
+1. **Formal Store Invariants**
+   - Every package in `/axiom/store/pkg/` has a valid manifest
+   - Package hashes match content (content-addressable guarantee)
+   - No orphaned datasets (every dataset has a package)
+   - Reference counts are accurate
+
+2. **Reference Counting Model**
+   ```
+   Package Reference Sources:
+   ├── Profiles (profile.lock.yaml references)
+   ├── Environments (realized environments)
+   ├── Running processes (in-use packages)
+   └── Build dependencies (active builds)
+   ```
+
+3. **GC Safety Guarantees**
+   - Never delete packages with active references
+   - Atomic deletion (package fully removed or not at all)
+   - Safe concurrent GC with imports/realizations
+   - Crash-safe (no partial states after power loss)
+
+4. **Partial Import Handling**
+   - Detect incomplete imports on startup
+   - Clean up or resume partial imports
+   - Transaction log for import operations
+
+### Implementation
+
+**Core Components:**
+
+1. **Store Integrity Checker**
+   ```zig
+   pub const StoreIntegrity = struct {
+       pub fn verify(store_path: []const u8) !IntegrityReport;
+       pub fn repair(store_path: []const u8, report: IntegrityReport) !void;
+
+       pub const IntegrityReport = struct {
+           orphaned_datasets: [][]const u8,
+           missing_manifests: [][]const u8,
+           hash_mismatches: []HashMismatch,
+           broken_references: []BrokenRef,
+           partial_imports: [][]const u8,
+       };
+   };
+   ```
+
+2. **Reference Counter**
+   ```zig
+   pub const RefCounter = struct {
+       pub fn countRefs(pkg_id: PackageId) !u32;
+       pub fn getRefSources(pkg_id: PackageId) ![]RefSource;
+       pub fn isReferenced(pkg_id: PackageId) !bool;
+
+       pub const RefSource = union(enum) {
+           profile: []const u8,
+           environment: []const u8,
+           process: std.posix.pid_t,
+           build: []const u8,
+       };
+   };
+   ```
+
+3. **Garbage Collector with Guarantees**
+   ```zig
+   pub const GarbageCollector = struct {
+       pub fn collect(options: GcOptions) !GcResult;
+
+       pub const GcOptions = struct {
+           dry_run: bool = false,
+           check_processes: bool = true,  // Check /proc for in-use packages
+           max_delete: ?u32 = null,        // Safety limit
+           exclude_patterns: [][]const u8 = &.{},
+       };
+
+       pub const GcResult = struct {
+           deleted_count: u32,
+           freed_bytes: u64,
+           skipped_referenced: u32,
+           errors: []GcError,
+       };
+   };
+   ```
+
+4. **Transaction Log**
+   ```
+   /axiom/store/.txlog/
+   ├── 00001.import.pending     # In-progress import
+   ├── 00002.import.complete    # Completed import
+   └── 00003.gc.pending         # In-progress GC
+   ```
+
+### CLI Commands
+
+```bash
+axiom store-verify              # Verify store integrity
+axiom store-verify --repair     # Repair detected issues
+axiom gc --dry-run              # Show what would be deleted
+axiom gc --max 100              # Delete at most 100 packages
+axiom gc --check-processes      # Check for in-use packages
+axiom refs <package>            # Show all references to package
+```
+
+### Deliverables
+
+- [ ] Document formal store invariants
+- [ ] Implement StoreIntegrity checker
+- [ ] Implement RefCounter with all reference sources
+- [ ] Implement process scanning for in-use packages
+- [ ] Implement transaction log for crash recovery
+- [ ] Add --repair flag to store-verify
+- [ ] Add comprehensive GC safety checks
+- [ ] Write invariant verification tests
+
+---
+
+## Phase 43: Advanced Resolver Semantics
+
+**Priority**: Medium
+**Complexity**: High
+**Status**: Planned
+
+### Purpose
+
+Extend the SAT-based resolver with advanced dependency semantics required for a mature package ecosystem.
+
+### Requirements
+
+1. **Virtual Providers**
+   ```yaml
+   # openssl package
+   provides:
+     - ssl-library
+     - crypto-library
+
+   # libressl package
+   provides:
+     - ssl-library
+     - crypto-library
+
+   # dependent package
+   dependencies:
+     - name: ssl-library  # Satisfied by either openssl or libressl
+       virtual: true
+   ```
+
+2. **Optional Dependencies**
+   ```yaml
+   dependencies:
+     - name: readline
+       optional: true
+       description: "Enables command-line editing"
+   ```
+
+3. **Feature Flags (Conditional Dependencies)**
+   ```yaml
+   features:
+     gui:
+       description: "Build with GUI support"
+       dependencies:
+         - name: gtk4
+         - name: cairo
+
+     ssl:
+       description: "Enable SSL/TLS support"
+       dependencies:
+         - name: openssl
+
+   default_features:
+     - ssl
+   ```
+
+4. **Conflict Declarations**
+   ```yaml
+   conflicts:
+     - name: openssl
+       reason: "LibreSSL replaces OpenSSL"
+   ```
+
+5. **Version Pinning and Preferences**
+   ```yaml
+   # profile.yaml
+   preferences:
+     - name: python
+       prefer: "3.11.*"    # Prefer 3.11.x versions
+       avoid: "3.12.*"     # Avoid 3.12.x versions
+
+   pins:
+     - name: openssl
+       version: "3.0.12"   # Exact pin
+   ```
+
+### Implementation
+
+**Extended SAT Encoding:**
+
+```zig
+pub const ResolverExtensions = struct {
+    // Virtual providers
+    pub fn encodeVirtual(
+        encoder: *SatEncoder,
+        virtual_name: []const u8,
+        providers: []const PackageId,
+    ) !void;
+
+    // Optional dependencies
+    pub fn encodeOptional(
+        encoder: *SatEncoder,
+        pkg: PackageId,
+        dep: Dependency,
+        enabled: bool,
+    ) !void;
+
+    // Feature flags
+    pub fn encodeFeatures(
+        encoder: *SatEncoder,
+        pkg: PackageId,
+        enabled_features: []const []const u8,
+    ) !void;
+
+    // Conflicts
+    pub fn encodeConflict(
+        encoder: *SatEncoder,
+        pkg_a: PackageId,
+        pkg_b: PackageId,
+    ) !void;
+
+    // Preferences (soft constraints)
+    pub fn addPreference(
+        encoder: *SatEncoder,
+        pkg_name: []const u8,
+        weight: i32,
+    ) !void;
+};
+```
+
+**CLI Commands:**
+
+```bash
+axiom resolve myprofile --with-feature gui
+axiom resolve myprofile --without-feature ssl
+axiom resolve myprofile --prefer "python@3.11.*"
+axiom resolve myprofile --pin "openssl@3.0.12"
+axiom why-depends bash openssl         # Explain dependency chain
+axiom alternatives ssl-library         # List virtual providers
+```
+
+### Deliverables
+
+- [ ] Extend manifest schema for `provides`, `conflicts`, `features`
+- [ ] Extend profile schema for `preferences`, `pins`
+- [ ] Implement virtual provider resolution
+- [ ] Implement optional dependency handling
+- [ ] Implement feature flag system
+- [ ] Implement conflict detection
+- [ ] Implement preference/pin weighting
+- [ ] Add `why-depends` command
+- [ ] Add `alternatives` command
+- [ ] Document advanced resolver semantics
+
+---
+
+## Phase 44: Realization Specification
+
+**Priority**: High
+**Complexity**: Medium
+**Status**: Planned
+
+### Purpose
+
+Formally specify how packages are merged into realized environments, defining the exact semantics for directory merging, symlink handling, and ABI boundaries.
+
+### Requirements
+
+1. **Directory Merge Specification**
+   ```
+   Environment Layout:
+   /axiom/env/<name>/
+   ├── bin/           # Merged executables (symlinks to store)
+   ├── lib/           # Merged libraries (symlinks to store)
+   ├── share/         # Merged data files (symlinks to store)
+   ├── include/       # Merged headers (for dev environments)
+   ├── etc/           # Merged configuration templates
+   └── .axiom/        # Environment metadata
+       ├── manifest.yaml
+       ├── packages/   # List of included packages
+       └── activate    # Activation script
+   ```
+
+2. **Merge Strategies**
+   ```yaml
+   # Environment realization config
+   merge_strategy:
+     bin: symlink       # Symlink to store package
+     lib: symlink       # Symlink to store package
+     share: symlink     # Symlink to store package
+     etc: copy          # Copy (allows local modifications)
+   ```
+
+3. **Multiple Outputs**
+   ```yaml
+   # Package with multiple outputs
+   outputs:
+     bin:
+       description: "Runtime binaries"
+       paths: ["bin/"]
+     lib:
+       description: "Runtime libraries"
+       paths: ["lib/"]
+     dev:
+       description: "Development headers and static libs"
+       paths: ["include/", "lib/*.a", "lib/pkgconfig/"]
+     doc:
+       description: "Documentation"
+       paths: ["share/doc/", "share/man/"]
+
+   default_outputs: [bin, lib]
+   ```
+
+4. **ABI Boundary Definition**
+   ```
+   System Libraries (always from base):
+   ├── libc.so
+   ├── libm.so
+   ├── libpthread.so
+   └── libthr.so
+
+   Environment Libraries (from Axiom store):
+   ├── libssl.so
+   ├── libz.so
+   └── application-specific libs
+   ```
+
+### Implementation
+
+**Realization Engine:**
+
+```zig
+pub const RealizationSpec = struct {
+    pub const MergeStrategy = enum {
+        symlink,        // Create symlink to store
+        hardlink,       // Create hardlink (same filesystem only)
+        copy,           // Copy file (allows modification)
+        overlay,        // ZFS overlay dataset
+    };
+
+    pub const DirectoryRule = struct {
+        pattern: []const u8,      // e.g., "bin/*", "lib/*.so"
+        strategy: MergeStrategy,
+        conflict_policy: ConflictPolicy,
+    };
+
+    pub const OutputSelection = struct {
+        package: []const u8,
+        outputs: []const []const u8,  // ["bin", "lib"] or ["*"] for all
+    };
+};
+
+pub const Realizer = struct {
+    pub fn realize(
+        env_name: []const u8,
+        packages: []const PackageId,
+        spec: RealizationSpec,
+    ) !Environment;
+
+    pub fn verifyAbi(env: *Environment) !AbiReport;
+};
+```
+
+**CLI Commands:**
+
+```bash
+axiom realize myenv myprofile --outputs "python:bin,lib" --outputs "gcc:*"
+axiom realize myenv myprofile --merge-strategy lib=overlay
+axiom env-verify myenv                  # Verify environment integrity
+axiom env-outputs myenv                 # Show output breakdown
+```
+
+### Deliverables
+
+- [ ] Document formal realization specification
+- [ ] Extend manifest schema for multiple outputs
+- [ ] Implement output selection in realize command
+- [ ] Implement configurable merge strategies
+- [ ] Define and enforce ABI boundaries
+- [ ] Add environment verification command
+- [ ] Document ABI boundary rules
+
+---
+
+## Phase 45: Build Provenance Enforcement
+
+**Priority**: High
+**Complexity**: Medium
+**Status**: Planned
+
+### Purpose
+
+Enforce build provenance requirements, ensuring all packages have verifiable build history with cryptographic binding.
+
+### Requirements
+
+1. **Mandatory Provenance**
+   ```yaml
+   # provenance.yaml (required for all packages)
+   format_version: "1.0"
+   builder:
+     name: "axiom-builder"
+     version: "1.0.0"
+     host: "builder01.pgsdf.org"
+
+   source:
+     url: "https://ftp.gnu.org/gnu/bash/bash-5.2.tar.gz"
+     sha256: "abc123..."
+     fetched_at: "2025-01-15T10:00:00Z"
+
+   build:
+     started_at: "2025-01-15T10:05:00Z"
+     completed_at: "2025-01-15T10:15:00Z"
+     environment:
+       PATH: "/axiom/env/build/bin:/usr/bin"
+       CC: "gcc"
+     commands:
+       - "./configure --prefix=/usr/local"
+       - "make -j8"
+       - "make install DESTDIR=$OUTPUT"
+
+   output:
+     hash: "sha256:def456..."
+     files_count: 142
+     total_size: 5242880
+
+   signature:
+     key_id: "PGSD0001A7E3F9B2"
+     algorithm: "ed25519"
+     value: "base64..."
+   ```
+
+2. **Hash Chain Binding**
+   ```
+   output_hash = sha256(package_contents)
+   provenance_hash = sha256(provenance_yaml_without_signature)
+   binding = sign(output_hash || provenance_hash, private_key)
+   ```
+
+3. **Reproducibility Verification**
+   ```bash
+   axiom verify-provenance bash@5.2.0
+   # Output:
+   #   Source: verified (sha256 match)
+   #   Build: reproducible (output hash match)
+   #   Signature: valid (PGSD0001A7E3F9B2)
+   ```
+
+4. **Policy Enforcement**
+   ```yaml
+   # /etc/axiom/policy.yaml
+   provenance:
+     require: true                    # Reject packages without provenance
+     require_signature: true          # Reject unsigned provenance
+     trusted_builders:
+       - "builder01.pgsdf.org"
+       - "builder02.pgsdf.org"
+     max_age_days: 365               # Reject old builds
+   ```
+
+### Implementation
+
+**Provenance Verifier:**
+
+```zig
+pub const ProvenanceVerifier = struct {
+    pub fn verify(pkg_path: []const u8) !ProvenanceReport;
+    pub fn verifyReproducibility(pkg_path: []const u8) !ReproducibilityReport;
+
+    pub const ProvenanceReport = struct {
+        has_provenance: bool,
+        source_verified: bool,
+        signature_valid: bool,
+        signer_trusted: bool,
+        build_age_days: u32,
+        policy_violations: []PolicyViolation,
+    };
+
+    pub const ReproducibilityReport = struct {
+        source_available: bool,
+        build_attempted: bool,
+        output_matches: bool,
+        diff_summary: ?[]const u8,
+    };
+};
+```
+
+**CLI Commands:**
+
+```bash
+axiom verify-provenance <package>       # Verify provenance
+axiom verify-provenance --rebuild       # Attempt reproducible rebuild
+axiom provenance-policy --check         # Check policy compliance
+axiom provenance-show <package>         # Display provenance details
+```
+
+### Deliverables
+
+- [ ] Make provenance.yaml mandatory for new imports
+- [ ] Implement hash chain binding (output + provenance)
+- [ ] Implement ProvenanceVerifier
+- [ ] Add reproducibility check (rebuild and compare)
+- [ ] Implement policy enforcement
+- [ ] Add verify-provenance command
+- [ ] Add provenance-policy command
+- [ ] Document provenance requirements
+
+---
+
+## Phase 46: Binary Cache Trust Model
+
+**Priority**: High
+**Complexity**: Medium
+**Status**: Planned
+
+### Purpose
+
+Complete the binary cache trust model with formal specifications for cache index format, metadata integrity, and conflict resolution.
+
+### Requirements
+
+1. **Cache Index Format**
+   ```yaml
+   # cache-index.yaml
+   format_version: "1.0"
+   cache_id: "pgsd-official-cache"
+   updated_at: "2025-01-15T12:00:00Z"
+
+   packages:
+     bash:
+       versions:
+         "5.2.0":
+           hash: "sha256:abc123..."
+           size: 5242880
+           compression: zstd
+           signatures: ["PGSD0001A7E3F9B2"]
+         "5.1.16":
+           hash: "sha256:def456..."
+           size: 5100000
+           compression: zstd
+           signatures: ["PGSD0001A7E3F9B2"]
+
+   signature:
+     key_id: "PGSD0001A7E3F9B2"
+     value: "base64..."
+   ```
+
+2. **Metadata Integrity**
+   ```
+   Index Integrity Chain:
+   ├── index_hash = sha256(cache-index.yaml without signature)
+   ├── index_signature = sign(index_hash, cache_key)
+   └── Each package entry references signed package
+   ```
+
+3. **Cache Eviction Rules**
+   ```yaml
+   # cache-policy.yaml
+   eviction:
+     max_size_gb: 100
+     max_age_days: 180
+     keep_latest_versions: 3
+     never_evict:
+       - "bash"
+       - "gcc"
+       - "python"
+   ```
+
+4. **Local/Remote Conflict Resolution**
+   ```yaml
+   conflict_policy:
+     same_version:
+       strategy: prefer_local     # local, remote, newest, hash_check
+     different_version:
+       strategy: prefer_newest
+     hash_mismatch:
+       strategy: fail             # fail, prefer_local, prefer_remote
+   ```
+
+### Implementation
+
+**Cache Index Manager:**
+
+```zig
+pub const CacheIndex = struct {
+    format_version: []const u8,
+    cache_id: []const u8,
+    updated_at: i64,
+    packages: std.StringHashMap(PackageVersions),
+    signature: ?Signature,
+
+    pub fn verify(self: *CacheIndex, trust_store: *TrustStore) !bool;
+    pub fn merge(self: *CacheIndex, other: *CacheIndex) !MergeResult;
+};
+
+pub const CacheEvictionPolicy = struct {
+    pub fn apply(cache_path: []const u8, policy: EvictionPolicy) !EvictionResult;
+};
+
+pub const ConflictResolver = struct {
+    pub fn resolve(
+        local: ?PackageMeta,
+        remote: ?PackageMeta,
+        policy: ConflictPolicy,
+    ) !Resolution;
+};
+```
+
+**CLI Commands:**
+
+```bash
+axiom cache-index --update              # Update local index from remotes
+axiom cache-index --verify              # Verify index signatures
+axiom cache-evict --dry-run             # Show eviction plan
+axiom cache-evict                       # Apply eviction policy
+axiom cache-conflicts                   # Show local/remote conflicts
+axiom cache-conflicts --resolve         # Resolve conflicts per policy
+```
+
+### Deliverables
+
+- [ ] Define cache-index.yaml format specification
+- [ ] Implement signed index verification
+- [ ] Implement index merging from multiple sources
+- [ ] Implement eviction policy engine
+- [ ] Implement conflict detection and resolution
+- [ ] Add cache-index management commands
+- [ ] Add cache-evict command
+- [ ] Document cache trust model
+
+---
+
+## Phase 47: Boot Environment Deep Integration
+
+**Priority**: Medium
+**Complexity**: High
+**Status**: Planned
+
+### Purpose
+
+Extend Phase 39's boot environment support with deeper integration into profiles, bootloader configuration, and automatic rollback semantics.
+
+### Requirements
+
+1. **BE-Aware Profile Layout**
+   ```
+   /axiom/
+   ├── profiles/
+   │   └── system/              # System profile
+   │       ├── profile.yaml
+   │       └── profile.lock.yaml
+   └── be/
+       ├── default/             # Default BE
+       │   └── system -> /axiom/profiles/system
+       ├── pre-upgrade/         # Snapshot BE
+       │   └── system/          # Frozen profile copy
+       │       └── profile.lock.yaml
+       └── testing/             # Test BE
+           └── system/
+               └── profile.lock.yaml
+   ```
+
+2. **Bootloader Integration**
+   ```bash
+   # FreeBSD boot menu integration
+   axiom be-activate testing
+   # Updates /boot/loader.conf.local:
+   #   vfs.root.mountfrom="zfs:zroot/ROOT/testing"
+
+   # GRUB integration (for Linux VMs)
+   axiom be-activate testing --bootloader grub
+   ```
+
+3. **Rollback Semantics**
+   ```yaml
+   # /etc/axiom/rollback-policy.yaml
+   rollback:
+     auto_rollback:
+       enabled: true
+       trigger:
+         - boot_failure           # Failed to boot
+         - service_failure        # Critical services down
+         - health_check_failure   # Custom health checks
+       grace_period_seconds: 300  # Time before auto-rollback
+
+     health_checks:
+       - name: "network"
+         command: "ping -c1 8.8.8.8"
+         required: true
+       - name: "sshd"
+         command: "service sshd status"
+         required: true
+   ```
+
+4. **Activation Hooks**
+   ```yaml
+   # BE activation hooks
+   hooks:
+     pre_activate:
+       - "/etc/axiom/hooks/pre-activate.sh"
+     post_activate:
+       - "/etc/axiom/hooks/post-activate.sh"
+     on_rollback:
+       - "/etc/axiom/hooks/notify-rollback.sh"
+   ```
+
+### Implementation
+
+**BE Profile Manager:**
+
+```zig
+pub const BeProfileManager = struct {
+    pub fn snapshotProfile(profile: []const u8, be_name: []const u8) !void;
+    pub fn restoreProfile(be_name: []const u8, profile: []const u8) !void;
+    pub fn diffProfiles(be_a: []const u8, be_b: []const u8) !ProfileDiff;
+};
+
+pub const BootloaderIntegration = struct {
+    pub fn activateBe(be_name: []const u8, options: ActivateOptions) !void;
+    pub fn configureAutoRollback(policy: RollbackPolicy) !void;
+    pub fn runHealthChecks() !HealthCheckResult;
+};
+```
+
+**CLI Commands:**
+
+```bash
+axiom be-snapshot myenv                 # Snapshot current profile to BE
+axiom be-diff default testing           # Show profile differences
+axiom be-health                         # Run health checks
+axiom be-rollback --reason "failed"     # Manual rollback with reason
+axiom system-upgrade --be               # Upgrade in new BE
+```
+
+### Deliverables
+
+- [ ] Design BE-aware profile storage layout
+- [ ] Implement profile snapshotting to BEs
+- [ ] Implement FreeBSD bootloader integration
+- [ ] Implement auto-rollback with health checks
+- [ ] Implement activation hooks
+- [ ] Add be-diff command
+- [ ] Add be-health command
+- [ ] Document BE integration workflows
+
+---
+
+## Phase 48: Multi-User Security Model
+
+**Priority**: High
+**Complexity**: High
+**Status**: Planned
+
+### Purpose
+
+Define and implement comprehensive multi-user security including isolation rules, access control, and safe handling of privileged binaries.
+
+### Requirements
+
+1. **Per-User Isolation**
+   ```
+   /axiom/
+   ├── store/                  # Shared (read-only for users)
+   │   └── pkg/
+   └── users/
+       ├── alice/
+       │   ├── profiles/       # Alice's private profiles
+       │   ├── env/            # Alice's environments
+       │   └── .config/        # User-specific config
+       └── bob/
+           ├── profiles/
+           └── env/
+   ```
+
+2. **Access Control Rules**
+   ```yaml
+   # /etc/axiom/access.yaml
+   store:
+     owner: root
+     group: axiom
+     mode: 0755              # Users can read
+
+   users:
+     template:
+       owner: $USER
+       group: $USER
+       mode: 0700            # Private by default
+
+   groups:
+     developers:
+       members: [alice, bob]
+       shared_profiles: [devtools]
+   ```
+
+3. **Setuid Binary Handling**
+   ```yaml
+   # Package manifest
+   setuid_binaries:
+     - path: "bin/sudo"
+       owner: root
+       mode: 4755
+       audit: true           # Log all executions
+
+   # Realization policy
+   setuid_policy:
+     allow: [sudo, ping, su]
+     deny_unknown: true
+     require_signature: true
+   ```
+
+4. **Privilege Separation**
+   ```
+   Operations by privilege level:
+
+   Root only:
+   ├── store imports
+   ├── system profile changes
+   ├── setuid binary installation
+   └── gc on shared store
+
+   Per-user (no root):
+   ├── user profile management
+   ├── user environment realization
+   └── user-local imports
+   ```
+
+### Implementation
+
+**Access Control Manager:**
+
+```zig
+pub const AccessControl = struct {
+    pub fn checkStoreAccess(user: User, operation: StoreOp) !bool;
+    pub fn checkUserSpace(user: User, target_user: User) !bool;
+    pub fn getEffectivePolicy(user: User) !Policy;
+
+    pub const StoreOp = enum {
+        read,
+        import,
+        gc,
+        modify_metadata,
+    };
+};
+
+pub const SetuidManager = struct {
+    pub fn validateSetuid(manifest: Manifest, policy: SetuidPolicy) !ValidationResult;
+    pub fn installSetuid(pkg_path: []const u8, binary: SetuidBinary) !void;
+    pub fn auditSetuidExecution(binary: []const u8, user: User) !void;
+};
+```
+
+**CLI Commands:**
+
+```bash
+axiom user-init                         # Initialize user space
+axiom user-profile-create dev           # Create user profile (no sudo)
+axiom user-realize myenv dev            # Realize to user space (no sudo)
+axiom access --show                     # Show access policy
+axiom audit-setuid                      # Show setuid audit log
+```
+
+### Deliverables
+
+- [ ] Design multi-user filesystem layout
+- [ ] Implement per-user profile isolation
+- [ ] Implement access control checks
+- [ ] Implement setuid binary policy enforcement
+- [ ] Implement setuid audit logging
+- [ ] Add user-* commands for unprivileged operation
+- [ ] Document multi-user security model
+- [ ] Write security policy configuration guide
+
+---
+
+## Phase 49: Error Model & Recovery
+
+**Priority**: High
+**Complexity**: Medium
+**Status**: Planned
+
+### Purpose
+
+Define a unified error taxonomy with comprehensive recovery procedures for all failure modes.
+
+### Requirements
+
+1. **Error Taxonomy**
+   ```zig
+   pub const AxiomError = error{
+       // Store errors
+       StoreCorrupted,
+       StoreVersionMismatch,
+       PackageNotFound,
+       PackageCorrupted,
+       ManifestInvalid,
+
+       // Import errors
+       ImportInterrupted,
+       ImportHashMismatch,
+       ImportSignatureInvalid,
+
+       // Realization errors
+       RealizationConflict,
+       RealizationInterrupted,
+       EnvironmentCorrupted,
+
+       // Resolution errors
+       DependencyConflict,
+       UnsatisfiableDependency,
+       CyclicDependency,
+
+       // ZFS errors
+       DatasetNotFound,
+       DatasetExists,
+       ZfsOperationFailed,
+       PoolNotAvailable,
+
+       // Network errors
+       CacheUnreachable,
+       FetchFailed,
+       FetchTimeout,
+
+       // Permission errors
+       PermissionDenied,
+       InsufficientPrivileges,
+   };
+   ```
+
+2. **Recovery Procedures**
+   ```yaml
+   # Recovery procedure definitions
+   recovery:
+     ImportInterrupted:
+       automatic: true
+       procedure:
+         - "Check transaction log"
+         - "Clean partial dataset"
+         - "Retry import"
+       command: "axiom import-recover"
+
+     RealizationInterrupted:
+       automatic: true
+       procedure:
+         - "Identify incomplete environment"
+         - "Remove partial files"
+         - "Re-realize from lock file"
+       command: "axiom env-recover <name>"
+
+     StoreCorrupted:
+       automatic: false
+       procedure:
+         - "Run store verification"
+         - "Identify corrupted packages"
+         - "Re-fetch from cache or rebuild"
+       command: "axiom store-repair"
+   ```
+
+3. **Store Integrity Verification**
+   ```bash
+   axiom verify
+   # Output:
+   #   Store: OK
+   #   Profiles: 3 valid, 0 corrupted
+   #   Environments: 2 valid, 1 needs repair
+   #   Recommended: axiom env-recover dev-env
+   ```
+
+4. **Transaction Recovery**
+   ```bash
+   axiom recover
+   # Scans for:
+   #   - Interrupted imports
+   #   - Interrupted realizations
+   #   - Orphaned datasets
+   # Offers automatic or interactive recovery
+   ```
+
+### Implementation
+
+**Recovery Engine:**
+
+```zig
+pub const RecoveryEngine = struct {
+    pub fn scan() !RecoveryPlan;
+    pub fn execute(plan: RecoveryPlan, mode: RecoveryMode) !RecoveryResult;
+
+    pub const RecoveryMode = enum {
+        automatic,      // Apply safe automatic fixes
+        interactive,    // Ask for each action
+        dry_run,        // Show plan only
+    };
+
+    pub const RecoveryPlan = struct {
+        interrupted_imports: []ImportRecovery,
+        interrupted_realizations: []RealizationRecovery,
+        orphaned_datasets: [][]const u8,
+        corrupted_packages: []PackageRecovery,
+    };
+};
+
+pub const ErrorReporter = struct {
+    pub fn report(err: anyerror, context: ErrorContext) void;
+    pub fn suggest(err: anyerror) ?[]const u8;  // Recovery suggestion
+};
+```
+
+**CLI Commands:**
+
+```bash
+axiom verify                            # Full system verification
+axiom verify --quick                    # Quick check (no hash verification)
+axiom recover                           # Interactive recovery
+axiom recover --auto                    # Automatic safe recovery
+axiom import-recover                    # Recover interrupted import
+axiom env-recover <name>                # Recover interrupted realization
+```
+
+### Deliverables
+
+- [ ] Define complete error taxonomy
+- [ ] Implement unified error type with context
+- [ ] Implement recovery procedures for each error type
+- [ ] Implement transaction log scanning
+- [ ] Implement RecoveryEngine
+- [ ] Add verify command with detailed output
+- [ ] Add recover command with modes
+- [ ] Document error taxonomy and recovery procedures
+
+---
+
+## Phase 50: Testing & Validation Framework
+
+**Priority**: Critical
+**Complexity**: High
+**Status**: Planned
+
+### Purpose
+
+Establish comprehensive testing infrastructure to ensure correctness, prevent regressions, and validate the system against specification.
+
+### Requirements
+
+1. **Unit Test Framework**
+   ```zig
+   // test/unit/resolver_test.zig
+   test "resolver handles virtual providers" {
+       var resolver = Resolver.init(test_allocator);
+       defer resolver.deinit();
+
+       // Add packages with virtual providers
+       try resolver.addPackage(openssl_pkg);
+       try resolver.addPackage(libressl_pkg);
+
+       // Resolve with virtual dependency
+       const result = try resolver.resolve(ssl_dependent_profile);
+
+       // Verify exactly one provider selected
+       try testing.expect(result.hasPackage("openssl") != result.hasPackage("libressl"));
+   }
+   ```
+
+2. **Golden File Tests**
+   ```
+   test/golden/
+   ├── manifests/
+   │   ├── valid/
+   │   │   ├── basic.yaml
+   │   │   ├── with-deps.yaml
+   │   │   └── with-features.yaml
+   │   └── invalid/
+   │       ├── missing-name.yaml
+   │       └── bad-version.yaml
+   ├── profiles/
+   │   └── ...
+   └── resolutions/
+       ├── simple.input.yaml
+       └── simple.expected.yaml
+   ```
+
+3. **Integration Tests**
+   ```bash
+   # test/integration/full_workflow.sh
+   set -e
+
+   # Setup test environment
+   ./setup_test_pool.sh
+
+   # Test full workflow
+   axiom setup --pool testpool --yes
+   axiom ports-import devel/gmake --dry-run
+   axiom profile-create test
+   axiom profile-add-package test gmake
+   axiom resolve test
+   axiom realize test-env test
+
+   # Verify
+   test -x /axiom/env/test-env/bin/gmake
+
+   # Cleanup
+   ./cleanup_test_pool.sh
+   ```
+
+4. **ZFS Simulation Framework**
+   ```zig
+   // test/mock/mock_zfs.zig
+   pub const MockZfs = struct {
+       datasets: std.StringHashMap(Dataset),
+       snapshots: std.StringHashMap(Snapshot),
+
+       pub fn create(self: *MockZfs, name: []const u8) !void;
+       pub fn destroy(self: *MockZfs, name: []const u8) !void;
+       pub fn snapshot(self: *MockZfs, name: []const u8) !void;
+       pub fn clone(self: *MockZfs, snap: []const u8, target: []const u8) !void;
+
+       // Failure injection
+       pub fn injectFailure(self: *MockZfs, op: Op, err: anyerror) void;
+   };
+   ```
+
+5. **Fuzzing Infrastructure**
+   ```zig
+   // test/fuzz/manifest_fuzz.zig
+   pub fn fuzz(input: []const u8) void {
+       const result = manifest.parse(test_allocator, input);
+       if (result) |m| {
+           m.deinit();
+       } else |_| {
+           // Invalid input is expected, just ensure no crash
+       }
+   }
+   ```
+
+6. **Regression Test Suite**
+   ```yaml
+   # test/regression/cases.yaml
+   cases:
+     - name: "issue-42-cyclic-deps"
+       description: "Resolver should detect cyclic dependencies"
+       input: "cyclic_deps_profile.yaml"
+       expected_error: "CyclicDependency"
+
+     - name: "issue-57-partial-import"
+       description: "Interrupted import should be recoverable"
+       setup: "inject_import_failure.sh"
+       verify: "verify_recovery.sh"
+   ```
+
+### Implementation
+
+**Test Runner:**
+
+```zig
+pub const TestRunner = struct {
+    pub fn runUnit() !TestResults;
+    pub fn runGolden() !TestResults;
+    pub fn runIntegration() !TestResults;
+    pub fn runFuzz(duration_seconds: u32) !FuzzResults;
+    pub fn runRegression() !TestResults;
+    pub fn runAll() !TestSummary;
+};
+```
+
+**CI Integration:**
+
+```yaml
+# .github/workflows/test.yml
+test:
+  runs-on: freebsd-14
+  steps:
+    - uses: actions/checkout@v4
+
+    - name: Unit Tests
+      run: zig build test
+
+    - name: Golden File Tests
+      run: ./test/golden/run.sh
+
+    - name: Integration Tests
+      run: |
+        ./test/integration/setup.sh
+        ./test/integration/run_all.sh
+        ./test/integration/cleanup.sh
+
+    - name: Regression Tests
+      run: ./test/regression/run.sh
+```
+
+### Deliverables
+
+- [ ] Set up test directory structure
+- [ ] Implement unit tests for all core modules
+- [ ] Create golden file test suite for manifests/profiles
+- [ ] Implement ZFS mock for unit testing
+- [ ] Create integration test framework
+- [ ] Implement fuzzing targets for parsers
+- [ ] Create regression test suite
+- [ ] Set up CI pipeline with all test types
+- [ ] Document testing procedures
+- [ ] Achieve >80% code coverage target
 
 ---
 
