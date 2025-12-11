@@ -3,6 +3,7 @@ const zfs = @import("zfs.zig");
 const types = @import("types.zig");
 const profile = @import("profile.zig");
 const realization = @import("realization.zig");
+const realization_spec = @import("realization_spec.zig");
 const store = @import("store.zig");
 const conflict = @import("conflict.zig");
 
@@ -21,6 +22,8 @@ const RealizationEngine = realization.RealizationEngine;
 const PackageStore = store.PackageStore;
 const PackageId = types.PackageId;
 const ConflictPolicy = conflict.ConflictPolicy;
+const RealizationSpec = realization_spec.RealizationSpec;
+const MergeStrategy = realization_spec.MergeStrategy;
 
 /// Access levels for user operations
 pub const AccessLevel = enum {
@@ -702,6 +705,219 @@ pub const UserRealizationEngine = struct {
         );
         defer self.allocator.free(cmd);
 
+        var child = std.process.Child.init(&[_][]const u8{ "sh", "-c", cmd }, self.allocator);
+        child.stdout_behavior = .Ignore;
+        child.stderr_behavior = .Pipe;
+
+        try child.spawn();
+        const stderr = try child.stderr.?.readToEndAlloc(self.allocator, 1024 * 1024);
+        defer self.allocator.free(stderr);
+
+        const term = try child.wait();
+        if (term.Exited != 0 and stderr.len > 0) {
+            std.debug.print("    Warning: {s}\n", .{stderr});
+        }
+    }
+
+    /// Realize environment with custom specification
+    pub fn realizeWithSpec(
+        self: *UserRealizationEngine,
+        env_name: []const u8,
+        lock: ProfileLock,
+        spec: *const RealizationSpec,
+    ) !realization.Environment {
+        std.debug.print("Realizing user environment with spec: {s}\n", .{env_name});
+        std.debug.print("  User: {s}\n", .{self.user_ctx.username});
+        std.debug.print("  Profile: {s}\n", .{lock.profile_name});
+        std.debug.print("  Packages: {d}\n", .{lock.resolved.len});
+        std.debug.print("  Merge strategy: {s}\n", .{spec.default_strategy.toString()});
+
+        // Get user's env root
+        const env_root = try self.getUserEnvRoot();
+        defer self.allocator.free(env_root);
+
+        // Create environment dataset path
+        const env_dataset = try std.fmt.allocPrint(
+            self.allocator,
+            "{s}/{s}",
+            .{ env_root, env_name },
+        );
+        defer self.allocator.free(env_dataset);
+
+        // Check if environment already exists
+        const exists = try self.zfs_handle.datasetExists(
+            self.allocator,
+            env_dataset,
+            .filesystem,
+        );
+
+        if (exists) {
+            return realization.RealizationError.EnvironmentExists;
+        }
+
+        std.debug.print("\nCreating environment dataset...\n", .{});
+
+        // Create environment dataset
+        try self.zfs_handle.createDataset(self.allocator, env_dataset, .{
+            .compression = "lz4",
+            .atime = false,
+        });
+
+        // Get environment mountpoint
+        const env_mountpoint = try self.zfs_handle.getMountpoint(
+            self.allocator,
+            env_dataset,
+        );
+        defer self.allocator.free(env_mountpoint);
+
+        std.debug.print("  Environment root: {s}\n", .{env_mountpoint});
+
+        // Create directory structure
+        const bin_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ env_mountpoint, "bin" });
+        defer self.allocator.free(bin_dir);
+        try std.fs.cwd().makePath(bin_dir);
+
+        const lib_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ env_mountpoint, "lib" });
+        defer self.allocator.free(lib_dir);
+        try std.fs.cwd().makePath(lib_dir);
+
+        const share_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ env_mountpoint, "share" });
+        defer self.allocator.free(share_dir);
+        try std.fs.cwd().makePath(share_dir);
+
+        // Clone and merge all packages with spec
+        std.debug.print("\nCloning packages with spec...\n", .{});
+
+        var package_ids = std.ArrayList(PackageId).init(self.allocator);
+        defer package_ids.deinit();
+
+        for (lock.resolved, 0..) |pkg, i| {
+            std.debug.print("  [{d}/{d}] {s} {} ({s})\n", .{
+                i + 1,
+                lock.resolved.len,
+                pkg.id.name,
+                pkg.id.version,
+                spec.default_strategy.toString(),
+            });
+
+            // Get package dataset path from shared store
+            const pkg_dataset = try self.store.paths.packageDataset(self.allocator, pkg.id);
+            defer self.allocator.free(pkg_dataset);
+
+            // Verify package exists in shared store
+            const pkg_exists = try self.zfs_handle.datasetExists(
+                self.allocator,
+                pkg_dataset,
+                .filesystem,
+            );
+
+            if (!pkg_exists) {
+                std.debug.print("    Package not found in store\n", .{});
+                return realization.RealizationError.PackageNotFound;
+            }
+
+            // Clone package with spec
+            try self.clonePackageWithSpec(env_mountpoint, pkg_dataset, pkg.id, spec);
+
+            try package_ids.append(.{
+                .name = try self.allocator.dupe(u8, pkg.id.name),
+                .version = pkg.id.version,
+                .revision = pkg.id.revision,
+                .build_id = try self.allocator.dupe(u8, pkg.id.build_id),
+            });
+        }
+
+        // Create activation script
+        try self.createActivationScript(env_mountpoint, env_name);
+
+        // Snapshot the environment
+        std.debug.print("\nCreating snapshot...\n", .{});
+        try self.zfs_handle.snapshot(self.allocator, env_dataset, "initial", false);
+
+        std.debug.print("\n Environment '{s}' realized successfully\n", .{env_name});
+        std.debug.print("  Location: {s}\n", .{env_mountpoint});
+
+        return realization.Environment{
+            .name = try self.allocator.dupe(u8, env_name),
+            .profile_name = try self.allocator.dupe(u8, lock.profile_name),
+            .dataset_path = try self.allocator.dupe(u8, env_dataset),
+            .packages = try package_ids.toOwnedSlice(),
+            .active = false,
+        };
+    }
+
+    /// Clone a package into the environment with spec
+    fn clonePackageWithSpec(
+        self: *UserRealizationEngine,
+        env_mountpoint: []const u8,
+        pkg_dataset: []const u8,
+        pkg_id: PackageId,
+        spec: *const RealizationSpec,
+    ) !void {
+        _ = pkg_id;
+
+        // Get package mountpoint
+        const pkg_mountpoint = try self.zfs_handle.getMountpoint(
+            self.allocator,
+            pkg_dataset,
+        );
+        defer self.allocator.free(pkg_mountpoint);
+
+        // Package files are in root/ subdirectory
+        const pkg_root = try std.fs.path.join(
+            self.allocator,
+            &[_][]const u8{ pkg_mountpoint, "root" },
+        );
+        defer self.allocator.free(pkg_root);
+
+        // Use spec's merge strategy
+        switch (spec.default_strategy) {
+            .symlink => {
+                // Use symlinks for space efficiency
+                const cmd = try std.fmt.allocPrint(
+                    self.allocator,
+                    "cp -R -s -n {s}/. {s}/",
+                    .{ pkg_root, env_mountpoint },
+                );
+                defer self.allocator.free(cmd);
+                try self.runShellCommand(cmd);
+            },
+            .hardlink => {
+                // Use hard links for shared data
+                const cmd = try std.fmt.allocPrint(
+                    self.allocator,
+                    "cp -R -l -n {s}/. {s}/",
+                    .{ pkg_root, env_mountpoint },
+                );
+                defer self.allocator.free(cmd);
+                try self.runShellCommand(cmd);
+            },
+            .copy => {
+                // Full copy for isolation
+                const cmd = try std.fmt.allocPrint(
+                    self.allocator,
+                    "cp -R -n {s}/. {s}/",
+                    .{ pkg_root, env_mountpoint },
+                );
+                defer self.allocator.free(cmd);
+                try self.runShellCommand(cmd);
+            },
+            .zfs_clone => {
+                // ZFS clone not supported for user environments
+                // Fall back to symlink
+                const cmd = try std.fmt.allocPrint(
+                    self.allocator,
+                    "cp -R -s -n {s}/. {s}/",
+                    .{ pkg_root, env_mountpoint },
+                );
+                defer self.allocator.free(cmd);
+                try self.runShellCommand(cmd);
+            },
+        }
+    }
+
+    /// Run a shell command
+    fn runShellCommand(self: *UserRealizationEngine, cmd: []const u8) !void {
         var child = std.process.Child.init(&[_][]const u8{ "sh", "-c", cmd }, self.allocator);
         child.stdout_behavior = .Ignore;
         child.stderr_behavior = .Pipe;
