@@ -4358,7 +4358,7 @@ pub const CLI = struct {
             }
 
             // Build and import
-            const result = migrator.migrate(port) catch |err| {
+            var result = migrator.migrate(port) catch |err| {
                 std.debug.print("  ✗ Failed: {}\n", .{err});
                 fail_count += 1;
                 continue;
