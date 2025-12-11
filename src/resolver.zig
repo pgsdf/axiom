@@ -1114,7 +1114,7 @@ pub const Resolver = struct {
 
     /// Sort candidates by version preference
     fn sortCandidatesByPreference(self: *Resolver, candidates: []Candidate) ![]Candidate {
-        var sorted = try self.allocator.alloc(Candidate, candidates.len);
+        const sorted = try self.allocator.alloc(Candidate, candidates.len);
         @memcpy(sorted, candidates);
 
         // Sort based on preference
