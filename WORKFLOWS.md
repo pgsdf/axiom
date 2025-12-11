@@ -35,7 +35,40 @@ sudo cp zig-out/bin/axiom /usr/local/bin/axiom
 axiom version
 ```
 
-### Initialize the Package Store
+### Initialize the Package Store (Recommended: Setup Wizard)
+
+The easiest way to set up the package store is using the setup wizard:
+
+```bash
+# Run the setup wizard (creates all ZFS datasets)
+sudo axiom setup
+```
+
+The setup wizard will:
+- Create all required ZFS datasets in the correct order
+- Set the mountpoint before creating child datasets (critical!)
+- Configure recommended ZFS properties (compression=lz4, atime=off)
+- Create configuration directories (/etc/axiom, /var/cache/axiom)
+
+**Setup Wizard Options:**
+
+```bash
+# Check current setup status
+sudo axiom setup --check
+
+# Use a different ZFS pool
+sudo axiom setup --pool tank
+
+# Non-interactive mode (for scripting)
+sudo axiom setup --yes
+
+# Continue a partial setup
+sudo axiom setup --force
+```
+
+### Manual ZFS Setup (Alternative)
+
+If you prefer manual control, create the datasets in this exact order:
 
 ```bash
 # 1. Create the root Axiom dataset
@@ -55,6 +88,50 @@ sudo zfs create zroot/axiom/store/pkg
 sudo zfs create zroot/axiom/profiles
 sudo zfs create zroot/axiom/env
 sudo zfs create zroot/axiom/builds
+```
+
+### Bootstrap Build Tools (CRITICAL)
+
+**IMPORTANT**: Before importing packages from FreeBSD ports, you MUST bootstrap essential build tools. Use one of these methods:
+
+**Option 1: Automated Bootstrap (Recommended)**
+
+```bash
+# Quick bootstrap: gmake, m4, help2man
+sudo axiom bootstrap-ports --minimal
+
+# Full bootstrap: includes autoconf, automake, etc.
+sudo axiom bootstrap-ports
+```
+
+**Option 2: Manual Bootstrap (in exact order)**
+
+```bash
+# Step 1: Bootstrap help2man first (required by m4)
+sudo axiom ports-import misc/help2man
+
+# Step 2: Bootstrap m4 (macro processor, required by autoconf)
+sudo axiom ports-import devel/m4
+
+# Step 3: Bootstrap gmake (GNU make, required by GNU software)
+sudo axiom ports-import devel/gmake
+```
+
+**Why this order matters:**
+- `help2man` generates man pages and is required to build `m4`
+- `m4` is a macro processor required by autoconf and many configure scripts
+- `gmake` (GNU make) is required by most GNU software including bash
+- If you try to build packages without these bootstrap tools, builds will fail
+- These bootstrap packages have minimal dependencies and can build with system tools
+
+**Option 3: Import Bootstrap Tarball (for air-gapped systems)**
+
+```bash
+# Download pre-built bootstrap tarball
+curl -O https://axiom.pgsd.org/bootstrap/axiom-bootstrap-14.2-amd64.tar.zst
+
+# Import the bootstrap packages
+sudo axiom bootstrap-import axiom-bootstrap-14.2-amd64.tar.zst
 ```
 
 ### Configure Shell Completions
@@ -100,21 +177,23 @@ axiom key
 
 **IMPORTANT**: Before creating profiles, you must import packages into the store. The resolver cannot find packages that haven't been imported yet.
 
+> **Note**: Ensure you have completed the [Bootstrap Build Tools](#bootstrap-build-tools-critical) step before importing packages via `ports-import`. Without bootstrap tools, builds will fail.
+
 Choose one of these methods to populate the store:
 
 ```bash
-# Option A: Import from FreeBSD Ports (recommended for bootstrapping)
-axiom ports-import shells/bash
-axiom ports-import editors/vim
-axiom ports-import devel/git
+# Option A: Import from FreeBSD Ports (after bootstrapping)
+sudo axiom ports-import shells/bash
+sudo axiom ports-import editors/vim
+sudo axiom ports-import devel/git
 
 # Option B: Import pre-built packages
 sudo axiom import /path/to/package-directory
 sudo axiom import package.tar.gz
 
 # Option C: Fetch from binary cache
-sudo axiom cache-add https://cache.pgsdf.org 1
-sudo axiom cache-fetch bash@5.2.0 --install
+sudo axiom remote-fetch bash@5.2.0
+sudo axiom remote-fetch vim
 ```
 
 See [Ports Migration](#ports-migration) for details on migrating FreeBSD ports to Axiom.
@@ -1260,13 +1339,16 @@ sudo zfs receive -F zroot/axiom < /backup/axiom-backup.zfs
 
 | Task | Command |
 |------|---------|
+| Run setup wizard | `sudo axiom setup` |
+| Bootstrap build tools | `sudo axiom bootstrap-ports --minimal` |
+| Import from ports | `sudo axiom ports-import <origin>` |
 | Create profile | `axiom profile-create <name>` |
 | Resolve dependencies | `axiom resolve <profile>` |
 | Create environment | `axiom realize <env> <profile>` |
 | Activate environment | `source /axiom/env/<env>/activate` |
 | Run package directly | `axiom run <package>` |
 | Build from source | `axiom build <recipe.yaml>` |
-| Fetch from cache | `axiom cache-fetch <pkg>@<ver> --install` |
+| Fetch from cache | `axiom remote-fetch <pkg>[@ver]` |
 | Create bundle | `axiom bundle <package> --output <file>` |
 | Verify bundle | `axiom bundle-verify <bundle>` |
 | Run bundle | `axiom bundle-run <bundle>` |
