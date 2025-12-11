@@ -24,6 +24,7 @@ const hsm = @import("hsm.zig");
 const service_pkg = @import("service.zig");
 const bootenv = @import("bootenv.zig");
 const cache_protocol = @import("cache_protocol.zig");
+const realization_spec = @import("realization_spec.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageStore = store.PackageStore;
@@ -61,6 +62,9 @@ const store_integrity = @import("store_integrity.zig");
 const resolver_advanced = @import("resolver_advanced.zig");
 const StoreIntegrity = store_integrity.StoreIntegrity;
 const RefCounter = store_integrity.RefCounter;
+const MergeStrategy = realization_spec.MergeStrategy;
+const RealizationSpec = realization_spec.RealizationSpec;
+const OutputSelection = realization_spec.OutputSelection;
 
 /// CLI command enumeration
 pub const Command = enum {
@@ -1444,10 +1448,22 @@ pub const CLI = struct {
             std.debug.print("Usage: axiom realize <env-name> <profile> [options]\n", .{});
             std.debug.print("\nOptions:\n", .{});
             std.debug.print("  --conflict-policy <policy>  How to handle file conflicts\n", .{});
+            std.debug.print("  --merge-strategy <strategy> File merge strategy\n", .{});
+            std.debug.print("  --outputs <outputs>         Comma-separated list of outputs to install\n", .{});
             std.debug.print("\nConflict policies:\n", .{});
             std.debug.print("  error        Fail on any file conflict (default)\n", .{});
             std.debug.print("  priority     Later packages override earlier ones\n", .{});
             std.debug.print("  keep-both    Keep both files with package suffix\n", .{});
+            std.debug.print("\nMerge strategies:\n", .{});
+            std.debug.print("  symlink      Use symbolic links (default, space-efficient)\n", .{});
+            std.debug.print("  hardlink     Use hard links (space-efficient, fast)\n", .{});
+            std.debug.print("  copy         Copy files (isolated, more space)\n", .{});
+            std.debug.print("  zfs_clone    Use ZFS clones (fast, space-efficient)\n", .{});
+            std.debug.print("\nCommon outputs:\n", .{});
+            std.debug.print("  bin          Executable binaries\n", .{});
+            std.debug.print("  lib          Runtime libraries\n", .{});
+            std.debug.print("  dev          Development headers and pkg-config\n", .{});
+            std.debug.print("  doc          Documentation and man pages\n", .{});
             return;
         }
 
@@ -1456,6 +1472,8 @@ pub const CLI = struct {
 
         // Parse options
         var conflict_policy: ConflictPolicy = .error_on_conflict;
+        var merge_strategy: MergeStrategy = .symlink;
+        var outputs_filter: ?[]const u8 = null;
         var i: usize = 2;
         while (i < args.len) {
             if (std.mem.eql(u8, args[i], "--conflict-policy") and i + 1 < args.len) {
@@ -1475,6 +1493,19 @@ pub const CLI = struct {
                     return;
                 }
                 i += 2;
+            } else if (std.mem.eql(u8, args[i], "--merge-strategy") and i + 1 < args.len) {
+                const strategy_str = args[i + 1];
+                if (MergeStrategy.fromString(strategy_str)) |strategy| {
+                    merge_strategy = strategy;
+                } else {
+                    std.debug.print("Unknown merge strategy: {s}\n", .{strategy_str});
+                    std.debug.print("Valid options: symlink, hardlink, copy, zfs_clone\n", .{});
+                    return;
+                }
+                i += 2;
+            } else if (std.mem.eql(u8, args[i], "--outputs") and i + 1 < args.len) {
+                outputs_filter = args[i + 1];
+                i += 2;
             } else {
                 std.debug.print("Unknown option: {s}\n", .{args[i]});
                 return;
@@ -1483,7 +1514,12 @@ pub const CLI = struct {
 
         std.debug.print("Realizing environment: {s}\n", .{env_name});
         std.debug.print("From profile: {s}\n", .{profile_name});
-        std.debug.print("Conflict policy: {s}\n\n", .{@tagName(conflict_policy)});
+        std.debug.print("Conflict policy: {s}\n", .{@tagName(conflict_policy)});
+        std.debug.print("Merge strategy: {s}\n", .{merge_strategy.toString()});
+        if (outputs_filter) |outputs| {
+            std.debug.print("Outputs filter: {s}\n", .{outputs});
+        }
+        std.debug.print("\n", .{});
 
         // Set conflict policy
         self.realization.setConflictPolicy(conflict_policy);
@@ -1492,31 +1528,86 @@ pub const CLI = struct {
         var lock = try self.profile_mgr.loadLock(profile_name);
         defer lock.deinit(self.allocator);
 
-        // Realize environment
-        var env = self.realization.realize(env_name, lock) catch |err| {
-            if (err == realization.RealizationError.FileConflict) {
-                std.debug.print("\n✗ File conflicts detected. Options:\n", .{});
-                std.debug.print("  - Use --conflict-policy priority to let later packages win\n", .{});
-                std.debug.print("  - Use --conflict-policy keep-both to keep both files\n", .{});
-                return;
-            }
-            if (err == realization.RealizationError.EnvironmentExists) {
-                std.debug.print("Error: Environment '{s}' already exists.\n\n", .{env_name});
-                std.debug.print("To recreate it, destroy the existing environment first:\n", .{});
-                std.debug.print("  axiom env-destroy {s}\n\n", .{env_name});
-                std.debug.print("Then retry:\n", .{});
-                std.debug.print("  axiom realize {s} {s}\n", .{ env_name, profile_name });
-                return;
-            }
-            return err;
-        };
-        defer realization.freeEnvironment(&env, self.allocator);
+        // Build realization spec if custom options specified
+        const use_spec = merge_strategy != .symlink or outputs_filter != null;
 
-        std.debug.print("\n✓ Environment realized\n", .{});
-        std.debug.print("To activate: source {s}/{s}/activate\n", .{
-            "/axiom/env",
-            env_name,
-        });
+        if (use_spec) {
+            // Build spec with custom settings
+            var spec = RealizationSpec.init(self.allocator);
+            defer spec.deinit();
+
+            spec.default_strategy = merge_strategy;
+
+            // Parse outputs filter if provided
+            if (outputs_filter) |filter_str| {
+                var output_selections = std.ArrayList(OutputSelection).init(self.allocator);
+                defer output_selections.deinit();
+
+                // Parse comma-separated outputs for each package
+                var outputs_list = std.ArrayList([]const u8).init(self.allocator);
+                defer outputs_list.deinit();
+
+                var iter = std.mem.splitScalar(u8, filter_str, ',');
+                while (iter.next()) |output| {
+                    const trimmed = std.mem.trim(u8, output, " ");
+                    if (trimmed.len > 0) {
+                        try outputs_list.append(trimmed);
+                    }
+                }
+
+                // Apply to all packages in lock
+                for (lock.resolved) |pkg| {
+                    try output_selections.append(.{
+                        .package = pkg.name,
+                        .outputs = outputs_list.items,
+                    });
+                }
+                spec.output_selections = try output_selections.toOwnedSlice();
+            }
+
+            // Realize with spec
+            var env = self.realization.realizeWithSpec(env_name, lock, &spec) catch |err| {
+                return self.handleRealizeError(err, env_name, profile_name);
+            };
+            defer realization.freeEnvironment(&env, self.allocator);
+
+            std.debug.print("\n✓ Environment realized (with custom spec)\n", .{});
+            std.debug.print("To activate: source {s}/{s}/activate\n", .{
+                "/axiom/env",
+                env_name,
+            });
+        } else {
+            // Standard realization
+            var env = self.realization.realize(env_name, lock) catch |err| {
+                return self.handleRealizeError(err, env_name, profile_name);
+            };
+            defer realization.freeEnvironment(&env, self.allocator);
+
+            std.debug.print("\n✓ Environment realized\n", .{});
+            std.debug.print("To activate: source {s}/{s}/activate\n", .{
+                "/axiom/env",
+                env_name,
+            });
+        }
+    }
+
+    fn handleRealizeError(self: *CLI, err: anyerror, env_name: []const u8, profile_name: []const u8) !void {
+        _ = self;
+        if (err == realization.RealizationError.FileConflict) {
+            std.debug.print("\n✗ File conflicts detected. Options:\n", .{});
+            std.debug.print("  - Use --conflict-policy priority to let later packages win\n", .{});
+            std.debug.print("  - Use --conflict-policy keep-both to keep both files\n", .{});
+            return;
+        }
+        if (err == realization.RealizationError.EnvironmentExists) {
+            std.debug.print("Error: Environment '{s}' already exists.\n\n", .{env_name});
+            std.debug.print("To recreate it, destroy the existing environment first:\n", .{});
+            std.debug.print("  axiom env-destroy {s}\n\n", .{env_name});
+            std.debug.print("Then retry:\n", .{});
+            std.debug.print("  axiom realize {s} {s}\n", .{ env_name, profile_name });
+            return;
+        }
+        return err;
     }
 
     fn activateEnv(self: *CLI, args: []const []const u8) !void {
@@ -3635,10 +3726,21 @@ pub const CLI = struct {
             std.debug.print("Usage: axiom user-realize <env-name> <profile> [options]\n", .{});
             std.debug.print("\nOptions:\n", .{});
             std.debug.print("  --conflict-policy <policy>  How to handle file conflicts\n", .{});
+            std.debug.print("  --merge-strategy <strategy> File merge strategy\n", .{});
+            std.debug.print("  --outputs <outputs>         Comma-separated list of outputs to install\n", .{});
             std.debug.print("\nConflict policies:\n", .{});
             std.debug.print("  error        Fail on any file conflict (default)\n", .{});
             std.debug.print("  priority     Later packages override earlier ones\n", .{});
             std.debug.print("  keep-both    Keep both files with package suffix\n", .{});
+            std.debug.print("\nMerge strategies:\n", .{});
+            std.debug.print("  symlink      Use symbolic links (default, space-efficient)\n", .{});
+            std.debug.print("  hardlink     Use hard links (space-efficient, fast)\n", .{});
+            std.debug.print("  copy         Copy files (isolated, more space)\n", .{});
+            std.debug.print("\nCommon outputs:\n", .{});
+            std.debug.print("  bin          Executable binaries\n", .{});
+            std.debug.print("  lib          Runtime libraries\n", .{});
+            std.debug.print("  dev          Development headers and pkg-config\n", .{});
+            std.debug.print("  doc          Documentation and man pages\n", .{});
             return;
         }
 
@@ -3647,6 +3749,8 @@ pub const CLI = struct {
 
         // Parse options
         var conflict_policy: ConflictPolicy = .error_on_conflict;
+        var merge_strategy: MergeStrategy = .symlink;
+        var outputs_filter: ?[]const u8 = null;
         var i: usize = 2;
         while (i < args.len) {
             if (std.mem.eql(u8, args[i], "--conflict-policy") and i + 1 < args.len) {
@@ -3663,6 +3767,19 @@ pub const CLI = struct {
                     return;
                 }
                 i += 2;
+            } else if (std.mem.eql(u8, args[i], "--merge-strategy") and i + 1 < args.len) {
+                const strategy_str = args[i + 1];
+                if (MergeStrategy.fromString(strategy_str)) |strategy| {
+                    merge_strategy = strategy;
+                } else {
+                    std.debug.print("Unknown merge strategy: {s}\n", .{strategy_str});
+                    std.debug.print("Valid options: symlink, hardlink, copy\n", .{});
+                    return;
+                }
+                i += 2;
+            } else if (std.mem.eql(u8, args[i], "--outputs") and i + 1 < args.len) {
+                outputs_filter = args[i + 1];
+                i += 2;
             } else {
                 std.debug.print("Unknown option: {s}\n", .{args[i]});
                 return;
@@ -3672,7 +3789,12 @@ pub const CLI = struct {
         std.debug.print("Realizing user environment: {s}\n", .{env_name});
         std.debug.print("From profile: {s}\n", .{profile_name});
         std.debug.print("User: {s}\n", .{self.user_ctx.?.username});
-        std.debug.print("Conflict policy: {s}\n\n", .{@tagName(conflict_policy)});
+        std.debug.print("Conflict policy: {s}\n", .{@tagName(conflict_policy)});
+        std.debug.print("Merge strategy: {s}\n", .{merge_strategy.toString()});
+        if (outputs_filter) |outputs| {
+            std.debug.print("Outputs filter: {s}\n", .{outputs});
+        }
+        std.debug.print("\n", .{});
 
         // Set conflict policy on user realization engine
         self.user_realization.?.setConflictPolicy(conflict_policy);
@@ -3685,20 +3807,71 @@ pub const CLI = struct {
         };
         defer lock.deinit(self.allocator);
 
-        // Realize user environment
-        var env = self.user_realization.?.realize(env_name, lock) catch |err| {
-            if (err == realization.RealizationError.FileConflict) {
-                std.debug.print("\n✗ File conflicts detected. Options:\n", .{});
-                std.debug.print("  - Use --conflict-policy priority to let later packages win\n", .{});
-                std.debug.print("  - Use --conflict-policy keep-both to keep both files\n", .{});
-                return;
-            }
-            std.debug.print("Realization failed: {}\n", .{err});
-            return;
-        };
-        defer realization.freeEnvironment(&env, self.allocator);
+        // Build realization spec if custom options specified
+        const use_spec = merge_strategy != .symlink or outputs_filter != null;
 
-        std.debug.print("\n✓ Environment realized\n", .{});
+        if (use_spec) {
+            // Build spec with custom settings
+            var spec = RealizationSpec.init(self.allocator);
+            defer spec.deinit();
+
+            spec.default_strategy = merge_strategy;
+
+            // Parse outputs filter if provided
+            if (outputs_filter) |filter_str| {
+                var output_selections = std.ArrayList(OutputSelection).init(self.allocator);
+                defer output_selections.deinit();
+
+                var outputs_list = std.ArrayList([]const u8).init(self.allocator);
+                defer outputs_list.deinit();
+
+                var iter = std.mem.splitScalar(u8, filter_str, ',');
+                while (iter.next()) |output| {
+                    const trimmed = std.mem.trim(u8, output, " ");
+                    if (trimmed.len > 0) {
+                        try outputs_list.append(trimmed);
+                    }
+                }
+
+                for (lock.resolved) |pkg| {
+                    try output_selections.append(.{
+                        .package = pkg.name,
+                        .outputs = outputs_list.items,
+                    });
+                }
+                spec.output_selections = try output_selections.toOwnedSlice();
+            }
+
+            // Realize with spec
+            var env = self.user_realization.?.realizeWithSpec(env_name, lock, &spec) catch |err| {
+                if (err == realization.RealizationError.FileConflict) {
+                    std.debug.print("\n✗ File conflicts detected. Options:\n", .{});
+                    std.debug.print("  - Use --conflict-policy priority to let later packages win\n", .{});
+                    std.debug.print("  - Use --conflict-policy keep-both to keep both files\n", .{});
+                    return;
+                }
+                std.debug.print("Realization failed: {}\n", .{err});
+                return;
+            };
+            defer realization.freeEnvironment(&env, self.allocator);
+
+            std.debug.print("\n✓ Environment realized (with custom spec)\n", .{});
+        } else {
+            // Standard realization
+            var env = self.user_realization.?.realize(env_name, lock) catch |err| {
+                if (err == realization.RealizationError.FileConflict) {
+                    std.debug.print("\n✗ File conflicts detected. Options:\n", .{});
+                    std.debug.print("  - Use --conflict-policy priority to let later packages win\n", .{});
+                    std.debug.print("  - Use --conflict-policy keep-both to keep both files\n", .{});
+                    return;
+                }
+                std.debug.print("Realization failed: {}\n", .{err});
+                return;
+            };
+            defer realization.freeEnvironment(&env, self.allocator);
+
+            std.debug.print("\n✓ Environment realized\n", .{});
+        }
 
         // Get user's env directory for activation instructions
         const axiom_dir = self.user_ctx.?.getAxiomDir() catch {

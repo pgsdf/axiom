@@ -51,6 +51,41 @@ pub const Feature = struct {
     }
 };
 
+/// Package output definition for selective installation (Phase 44)
+/// Allows packages to define subsets of their files for different use cases
+pub const PackageOutput = struct {
+    /// Output name (e.g., "bin", "lib", "dev", "doc")
+    name: []const u8,
+
+    /// Human-readable description
+    description: ?[]const u8 = null,
+
+    /// Path patterns included in this output (glob patterns)
+    paths: []const []const u8 = &[_][]const u8{},
+
+    /// Other outputs this output depends on
+    requires: []const []const u8 = &[_][]const u8{},
+
+    /// Whether this output is included by default
+    default: bool = true,
+
+    /// Free allocated memory
+    pub fn deinit(self: *PackageOutput, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        if (self.description) |desc| {
+            allocator.free(desc);
+        }
+        for (self.paths) |p| {
+            allocator.free(p);
+        }
+        allocator.free(self.paths);
+        for (self.requires) |r| {
+            allocator.free(r);
+        }
+        allocator.free(self.requires);
+    }
+};
+
 /// Kernel module compatibility metadata
 /// Used for packages that install .ko kernel modules
 pub const KernelCompat = struct {
@@ -159,6 +194,9 @@ pub const Manifest = struct {
 
     /// Default features enabled when not explicitly specified
     default_features: [][]const u8 = &[_][]const u8{},
+
+    /// Package outputs for selective installation (Phase 44)
+    outputs: []PackageOutput = &[_]PackageOutput{},
 
     /// Parse manifest from YAML content
     ///
