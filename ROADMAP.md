@@ -4460,7 +4460,7 @@ axiom env-outputs myenv                 # Show output breakdown
 
 **Priority**: High
 **Complexity**: Medium
-**Status**: Planned
+**Status**: Complete
 
 ### Purpose
 

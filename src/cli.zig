@@ -25,6 +25,7 @@ const service_pkg = @import("service.zig");
 const bootenv = @import("bootenv.zig");
 const cache_protocol = @import("cache_protocol.zig");
 const realization_spec = @import("realization_spec.zig");
+const build_provenance = @import("build_provenance.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageStore = store.PackageStore;
@@ -65,6 +66,8 @@ const RefCounter = store_integrity.RefCounter;
 const MergeStrategy = realization_spec.MergeStrategy;
 const RealizationSpec = realization_spec.RealizationSpec;
 const OutputSelection = realization_spec.OutputSelection;
+const ProvenanceVerifier = build_provenance.ProvenanceVerifier;
+const PolicyChecker = build_provenance.PolicyChecker;
 
 /// CLI command enumeration
 pub const Command = enum {
@@ -223,6 +226,11 @@ pub const Command = enum {
     // Advanced resolver operations (Phase 43)
     why_depends,
     alternatives,
+
+    // Build provenance operations (Phase 45)
+    verify_provenance,
+    provenance_show,
+    provenance_policy,
 
     unknown,
 };
@@ -402,6 +410,12 @@ pub fn parseCommand(cmd: []const u8) Command {
     if (std.mem.eql(u8, cmd, "why")) return .why_depends;
     if (std.mem.eql(u8, cmd, "alternatives")) return .alternatives;
     if (std.mem.eql(u8, cmd, "providers")) return .alternatives;
+
+    // Build provenance commands (Phase 45)
+    if (std.mem.eql(u8, cmd, "verify-provenance")) return .verify_provenance;
+    if (std.mem.eql(u8, cmd, "provenance-show")) return .provenance_show;
+    if (std.mem.eql(u8, cmd, "provenance")) return .provenance_show;
+    if (std.mem.eql(u8, cmd, "provenance-policy")) return .provenance_policy;
 
     return .unknown;
 }
@@ -639,6 +653,11 @@ pub const CLI = struct {
             // Advanced resolver commands (Phase 43)
             .why_depends => try self.whyDepends(args[1..]),
             .alternatives => try self.showAlternatives(args[1..]),
+
+            // Build provenance commands (Phase 45)
+            .verify_provenance => try self.verifyProvenance(args[1..]),
+            .provenance_show => try self.showProvenance(args[1..]),
+            .provenance_policy => try self.checkProvenancePolicy(args[1..]),
 
             .unknown => {
                 std.debug.print("Unknown command: {s}\n", .{args[0]});
@@ -7240,6 +7259,379 @@ pub const CLI = struct {
 
         std.debug.print("\n───────────────────────────────────────────────────────────────\n", .{});
         std.debug.print("Tip: Packages declare virtuals with 'provides:' in their manifest\n", .{});
+    }
+
+    // Build Provenance Commands (Phase 45)
+
+    /// Verify provenance of a package
+    fn verifyProvenance(self: *CLI, args: []const []const u8) !void {
+        if (args.len == 0) {
+            std.debug.print("Usage: axiom verify-provenance <package>\n", .{});
+            std.debug.print("\nVerify build provenance of a package.\n", .{});
+            std.debug.print("\nOptions:\n", .{});
+            std.debug.print("  --rebuild    Attempt reproducible rebuild to verify\n", .{});
+            std.debug.print("\nExamples:\n", .{});
+            std.debug.print("  axiom verify-provenance bash\n", .{});
+            std.debug.print("  axiom verify-provenance openssl --rebuild\n", .{});
+            return;
+        }
+
+        var package_name: []const u8 = "";
+        var attempt_rebuild = false;
+
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
+                std.debug.print("Usage: axiom verify-provenance <package>\n", .{});
+                std.debug.print("\nVerify build provenance of a package.\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--rebuild")) {
+                attempt_rebuild = true;
+            } else if (!std.mem.startsWith(u8, arg, "-")) {
+                package_name = arg;
+            }
+        }
+
+        if (package_name.len == 0) {
+            std.debug.print("Error: Package name required.\n", .{});
+            return;
+        }
+
+        std.debug.print("Verifying provenance for: {s}\n\n", .{package_name});
+
+        // Find package in store
+        const packages = try self.store.listPackages();
+        defer {
+            for (packages) |pkg| {
+                self.allocator.free(pkg.name);
+                self.allocator.free(pkg.build_id);
+            }
+            self.allocator.free(packages);
+        }
+
+        var pkg_found: ?types.PackageId = null;
+        for (packages) |pkg| {
+            if (std.mem.eql(u8, pkg.name, package_name)) {
+                pkg_found = pkg;
+                break;
+            }
+        }
+
+        if (pkg_found == null) {
+            std.debug.print("Package '{s}' not found in store.\n", .{package_name});
+            return;
+        }
+
+        // Get package path
+        const pkg_dataset = try self.store.paths.packageDataset(self.allocator, pkg_found.?);
+        defer self.allocator.free(pkg_dataset);
+
+        const pkg_mountpoint = try self.zfs_handle.getMountpoint(self.allocator, pkg_dataset);
+        defer self.allocator.free(pkg_mountpoint);
+
+        // Create verifier and verify
+        var verifier = ProvenanceVerifier.init(self.allocator);
+        defer verifier.deinit();
+
+        // Set trust store if available
+        if (self.trust_store) |ts| {
+            verifier.setTrustStore(ts);
+        }
+
+        const report = verifier.verify(pkg_mountpoint) catch |err| {
+            std.debug.print("Verification failed: {}\n", .{err});
+            return;
+        };
+        defer {
+            var r = report;
+            r.deinit(self.allocator);
+        }
+
+        // Display report
+        std.debug.print("Provenance Report for {s}:\n", .{package_name});
+        std.debug.print("───────────────────────────────────────────────────────────────\n", .{});
+
+        if (report.has_provenance) {
+            std.debug.print("  Provenance: ✓ Present\n", .{});
+            if (report.builder_name) |bn| {
+                std.debug.print("  Builder: {s}\n", .{bn});
+            }
+        } else {
+            std.debug.print("  Provenance: ✗ Missing\n", .{});
+        }
+
+        if (report.source_verified) {
+            std.debug.print("  Source: ✓ Verified\n", .{});
+        } else {
+            std.debug.print("  Source: ✗ Not verified\n", .{});
+        }
+
+        if (report.signature_valid) {
+            std.debug.print("  Signature: ✓ Valid\n", .{});
+            if (report.signer_key_id) |key| {
+                std.debug.print("  Signer: {s}\n", .{key});
+            }
+        } else {
+            std.debug.print("  Signature: ✗ Invalid or missing\n", .{});
+        }
+
+        if (report.signer_trusted) {
+            std.debug.print("  Trust: ✓ Signer is trusted\n", .{});
+        } else {
+            std.debug.print("  Trust: ✗ Signer not trusted\n", .{});
+        }
+
+        std.debug.print("  Build age: {d} days\n", .{report.build_age_days});
+
+        if (report.policy_violations.len > 0) {
+            std.debug.print("\nPolicy Violations:\n", .{});
+            for (report.policy_violations) |violation| {
+                std.debug.print("  ✗ {s}\n", .{violation.toString()});
+            }
+        }
+
+        std.debug.print("\n", .{});
+
+        if (report.isValid()) {
+            std.debug.print("Result: ✓ Package provenance is valid and trusted\n", .{});
+        } else {
+            std.debug.print("Result: ✗ Package provenance verification failed\n", .{});
+        }
+
+        // Attempt rebuild if requested
+        if (attempt_rebuild) {
+            std.debug.print("\nAttempting reproducible rebuild...\n", .{});
+            const repro_report = verifier.verifyReproducibility(pkg_mountpoint) catch |err| {
+                std.debug.print("Reproducibility check failed: {}\n", .{err});
+                return;
+            };
+            defer {
+                var rr = repro_report;
+                rr.deinit(self.allocator);
+            }
+
+            if (repro_report.build_attempted) {
+                if (repro_report.output_matches) {
+                    std.debug.print("Reproducibility: ✓ Output matches original\n", .{});
+                } else {
+                    std.debug.print("Reproducibility: ✗ Output differs\n", .{});
+                    if (repro_report.diff_summary) |diff| {
+                        std.debug.print("  {s}\n", .{diff});
+                    }
+                }
+            } else {
+                std.debug.print("Reproducibility: Build not attempted\n", .{});
+                if (repro_report.diff_summary) |msg| {
+                    std.debug.print("  {s}\n", .{msg});
+                }
+            }
+        }
+    }
+
+    /// Show provenance details for a package
+    fn showProvenance(self: *CLI, args: []const []const u8) !void {
+        if (args.len == 0) {
+            std.debug.print("Usage: axiom provenance-show <package>\n", .{});
+            std.debug.print("\nDisplay detailed provenance information for a package.\n", .{});
+            std.debug.print("\nExamples:\n", .{});
+            std.debug.print("  axiom provenance-show bash\n", .{});
+            std.debug.print("  axiom provenance openssl\n", .{});
+            return;
+        }
+
+        var package_name: []const u8 = "";
+
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
+                std.debug.print("Usage: axiom provenance-show <package>\n", .{});
+                return;
+            } else if (!std.mem.startsWith(u8, arg, "-")) {
+                package_name = arg;
+            }
+        }
+
+        if (package_name.len == 0) {
+            std.debug.print("Error: Package name required.\n", .{});
+            return;
+        }
+
+        std.debug.print("Provenance for: {s}\n", .{package_name});
+        std.debug.print("═══════════════════════════════════════════════════════════════\n\n", .{});
+
+        // Find package in store
+        const packages = try self.store.listPackages();
+        defer {
+            for (packages) |pkg| {
+                self.allocator.free(pkg.name);
+                self.allocator.free(pkg.build_id);
+            }
+            self.allocator.free(packages);
+        }
+
+        var pkg_found: ?types.PackageId = null;
+        for (packages) |pkg| {
+            if (std.mem.eql(u8, pkg.name, package_name)) {
+                pkg_found = pkg;
+                break;
+            }
+        }
+
+        if (pkg_found == null) {
+            std.debug.print("Package '{s}' not found in store.\n", .{package_name});
+            return;
+        }
+
+        // Get package path
+        const pkg_dataset = try self.store.paths.packageDataset(self.allocator, pkg_found.?);
+        defer self.allocator.free(pkg_dataset);
+
+        const pkg_mountpoint = try self.zfs_handle.getMountpoint(self.allocator, pkg_dataset);
+        defer self.allocator.free(pkg_mountpoint);
+
+        // Read provenance file
+        const provenance_path = try std.fs.path.join(self.allocator, &.{ pkg_mountpoint, "provenance.yaml" });
+        defer self.allocator.free(provenance_path);
+
+        const file = std.fs.cwd().openFile(provenance_path, .{}) catch |err| {
+            if (err == error.FileNotFound) {
+                std.debug.print("No provenance record found for this package.\n\n", .{});
+                std.debug.print("This package was imported without provenance information.\n", .{});
+                std.debug.print("Consider requiring provenance for future imports:\n", .{});
+                std.debug.print("  Edit /etc/axiom/policy.yaml and set 'require: true'\n", .{});
+                return;
+            }
+            return err;
+        };
+        defer file.close();
+
+        const content = try file.readToEndAlloc(self.allocator, 1024 * 1024);
+        defer self.allocator.free(content);
+
+        // Display provenance content
+        std.debug.print("{s}\n", .{content});
+    }
+
+    /// Check provenance policy compliance
+    fn checkProvenancePolicy(self: *CLI, args: []const []const u8) !void {
+        var check_all = false;
+        var package_name: ?[]const u8 = null;
+
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
+                std.debug.print("Usage: axiom provenance-policy [options] [package]\n", .{});
+                std.debug.print("\nCheck provenance policy compliance.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --check      Check all packages for policy compliance\n", .{});
+                std.debug.print("  --show       Show current policy settings\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom provenance-policy --check\n", .{});
+                std.debug.print("  axiom provenance-policy bash\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--check")) {
+                check_all = true;
+            } else if (std.mem.eql(u8, arg, "--show")) {
+                // Show current policy
+                std.debug.print("Current Provenance Policy:\n", .{});
+                std.debug.print("═══════════════════════════════════════════════════════════════\n\n", .{});
+                std.debug.print("  require_provenance: true (default)\n", .{});
+                std.debug.print("  require_signature: true (default)\n", .{});
+                std.debug.print("  max_age_days: 365 (default)\n", .{});
+                std.debug.print("  trusted_builders: (none configured)\n", .{});
+                std.debug.print("\nTo configure, edit: /etc/axiom/policy.yaml\n", .{});
+                return;
+            } else if (!std.mem.startsWith(u8, arg, "-")) {
+                package_name = arg;
+            }
+        }
+
+        var checker = PolicyChecker.init(self.allocator);
+        defer checker.deinit();
+
+        if (check_all) {
+            std.debug.print("Checking provenance policy compliance for all packages...\n\n", .{});
+
+            const packages = try self.store.listPackages();
+            defer {
+                for (packages) |pkg| {
+                    self.allocator.free(pkg.name);
+                    self.allocator.free(pkg.build_id);
+                }
+                self.allocator.free(packages);
+            }
+
+            var compliant: u32 = 0;
+            var non_compliant: u32 = 0;
+
+            for (packages) |pkg| {
+                const pkg_dataset = self.store.paths.packageDataset(self.allocator, pkg) catch continue;
+                defer self.allocator.free(pkg_dataset);
+
+                const pkg_mountpoint = self.zfs_handle.getMountpoint(self.allocator, pkg_dataset) catch continue;
+                defer self.allocator.free(pkg_mountpoint);
+
+                const report = checker.checkPackage(pkg_mountpoint) catch continue;
+                defer {
+                    var r = report;
+                    r.deinit(self.allocator);
+                }
+
+                if (report.isValid()) {
+                    compliant += 1;
+                    std.debug.print("  ✓ {s}\n", .{pkg.name});
+                } else {
+                    non_compliant += 1;
+                    std.debug.print("  ✗ {s}\n", .{pkg.name});
+                    for (report.policy_violations) |v| {
+                        std.debug.print("      - {s}\n", .{v.toString()});
+                    }
+                }
+            }
+
+            std.debug.print("\n───────────────────────────────────────────────────────────────\n", .{});
+            std.debug.print("Summary: {d} compliant, {d} non-compliant\n", .{ compliant, non_compliant });
+        } else if (package_name) |name| {
+            std.debug.print("Checking policy compliance for: {s}\n\n", .{name});
+
+            // Find and check specific package
+            const packages = try self.store.listPackages();
+            defer {
+                for (packages) |pkg| {
+                    self.allocator.free(pkg.name);
+                    self.allocator.free(pkg.build_id);
+                }
+                self.allocator.free(packages);
+            }
+
+            for (packages) |pkg| {
+                if (std.mem.eql(u8, pkg.name, name)) {
+                    const pkg_dataset = try self.store.paths.packageDataset(self.allocator, pkg);
+                    defer self.allocator.free(pkg_dataset);
+
+                    const pkg_mountpoint = try self.zfs_handle.getMountpoint(self.allocator, pkg_dataset);
+                    defer self.allocator.free(pkg_mountpoint);
+
+                    const report = try checker.checkPackage(pkg_mountpoint);
+                    defer {
+                        var r = report;
+                        r.deinit(self.allocator);
+                    }
+
+                    if (report.isValid()) {
+                        std.debug.print("✓ Package '{s}' is policy compliant.\n", .{name});
+                    } else {
+                        std.debug.print("✗ Package '{s}' has policy violations:\n", .{name});
+                        for (report.policy_violations) |v| {
+                            std.debug.print("  - {s}\n", .{v.toString()});
+                        }
+                    }
+                    return;
+                }
+            }
+
+            std.debug.print("Package '{s}' not found in store.\n", .{name});
+        } else {
+            std.debug.print("Usage: axiom provenance-policy [--check] [--show] [package]\n", .{});
+            std.debug.print("Run 'axiom provenance-policy --help' for details.\n", .{});
+        }
     }
 };
 
