@@ -35,7 +35,7 @@ This document outlines the planned enhancements for Axiom beyond the core 8 phas
 | 33 | Unified Test Infrastructure | Medium | Low | None | ✓ Complete |
 | 34 | CLI Resolution Options | Medium | Low | Phase 31 | ✓ Complete |
 | 35 | Dependency Graph Visualization | Low | Medium | Phase 16 | ✓ Complete |
-| 36 | HSM/PKCS#11 Signing | Medium | High | Phase 15 | Planned |
+| 36 | HSM/PKCS#11 Signing | Medium | High | Phase 15 | ✓ Complete |
 | 37 | Multi-Party Signing | Medium | High | Phase 36 | Planned |
 | 38 | Service Management Integration | High | High | Phase 22 | Planned |
 | 39 | Boot Environment Support | High | Medium | None | Planned |
@@ -3472,34 +3472,51 @@ Provide tools to visualize and analyze dependency graphs for debugging and optim
 
 **Priority**: Medium
 **Complexity**: High
-**Status**: Planned
+**Status**: ✓ Complete
 
 ### Purpose
 
 Support hardware security modules for package signing in high-security environments.
 
-### Requirements
+### Implementation
 
-1. **PKCS#11 Integration**
-   - Load keys from HSM
-   - Sign packages without exposing private key
-   - Support for YubiKey, SoftHSM, cloud HSMs
+1. **PKCS#11 Abstraction Layer** (`src/hsm.zig`)
+   - PKCS#11 constants (CKR, CKO, CKK, CKM, CKA, CKU, CKF)
+   - `HsmConfig` for configuration management
+   - `HsmProvider` for HSM operations (initialize, listSlots, listKeys, login, sign)
+   - `HsmSigner` for unified software/HSM signing interface
+   - Support for YubiKey, SoftHSM, OpenSC, AWS CloudHSM
 
 2. **Configuration**
    ```yaml
-   # /etc/axiom/signing.yaml
-   signing:
-     provider: pkcs11
-     library: /usr/lib/opensc-pkcs11.so
-     slot: 0
-     key_id: "axiom-release"
+   # /etc/axiom/hsm.yaml
+   library: /usr/lib/softhsm/libsofthsm2.so
+   slot: 0
+   key_label: axiom-signing
    ```
 
-3. **CLI**
+3. **CLI Commands**
    ```bash
-   axiom sign mypackage --hsm --slot 0
-   axiom key-list --hsm
+   # List available HSM slots
+   axiom hsm-list [--library <path>] [--verbose]
+
+   # List signing keys on HSM
+   axiom hsm-keys --slot 0 --pin <pin> [--library <path>]
    ```
+
+4. **Key Structures**
+   - `SlotInfo`: HSM slot information (slot_id, description, token_present, token_label)
+   - `KeyInfo`: Key metadata (key_id, label, key_type, can_sign)
+   - `SigningMode`: enum for software vs HSM signing
+
+### Common PKCS#11 Library Paths
+
+| Device/Software | Linux Path | FreeBSD Path |
+|----------------|------------|--------------|
+| SoftHSM | `/usr/lib/softhsm/libsofthsm2.so` | `/usr/local/lib/softhsm/libsofthsm2.so` |
+| YubiKey | `/usr/lib/libykcs11.so` | `/usr/local/lib/libykcs11.so` |
+| OpenSC | `/usr/lib/opensc-pkcs11.so` | `/usr/local/lib/opensc-pkcs11.so` |
+| AWS CloudHSM | `/opt/cloudhsm/lib/libcloudhsm_pkcs11.so` | N/A |
 
 ---
 
