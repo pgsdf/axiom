@@ -380,6 +380,45 @@ sudo axiom realize my-env myprofile --conflict-policy priority
 sudo axiom realize my-env myprofile --conflict-policy keep-both
 ```
 
+### Using Merge Strategies
+
+Control how files are linked into environments:
+
+```bash
+# Default: symbolic links (space-efficient)
+sudo axiom realize my-env myprofile --merge-strategy symlink
+
+# Hard links (fast access, space-efficient)
+sudo axiom realize my-env myprofile --merge-strategy hardlink
+
+# Full copies (isolated, allows modifications)
+sudo axiom realize my-env myprofile --merge-strategy copy
+
+# ZFS clones (requires ZFS, very fast)
+sudo axiom realize my-env myprofile --merge-strategy zfs_clone
+```
+
+### Selective Output Installation
+
+Install only specific package outputs for minimal environments:
+
+```bash
+# Install only binaries and runtime libraries (production)
+sudo axiom realize prod-env production --outputs bin,lib
+
+# Include development files for building
+sudo axiom realize dev-env development --outputs bin,lib,dev
+
+# Include documentation
+sudo axiom realize full-env myprofile --outputs bin,lib,dev,doc
+```
+
+**Common output types:**
+- `bin` - Executable binaries
+- `lib` - Runtime libraries
+- `dev` - Headers, static libs, pkg-config files
+- `doc` - Documentation and man pages
+
 ### Rolling Back with ZFS Snapshots
 
 ```bash
@@ -892,6 +931,68 @@ axiom bundle-run untrusted-app.pgsdimg
 
 # For bundles from unknown sources (use caution!)
 axiom bundle-run untrusted-app.pgsdimg --allow-untrusted
+```
+
+### Workflow: Build Provenance Verification
+
+Build provenance provides supply chain verification for packages.
+
+**Verify Package Provenance**
+
+```bash
+# Verify provenance of a package
+axiom verify-provenance bash
+
+# Output shows:
+#   Provenance: present/missing
+#   Source: verified/not verified
+#   Signature: valid/invalid
+#   Trust: trusted/untrusted
+#   Build age: N days
+```
+
+**View Provenance Details**
+
+```bash
+# Display full provenance record
+axiom provenance-show bash
+
+# Shows builder info, source URL, build timestamps,
+# output hash, and signature details
+```
+
+**Check Policy Compliance**
+
+```bash
+# Check all packages for policy compliance
+axiom provenance-policy --check
+
+# Check specific package
+axiom provenance-policy bash
+
+# View current policy settings
+axiom provenance-policy --show
+```
+
+**Configure Provenance Policy**
+
+Create `/etc/axiom/policy.yaml`:
+
+```yaml
+provenance:
+  require: true                    # Reject packages without provenance
+  require_signature: true          # Reject unsigned provenance
+  trusted_builders:
+    - "builder01.pgsdf.org"
+    - "builder02.pgsdf.org"
+  max_age_days: 365               # Reject builds older than 1 year
+```
+
+**Attempt Reproducible Rebuild**
+
+```bash
+# Verify by rebuilding (experimental)
+axiom verify-provenance bash --rebuild
 ```
 
 ---
