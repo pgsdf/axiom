@@ -4,12 +4,15 @@ const types = @import("types.zig");
 const store = @import("store.zig");
 const profile = @import("profile.zig");
 const config = @import("config.zig");
+const store_integrity = @import("store_integrity.zig");
 const posix = std.posix;
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageId = types.PackageId;
 const PackageStore = store.PackageStore;
 const ProfileManager = profile.ProfileManager;
+const TransactionLog = store_integrity.TransactionLog;
+const RefCounter = store_integrity.RefCounter;
 
 // =============================================================================
 // Configuration Constants
@@ -52,6 +55,7 @@ pub const GCStats = struct {
 
 /// Garbage collector - removes unreferenced packages
 /// Thread-safe: Uses file-based locking to prevent concurrent GC operations
+/// Safety: Uses transaction logging for crash recovery
 pub const GarbageCollector = struct {
     allocator: std.mem.Allocator,
     zfs_handle: *ZfsHandle,
@@ -63,6 +67,15 @@ pub const GarbageCollector = struct {
 
     /// Lock file handle (null when not holding lock)
     lock_file: ?std.fs.File = null,
+
+    /// Transaction log for crash recovery (optional, initialized on first use)
+    transaction_log: ?TransactionLog = null,
+
+    /// Whether to use transaction logging for safety
+    use_transaction_log: bool = true,
+
+    /// Reference counter for accurate reference checking
+    ref_counter: ?RefCounter = null,
 
     /// Initialize garbage collector
     pub fn init(
@@ -246,7 +259,22 @@ pub const GarbageCollector = struct {
                 }
             } else {
                 const collect_start = std.time.milliTimestamp();
-                
+
+                // Initialize transaction log if enabled
+                var txn_log: ?TransactionLog = null;
+                if (self.use_transaction_log) {
+                    const store_mountpoint = self.zfs_handle.getMountpoint(
+                        self.allocator,
+                        self.store.paths.store_root,
+                    ) catch null;
+
+                    if (store_mountpoint) |mp| {
+                        defer self.allocator.free(mp);
+                        txn_log = TransactionLog.init(self.allocator, mp) catch null;
+                    }
+                }
+                defer if (txn_log) |*tl| tl.deinit();
+
                 for (to_remove.items, 0..) |pkg, i| {
                     std.debug.print("  [{d}/{d}] Removing {s} {}\n", .{
                         i + 1,
@@ -260,9 +288,39 @@ pub const GarbageCollector = struct {
                     const estimated_size: usize = 10 * 1024 * 1024; // 10MB estimate
                     stats.space_freed += estimated_size;
 
-                    // Remove package
-                    try self.store.removePackage(pkg);
-                    stats.removed_packages += 1;
+                    // Build package path for transaction logging
+                    const pkg_path = std.fmt.allocPrint(self.allocator, "{s}/{}/{d}/{s}", .{
+                        pkg.name,
+                        pkg.version,
+                        pkg.revision,
+                        pkg.build_id,
+                    }) catch "";
+                    defer if (pkg_path.len > 0) self.allocator.free(pkg_path);
+
+                    // Begin transaction if logging is enabled
+                    var txn_seq: ?u64 = null;
+                    if (txn_log) |*tl| {
+                        txn_seq = tl.begin(.gc_remove, pkg_path) catch null;
+                    }
+
+                    // Remove package with transaction logging
+                    if (self.store.removePackage(pkg)) {
+                        // Success - complete transaction
+                        if (txn_log) |*tl| {
+                            if (txn_seq) |seq| {
+                                tl.complete(seq, .gc_remove) catch {};
+                            }
+                        }
+                        stats.removed_packages += 1;
+                    } else |err| {
+                        // Failure - abort transaction
+                        if (txn_log) |*tl| {
+                            if (txn_seq) |seq| {
+                                tl.abort(seq, .gc_remove) catch {};
+                            }
+                        }
+                        std.debug.print("    Warning: Failed to remove {s}: {}\n", .{ pkg.name, err });
+                    }
                 }
 
                 stats.collect_time_ms = std.time.milliTimestamp() - collect_start;
@@ -492,6 +550,80 @@ pub const GarbageCollector = struct {
             self.store.paths.store_root,
             snap_name,
         });
+    }
+
+    /// Verify store integrity before garbage collection
+    /// Returns true if store is healthy enough to proceed with GC
+    pub fn verifyBeforeCollect(self: *GarbageCollector) !bool {
+        std.debug.print("Verifying store integrity before GC...\n", .{});
+
+        const store_mountpoint = self.zfs_handle.getMountpoint(
+            self.allocator,
+            self.store.paths.store_root,
+        ) catch |err| {
+            std.debug.print("  Warning: Could not get store mountpoint: {}\n", .{err});
+            return false;
+        };
+        defer self.allocator.free(store_mountpoint);
+
+        var integrity = store_integrity.StoreIntegrity.init(self.allocator, store_mountpoint);
+        defer integrity.deinit();
+
+        var report = integrity.verify(.{
+            .check_manifests = true,
+            .check_hashes = false, // Skip slow hash verification for pre-GC check
+            .check_references = true,
+            .repair_mode = false,
+        }) catch |err| {
+            std.debug.print("  Warning: Integrity verification failed: {}\n", .{err});
+            return false;
+        };
+        defer report.deinit();
+
+        if (report.healthy) {
+            std.debug.print("  ✓ Store integrity verified\n", .{});
+            return true;
+        } else {
+            std.debug.print("  ✗ Store has integrity issues:\n", .{});
+            if (report.missing_manifests.items.len > 0) {
+                std.debug.print("    - {d} packages with missing manifests\n", .{report.missing_manifests.items.len});
+            }
+            if (report.broken_references.items.len > 0) {
+                std.debug.print("    - {d} broken references\n", .{report.broken_references.items.len});
+            }
+            if (report.partial_imports.items.len > 0) {
+                std.debug.print("    - {d} partial imports\n", .{report.partial_imports.items.len});
+            }
+            std.debug.print("  Consider running 'axiom store-verify --repair' first\n", .{});
+            return false;
+        }
+    }
+
+    /// Recover from incomplete GC operations (call on startup)
+    pub fn recoverFromCrash(self: *GarbageCollector) !void {
+        const store_mountpoint = self.zfs_handle.getMountpoint(
+            self.allocator,
+            self.store.paths.store_root,
+        ) catch {
+            return; // Store not accessible
+        };
+        defer self.allocator.free(store_mountpoint);
+
+        var txn_log = TransactionLog.init(self.allocator, store_mountpoint) catch {
+            return; // No transaction log
+        };
+        defer txn_log.deinit();
+
+        const incomplete = txn_log.findIncomplete() catch {
+            return;
+        };
+
+        if (incomplete.len > 0) {
+            std.debug.print("Found {d} incomplete GC operations from previous crash\n", .{incomplete.len});
+            std.debug.print("Run 'axiom store-verify --repair' to clean up\n", .{});
+        }
+
+        self.allocator.free(incomplete);
     }
 };
 

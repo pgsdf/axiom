@@ -57,6 +57,9 @@ const RemoteCacheConfig = cache_protocol.CacheConfig;
 const format_version = @import("format_version.zig");
 const FormatVersions = format_version.FormatVersions;
 const StoreVersion = format_version.StoreVersion;
+const store_integrity = @import("store_integrity.zig");
+const StoreIntegrity = store_integrity.StoreIntegrity;
+const RefCounter = store_integrity.RefCounter;
 
 /// CLI command enumeration
 pub const Command = enum {
@@ -207,6 +210,10 @@ pub const Command = enum {
     // Format version operations (Phase 41)
     store_version,
     migrate,
+
+    // Store integrity operations (Phase 42)
+    store_verify,
+    refs,
 
     unknown,
 };
@@ -376,6 +383,10 @@ pub fn parseCommand(cmd: []const u8) Command {
     // Format version commands (Phase 41)
     if (std.mem.eql(u8, cmd, "store-version")) return .store_version;
     if (std.mem.eql(u8, cmd, "migrate")) return .migrate;
+
+    // Store integrity commands (Phase 42)
+    if (std.mem.eql(u8, cmd, "store-verify")) return .store_verify;
+    if (std.mem.eql(u8, cmd, "refs")) return .refs;
 
     return .unknown;
 }
@@ -605,6 +616,10 @@ pub const CLI = struct {
             // Format version commands (Phase 41)
             .store_version => try self.storeVersion(args[1..]),
             .migrate => try self.migrateStore(args[1..]),
+
+            // Store integrity commands (Phase 42)
+            .store_verify => try self.storeVerify(args[1..]),
+            .refs => try self.packageRefs(args[1..]),
 
             .unknown => {
                 std.debug.print("Unknown command: {s}\n", .{args[0]});
@@ -6628,6 +6643,225 @@ pub const CLI = struct {
             }
         } else {
             std.debug.print("All formats are up to date. No migration needed.\n", .{});
+        }
+    }
+
+    /// Verify store integrity (Phase 42)
+    fn storeVerify(self: *CLI, args: []const []const u8) !void {
+        var repair_mode = false;
+        var verify_hashes = false;
+
+        // Parse arguments
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
+                std.debug.print("Usage: axiom store-verify [options]\n", .{});
+                std.debug.print("\nVerify store integrity and detect issues.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --repair         Repair detected issues\n", .{});
+                std.debug.print("  --verify-hashes  Verify package content hashes (slower)\n", .{});
+                std.debug.print("  -h, --help       Show this help message\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom store-verify              # Check for issues\n", .{});
+                std.debug.print("  axiom store-verify --repair     # Fix detected issues\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--repair")) {
+                repair_mode = true;
+            } else if (std.mem.eql(u8, arg, "--verify-hashes")) {
+                verify_hashes = true;
+            }
+        }
+
+        std.debug.print("Axiom Store Integrity Check\n", .{});
+        std.debug.print("═══════════════════════════════════════════════════════════════\n", .{});
+
+        var integrity = StoreIntegrity.init(self.allocator);
+
+        // Verify store
+        var report = integrity.verify(.{
+            .verify_hashes = verify_hashes,
+            .check_references = true,
+            .check_partial_imports = true,
+        }) catch |err| {
+            std.debug.print("Error verifying store: {}\n", .{err});
+            return;
+        };
+        defer report.deinit();
+
+        // Display results
+        std.debug.print("\nResults:\n", .{});
+        std.debug.print("  Valid packages:      {d}\n", .{report.valid_packages});
+        std.debug.print("  Orphaned datasets:   {d}\n", .{report.orphaned_datasets.items.len});
+        std.debug.print("  Missing manifests:   {d}\n", .{report.missing_manifests.items.len});
+        std.debug.print("  Hash mismatches:     {d}\n", .{report.hash_mismatches.items.len});
+        std.debug.print("  Broken references:   {d}\n", .{report.broken_references.items.len});
+        std.debug.print("  Partial imports:     {d}\n", .{report.partial_imports.items.len});
+
+        // Show details if issues found
+        if (report.missing_manifests.items.len > 0) {
+            std.debug.print("\nPackages with missing manifests:\n", .{});
+            for (report.missing_manifests.items) |path| {
+                std.debug.print("  - {s}\n", .{path});
+            }
+        }
+
+        if (report.broken_references.items.len > 0) {
+            std.debug.print("\nBroken references:\n", .{});
+            for (report.broken_references.items) |ref| {
+                const source_type = switch (ref.source_type) {
+                    .profile => "profile",
+                    .environment => "environment",
+                    .process => "process",
+                    .build => "build",
+                };
+                std.debug.print("  - {s} '{s}' references missing package '{s}'\n", .{
+                    source_type,
+                    ref.source_name,
+                    ref.missing_package,
+                });
+            }
+        }
+
+        if (report.partial_imports.items.len > 0) {
+            std.debug.print("\nPartial imports detected:\n", .{});
+            for (report.partial_imports.items) |path| {
+                std.debug.print("  - {s}\n", .{path});
+            }
+        }
+
+        // Summary
+        std.debug.print("\n───────────────────────────────────────────────────────────────\n", .{});
+        if (report.healthy) {
+            std.debug.print("Store is healthy. No issues found.\n", .{});
+        } else {
+            std.debug.print("Store has {d} issue(s).\n", .{report.totalIssues()});
+
+            if (repair_mode) {
+                std.debug.print("\nAttempting repairs...\n", .{});
+                const repair_result = integrity.repair(&report, .{
+                    .clean_partial_imports = true,
+                    .remove_orphans = false, // Safer default
+                    .remove_invalid = false,
+                }) catch |err| {
+                    std.debug.print("Error during repair: {}\n", .{err});
+                    return;
+                };
+
+                std.debug.print("  Partial imports cleaned: {d}\n", .{repair_result.partial_imports_cleaned});
+                std.debug.print("  Orphans removed:         {d}\n", .{repair_result.orphans_removed});
+                std.debug.print("  Invalid removed:         {d}\n", .{repair_result.invalid_removed});
+                std.debug.print("  Errors:                  {d}\n", .{repair_result.errors});
+            } else {
+                std.debug.print("Run 'axiom store-verify --repair' to fix issues.\n", .{});
+            }
+        }
+    }
+
+    /// Show references to a package (Phase 42)
+    fn packageRefs(self: *CLI, args: []const []const u8) !void {
+        if (args.len == 0) {
+            std.debug.print("Usage: axiom refs <package-name>\n", .{});
+            std.debug.print("\nShow all references to a package.\n", .{});
+            std.debug.print("\nExamples:\n", .{});
+            std.debug.print("  axiom refs bash\n", .{});
+            std.debug.print("  axiom refs openssl@3.0.12\n", .{});
+            return;
+        }
+
+        var package_name: []const u8 = "";
+
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
+                std.debug.print("Usage: axiom refs <package-name>\n", .{});
+                std.debug.print("\nShow all references to a package.\n", .{});
+                std.debug.print("\nThis command shows:\n", .{});
+                std.debug.print("  - Profiles that include the package\n", .{});
+                std.debug.print("  - Environments that contain the package\n", .{});
+                std.debug.print("  - Running processes using the package\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom refs bash\n", .{});
+                std.debug.print("  axiom refs openssl@3.0.12\n", .{});
+                return;
+            } else if (!std.mem.startsWith(u8, arg, "-")) {
+                package_name = arg;
+            }
+        }
+
+        if (package_name.len == 0) {
+            std.debug.print("Error: Package name required\n", .{});
+            return;
+        }
+
+        std.debug.print("References to '{s}'\n", .{package_name});
+        std.debug.print("═══════════════════════════════════════════════════════════════\n", .{});
+
+        var ref_counter = RefCounter.init(self.allocator);
+
+        // Get reference count
+        const count = ref_counter.countRefs(package_name) catch |err| {
+            std.debug.print("Error counting references: {}\n", .{err});
+            return;
+        };
+
+        std.debug.print("\nTotal references: {d}\n", .{count});
+
+        // Get detailed sources
+        var sources = ref_counter.getRefSources(package_name) catch |err| {
+            std.debug.print("Error getting reference sources: {}\n", .{err});
+            return;
+        };
+        defer {
+            for (sources.items) |source| {
+                self.allocator.free(source.name);
+            }
+            sources.deinit();
+        }
+
+        if (sources.items.len == 0) {
+            std.debug.print("\nNo references found. This package can be safely garbage collected.\n", .{});
+            return;
+        }
+
+        // Group by type
+        var profiles = std.ArrayList([]const u8).init(self.allocator);
+        defer profiles.deinit();
+        var environments = std.ArrayList([]const u8).init(self.allocator);
+        defer environments.deinit();
+        var processes = std.ArrayList([]const u8).init(self.allocator);
+        defer processes.deinit();
+
+        for (sources.items) |source| {
+            switch (source.source_type) {
+                .profile => try profiles.append(source.name),
+                .environment => try environments.append(source.name),
+                .process => try processes.append(source.name),
+                .build => {},
+            }
+        }
+
+        if (profiles.items.len > 0) {
+            std.debug.print("\nProfiles ({d}):\n", .{profiles.items.len});
+            for (profiles.items) |name| {
+                std.debug.print("  - {s}\n", .{name});
+            }
+        }
+
+        if (environments.items.len > 0) {
+            std.debug.print("\nEnvironments ({d}):\n", .{environments.items.len});
+            for (environments.items) |name| {
+                std.debug.print("  - {s}\n", .{name});
+            }
+        }
+
+        if (processes.items.len > 0) {
+            std.debug.print("\nProcesses ({d}):\n", .{processes.items.len});
+            for (processes.items) |name| {
+                std.debug.print("  - {s}\n", .{name});
+            }
+        }
+
+        std.debug.print("\n───────────────────────────────────────────────────────────────\n", .{});
+        if (count > 0) {
+            std.debug.print("This package is referenced and will NOT be garbage collected.\n", .{});
         }
     }
 };

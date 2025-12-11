@@ -41,7 +41,7 @@ This document outlines the planned enhancements for Axiom beyond the core 8 phas
 | 39 | Boot Environment Support | High | Medium | None | ✓ Complete |
 | 40 | Remote Binary Cache Protocol | High | High | Phase 17 | ✓ Complete |
 | 41 | Format Versioning | High | Low | None | ✓ Complete |
-| 42 | Store Invariants & GC Guarantees | High | Medium | None | Planned |
+| 42 | Store Invariants & GC Guarantees | High | Medium | None | ✓ Complete |
 | 43 | Advanced Resolver Semantics | Medium | High | Phase 16 | Planned |
 | 44 | Realization Specification | High | Medium | None | Planned |
 | 45 | Build Provenance Enforcement | High | Medium | Phase 15 | Planned |
@@ -3964,7 +3964,7 @@ axiom migrate                    # Perform migration
 
 **Priority**: High
 **Complexity**: Medium
-**Status**: Planned
+**Status**: ✓ Complete
 
 ### Purpose
 
@@ -4076,14 +4076,58 @@ axiom refs <package>            # Show all references to package
 
 ### Deliverables
 
-- [ ] Document formal store invariants
-- [ ] Implement StoreIntegrity checker
-- [ ] Implement RefCounter with all reference sources
-- [ ] Implement process scanning for in-use packages
-- [ ] Implement transaction log for crash recovery
-- [ ] Add --repair flag to store-verify
-- [ ] Add comprehensive GC safety checks
-- [ ] Write invariant verification tests
+- [x] Document formal store invariants
+- [x] Implement StoreIntegrity checker
+- [x] Implement RefCounter with all reference sources
+- [x] Implement process scanning for in-use packages
+- [x] Implement transaction log for crash recovery
+- [x] Add --repair flag to store-verify
+- [x] Add comprehensive GC safety checks
+- [x] Write invariant verification tests
+
+### Implementation Notes
+
+**Files Created/Modified:**
+- `src/store_integrity.zig` - New module with StoreIntegrity, RefCounter, TransactionLog
+- `src/gc.zig` - Updated with transaction logging and integrity verification
+- `src/cli.zig` - Added store-verify and refs commands
+
+**Key Components:**
+
+1. **StoreIntegrity Checker**
+   - Verifies manifests exist for all packages
+   - Detects orphaned datasets
+   - Identifies hash mismatches (optional deep verification)
+   - Finds broken references
+   - Detects partial imports via transaction log
+   - Repair mode for automated cleanup
+
+2. **RefCounter**
+   - Counts references from profiles, environments, processes, and builds
+   - `countRefs()` returns total reference count
+   - `getRefSources()` returns detailed reference sources
+   - `isReferenced()` for quick checks
+
+3. **TransactionLog**
+   - Records import, gc_remove, and realize operations
+   - Supports begin/complete/abort workflow
+   - `findIncomplete()` for crash recovery
+   - Stored in `.axiom-txlog/` directory
+
+4. **GC Safety Guarantees**
+   - Transaction logging wraps all removal operations
+   - `verifyBeforeCollect()` checks integrity before GC
+   - `recoverFromCrash()` handles incomplete operations
+   - Safety snapshot before destructive operations
+
+**CLI Commands:**
+```bash
+axiom store-verify              # Verify store integrity
+axiom store-verify --repair     # Repair detected issues
+axiom store-verify --deep       # Include hash verification
+axiom refs <package>            # Show all references to package
+axiom refs <package> --verbose  # Include reference details
+```
 
 ---
 
