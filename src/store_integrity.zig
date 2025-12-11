@@ -456,7 +456,7 @@ pub const StoreIntegrity = struct {
     }
 
     /// Clean up a partial import
-    fn cleanupPartialImport(self: *StoreIntegrity, txlog_path: []const u8) !void {
+    fn cleanupPartialImport(_: *StoreIntegrity, txlog_path: []const u8) !void {
         // Read the transaction log to find what was being imported
         const file = try std.fs.openFileAbsolute(txlog_path, .{});
         defer file.close();
@@ -746,14 +746,17 @@ pub const RefCounter = struct {
 pub const TransactionLog = struct {
     allocator: Allocator,
     log_path: []const u8,
+    log_path_owned: bool = false,
     sequence: u64 = 0,
 
-    const DEFAULT_LOG_PATH = "/axiom/store/.txlog";
+    const DEFAULT_LOG_DIR = ".axiom-txlog";
 
     pub const Operation = enum {
         import,
         delete,
         gc,
+        gc_remove,
+        realize,
     };
 
     pub const Entry = struct {
@@ -764,8 +767,10 @@ pub const TransactionLog = struct {
         completed: bool = false,
     };
 
-    pub fn init(allocator: Allocator) !TransactionLog {
-        const log_path = DEFAULT_LOG_PATH;
+    /// Initialize with store path - creates log dir at store_path/.axiom-txlog
+    pub fn init(allocator: Allocator, store_path: []const u8) !TransactionLog {
+        const log_path = try std.fs.path.join(allocator, &.{ store_path, DEFAULT_LOG_DIR });
+        errdefer allocator.free(log_path);
 
         // Create log directory if it doesn't exist
         std.fs.makeDirAbsolute(log_path) catch |err| {
@@ -780,6 +785,7 @@ pub const TransactionLog = struct {
             return TransactionLog{
                 .allocator = allocator,
                 .log_path = log_path,
+                .log_path_owned = true,
                 .sequence = 0,
             };
         };
@@ -801,8 +807,15 @@ pub const TransactionLog = struct {
         return TransactionLog{
             .allocator = allocator,
             .log_path = log_path,
+            .log_path_owned = true,
             .sequence = max_seq,
         };
+    }
+
+    pub fn deinit(self: *TransactionLog) void {
+        if (self.log_path_owned) {
+            self.allocator.free(self.log_path);
+        }
     }
 
     /// Begin a new transaction
@@ -814,6 +827,8 @@ pub const TransactionLog = struct {
             .import => "import",
             .delete => "delete",
             .gc => "gc",
+            .gc_remove => "gc_remove",
+            .realize => "realize",
         };
 
         const filename = try std.fmt.allocPrint(self.allocator, "{d:0>5}.{s}.pending", .{ seq, op_str });
@@ -844,6 +859,8 @@ pub const TransactionLog = struct {
             .import => "import",
             .delete => "delete",
             .gc => "gc",
+            .gc_remove => "gc_remove",
+            .realize => "realize",
         };
 
         const pending_name = try std.fmt.allocPrint(self.allocator, "{d:0>5}.{s}.pending", .{ seq, op_str });
@@ -874,6 +891,8 @@ pub const TransactionLog = struct {
             .import => "import",
             .delete => "delete",
             .gc => "gc",
+            .gc_remove => "gc_remove",
+            .realize => "realize",
         };
 
         const pending_name = try std.fmt.allocPrint(self.allocator, "{d:0>5}.{s}.pending", .{ seq, op_str });
