@@ -32,6 +32,62 @@ tags:
   - category2
 ```
 
+### Package Outputs
+
+Packages can define multiple outputs for selective installation:
+
+```yaml
+outputs:
+  bin:
+    description: "Runtime binaries"
+    paths:
+      - "bin/"
+    default: true
+
+  lib:
+    description: "Runtime libraries"
+    paths:
+      - "lib/"
+      - "lib64/"
+    default: true
+
+  dev:
+    description: "Development headers and static libs"
+    paths:
+      - "include/"
+      - "lib/*.a"
+      - "lib/pkgconfig/"
+    requires:
+      - lib
+    default: false
+
+  doc:
+    description: "Documentation"
+    paths:
+      - "share/doc/"
+      - "share/man/"
+    default: false
+
+default_outputs:
+  - bin
+  - lib
+```
+
+**Output fields:**
+- `description` - Human-readable description
+- `paths` - File patterns included in this output
+- `requires` - Other outputs this output depends on
+- `default` - Whether to install by default (if true)
+
+**Usage:**
+```bash
+# Install only bin and lib outputs (skip dev/doc)
+axiom realize prod-env profile --outputs bin,lib
+
+# Install everything including dev headers
+axiom realize dev-env profile --outputs bin,lib,dev
+```
+
 ### Example
 
 ```yaml

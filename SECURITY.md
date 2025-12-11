@@ -6,11 +6,12 @@ This document describes the security model, threat assumptions, and operational 
 
 1. [Threat Model](#threat-model)
 2. [Trust Anchors](#trust-anchors)
-3. [Privilege Requirements](#privilege-requirements)
-4. [Key Management](#key-management)
-5. [Secure Operations](#secure-operations)
-6. [Resource Limits](#resource-limits)
-7. [Hardening Recommendations](#hardening-recommendations)
+3. [Build Provenance](#build-provenance)
+4. [Privilege Requirements](#privilege-requirements)
+5. [Key Management](#key-management)
+6. [Secure Operations](#secure-operations)
+7. [Resource Limits](#resource-limits)
+8. [Hardening Recommendations](#hardening-recommendations)
 
 ---
 
@@ -91,6 +92,102 @@ When building from ports:
 - Provenance metadata records build environment
 
 **WARNING**: Building from ports trusts the ports tree content. For maximum security, verify port checksums against known-good values or use pre-signed binary packages.
+
+---
+
+## Build Provenance
+
+### Overview
+
+Build provenance provides cryptographic evidence of how a package was built, enabling verification of the entire supply chain from source to binary.
+
+### Provenance Record Format
+
+Every package in the Axiom store should have a `provenance.yaml` file containing:
+
+```yaml
+format_version: "1.0"
+
+builder:
+  name: "axiom-builder"          # Builder software
+  version: "1.0.0"               # Builder version
+  host: "builder01.pgsdf.org"    # Build host
+
+source:
+  url: "https://ftp.gnu.org/gnu/bash/bash-5.2.tar.gz"
+  sha256: "abc123..."            # Source archive hash
+  fetched_at: "2025-01-15T10:00:00Z"
+
+build:
+  started_at: "2025-01-15T10:05:00Z"
+  completed_at: "2025-01-15T10:15:00Z"
+  environment:
+    PATH: "/axiom/env/build/bin:/usr/bin"
+    CC: "gcc"
+  commands:
+    - "./configure --prefix=/usr/local"
+    - "make -j8"
+    - "make install DESTDIR=$OUTPUT"
+
+output:
+  hash: "sha256:def456..."       # Hash of package contents
+  files_count: 142
+  total_size: 5242880
+
+signature:
+  key_id: "PGSD0001A7E3F9B2"
+  algorithm: "ed25519"
+  value: "base64..."
+```
+
+### Hash Chain Binding
+
+Provenance uses hash chain binding to cryptographically link the output with build metadata:
+
+```
+output_hash = sha256(package_contents)
+provenance_hash = sha256(provenance_yaml_without_signature)
+binding = sign(output_hash || provenance_hash, private_key)
+```
+
+This ensures:
+1. The package contents match the recorded output hash
+2. The provenance metadata is unmodified
+3. Both are signed by a trusted key
+
+### Policy Enforcement
+
+Configure provenance policy in `/etc/axiom/policy.yaml`:
+
+```yaml
+provenance:
+  require: true                    # Reject packages without provenance
+  require_signature: true          # Reject unsigned provenance
+  trusted_builders:
+    - "builder01.pgsdf.org"
+    - "builder02.pgsdf.org"
+  max_age_days: 365               # Reject old builds
+```
+
+### Verification Commands
+
+```bash
+# Verify package provenance
+axiom verify-provenance bash
+
+# Show detailed provenance
+axiom provenance-show bash
+
+# Check all packages for policy compliance
+axiom provenance-policy --check
+```
+
+### Security Considerations
+
+- **Trusted Builders**: Only accept packages built by trusted infrastructure
+- **Build Age Limits**: Reject old builds that may use outdated dependencies
+- **Reproducibility**: Future support for rebuild verification
+- **Audit Trail**: Provenance records provide forensic evidence
 
 ---
 
