@@ -152,6 +152,7 @@ pub const Command = enum {
     bootstrap_status,
     bootstrap_import,
     bootstrap_export,
+    bootstrap_ports,
 
     unknown,
 };
@@ -273,6 +274,8 @@ pub fn parseCommand(cmd: []const u8) Command {
     if (std.mem.eql(u8, cmd, "bootstrap-status")) return .bootstrap_status;
     if (std.mem.eql(u8, cmd, "bootstrap-import")) return .bootstrap_import;
     if (std.mem.eql(u8, cmd, "bootstrap-export")) return .bootstrap_export;
+    if (std.mem.eql(u8, cmd, "bootstrap-ports")) return .bootstrap_ports;
+    if (std.mem.eql(u8, cmd, "bootstrap-freebsd-ports")) return .bootstrap_ports;
 
     return .unknown;
 }
@@ -459,6 +462,7 @@ pub const CLI = struct {
             .bootstrap_status => try self.bootstrapStatus(args[1..]),
             .bootstrap_import => try self.bootstrapImport(args[1..]),
             .bootstrap_export => try self.bootstrapExport(args[1..]),
+            .bootstrap_ports => try self.bootstrapPorts(args[1..]),
 
             .unknown => {
                 std.debug.print("Unknown command: {s}\n", .{args[0]});
@@ -588,6 +592,10 @@ pub const CLI = struct {
             \\
             \\Bootstrap (pkg independence):
             \\  bootstrap                  Check bootstrap status
+            \\  bootstrap-ports            Build bootstrap chain from FreeBSD ports
+            \\    --minimal                  Build only gmake, m4, help2man
+            \\    --dry-run                  Show what would be built
+            \\    --jobs <n>                 Parallel build jobs (default: 4)
             \\  bootstrap-import <tar>     Import bootstrap tarball
             \\    --force                    Overwrite existing packages
             \\    --dry-run                  Show what would be imported
@@ -4174,5 +4182,189 @@ pub const CLI = struct {
         );
 
         _ = try bootstrap_mgr.exportBootstrap(output_path, options);
+    }
+
+    /// Bootstrap from FreeBSD ports - builds the complete bootstrap chain
+    fn bootstrapPorts(self: *CLI, args: []const []const u8) !void {
+        // Parse options
+        var dry_run = false;
+        var verbose = false;
+        var jobs: u32 = 4;
+        var minimal = false;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) {
+                std.debug.print("Usage: axiom bootstrap-ports [options]\n", .{});
+                std.debug.print("\nBuild the complete bootstrap chain from FreeBSD ports.\n", .{});
+                std.debug.print("This automatically imports packages in the correct order:\n", .{});
+                std.debug.print("  1. misc/help2man (man page generator)\n", .{});
+                std.debug.print("  2. devel/m4      (macro processor)\n", .{});
+                std.debug.print("  3. devel/gmake   (GNU make)\n", .{});
+                std.debug.print("\nFor a full bootstrap, also builds:\n", .{});
+                std.debug.print("  4. devel/gettext-runtime\n", .{});
+                std.debug.print("  5. lang/perl5.42\n", .{});
+                std.debug.print("  6. devel/autoconf\n", .{});
+                std.debug.print("  7. devel/automake\n", .{});
+                std.debug.print("  8. devel/libtool\n", .{});
+                std.debug.print("  9. devel/pkgconf\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --minimal        Build only the minimal chain (help2man, m4, gmake)\n", .{});
+                std.debug.print("  --dry-run        Show what would be built without building\n", .{});
+                std.debug.print("  --verbose        Show detailed build output\n", .{});
+                std.debug.print("  --jobs <n>       Number of parallel build jobs (default: 4)\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom bootstrap-ports                # Full bootstrap\n", .{});
+                std.debug.print("  axiom bootstrap-ports --minimal      # Minimal bootstrap\n", .{});
+                std.debug.print("  axiom bootstrap-ports --dry-run      # Show what would be done\n", .{});
+                std.debug.print("\nNote: Requires the FreeBSD ports tree at /usr/ports\n", .{});
+                std.debug.print("      Install with: portsnap fetch extract\n", .{});
+                return;
+            } else if (std.mem.eql(u8, args[i], "--dry-run")) {
+                dry_run = true;
+            } else if (std.mem.eql(u8, args[i], "--verbose")) {
+                verbose = true;
+            } else if (std.mem.eql(u8, args[i], "--minimal")) {
+                minimal = true;
+            } else if (std.mem.eql(u8, args[i], "--jobs") and i + 1 < args.len) {
+                i += 1;
+                jobs = std.fmt.parseInt(u32, args[i], 10) catch 4;
+            }
+        }
+
+        std.debug.print("Axiom Bootstrap from Ports\n", .{});
+        std.debug.print("==========================\n\n", .{});
+
+        // Check if ports tree exists
+        std.fs.accessAbsolute("/usr/ports/Mk/bsd.port.mk", .{}) catch {
+            std.debug.print("Error: FreeBSD ports tree not found at /usr/ports\n", .{});
+            std.debug.print("\nTo install the ports tree, run:\n", .{});
+            std.debug.print("  portsnap fetch extract\n", .{});
+            std.debug.print("Or:\n", .{});
+            std.debug.print("  git clone https://git.FreeBSD.org/ports.git /usr/ports\n", .{});
+            return;
+        };
+
+        // Define the bootstrap chain
+        const MINIMAL_CHAIN = [_][]const u8{
+            "misc/help2man",
+            "devel/m4",
+            "devel/gmake",
+        };
+
+        const FULL_CHAIN = [_][]const u8{
+            "misc/help2man",
+            "devel/m4",
+            "devel/gmake",
+            "devel/gettext-runtime",
+            "lang/perl5.42",
+            "devel/autoconf",
+            "devel/automake",
+            "devel/libtool",
+            "devel/pkgconf",
+        };
+
+        const chain = if (minimal) &MINIMAL_CHAIN else &FULL_CHAIN;
+
+        std.debug.print("Bootstrap mode: {s}\n", .{if (minimal) "minimal" else "full"});
+        std.debug.print("Packages to build: {d}\n", .{chain.len});
+        std.debug.print("Parallel jobs: {d}\n\n", .{jobs});
+
+        if (dry_run) {
+            std.debug.print("Dry run - showing build plan:\n\n", .{});
+            for (chain, 0..) |port, idx| {
+                std.debug.print("  {d}. {s}\n", .{ idx + 1, port });
+            }
+            std.debug.print("\nRun without --dry-run to execute.\n", .{});
+            return;
+        }
+
+        // Initialize ports migrator
+        var migrator = try PortsMigrator.init(
+            self.allocator,
+            self.zfs_handle,
+            self.store,
+            self.importer,
+        );
+        defer migrator.deinit();
+
+        // Configure migrator
+        migrator.setParallelJobs(jobs);
+        if (verbose) {
+            migrator.setVerbose(true);
+        }
+
+        // Build each package in order
+        var success_count: u32 = 0;
+        var skip_count: u32 = 0;
+        var fail_count: u32 = 0;
+
+        for (chain, 0..) |port, idx| {
+            std.debug.print("\n[{d}/{d}] Building: {s}\n", .{ idx + 1, chain.len, port });
+            std.debug.print("────────────────────────────────────────\n", .{});
+
+            // Check if already installed
+            const pkg_name = extractPackageName(port);
+            if (try self.isPackageInstalled(pkg_name)) {
+                std.debug.print("  ✓ Already installed, skipping\n", .{});
+                skip_count += 1;
+                continue;
+            }
+
+            // Build and import
+            const result = migrator.migrate(port) catch |err| {
+                std.debug.print("  ✗ Failed: {}\n", .{err});
+                fail_count += 1;
+                continue;
+            };
+            defer result.deinit(self.allocator);
+
+            if (result.success) {
+                std.debug.print("  ✓ Successfully built and imported\n", .{});
+                success_count += 1;
+            } else {
+                std.debug.print("  ✗ Build failed\n", .{});
+                fail_count += 1;
+            }
+        }
+
+        // Summary
+        std.debug.print("\n");
+        std.debug.print("════════════════════════════════════════\n", .{});
+        std.debug.print("Bootstrap Complete\n", .{});
+        std.debug.print("════════════════════════════════════════\n", .{});
+        std.debug.print("  Built:   {d}\n", .{success_count});
+        std.debug.print("  Skipped: {d}\n", .{skip_count});
+        std.debug.print("  Failed:  {d}\n", .{fail_count});
+
+        if (fail_count == 0) {
+            std.debug.print("\n✓ Bootstrap successful!\n", .{});
+            std.debug.print("\nYou can now build other ports without pkg:\n", .{});
+            std.debug.print("  axiom ports-import shells/bash\n", .{});
+            std.debug.print("  axiom ports-import editors/vim\n", .{});
+        } else {
+            std.debug.print("\n✗ Some packages failed to build.\n", .{});
+            std.debug.print("Check the errors above and try again.\n", .{});
+        }
+    }
+
+    /// Extract package name from port origin (e.g., "devel/gmake" -> "gmake")
+    fn extractPackageName(origin: []const u8) []const u8 {
+        if (std.mem.indexOf(u8, origin, "/")) |idx| {
+            return origin[idx + 1 ..];
+        }
+        return origin;
+    }
+
+    /// Check if a package is installed in the store
+    fn isPackageInstalled(self: *CLI, name: []const u8) !bool {
+        const pkg_path = try std.fmt.allocPrint(self.allocator, "/axiom/store/pkg/{s}", .{name});
+        defer self.allocator.free(pkg_path);
+
+        var dir = std.fs.openDirAbsolute(pkg_path, .{}) catch {
+            return false;
+        };
+        dir.close();
+        return true;
     }
 };

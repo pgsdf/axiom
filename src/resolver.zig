@@ -651,10 +651,40 @@ pub const ResolutionContext = struct {
 pub const ResolutionStrategy = enum {
     /// Fast greedy algorithm - picks newest satisfying version
     greedy,
+    /// Greedy with backtracking - tries alternatives on conflict
+    greedy_with_backtracking,
     /// SAT solver - finds optimal solution, handles complex constraints
     sat,
     /// Try greedy first, fall back to SAT on failure
     greedy_with_sat_fallback,
+};
+
+/// Version selection preference
+pub const VersionPreference = enum {
+    /// Always pick the newest satisfying version (default)
+    newest,
+    /// Prefer older, more stable versions (for production)
+    stable,
+    /// Pick the oldest satisfying version
+    oldest,
+
+    pub fn description(self: VersionPreference) []const u8 {
+        return switch (self) {
+            .newest => "newest version (may have untested changes)",
+            .stable => "older stable versions preferred",
+            .oldest => "oldest satisfying version",
+        };
+    }
+};
+
+/// Backtracking configuration
+pub const BacktrackConfig = struct {
+    /// Maximum number of backtrack attempts per package
+    max_backtracks_per_package: u32 = 5,
+    /// Maximum total backtracks across all packages
+    max_total_backtracks: u32 = 50,
+    /// Maximum packages to consider for backtracking (small graph threshold)
+    small_graph_threshold: u32 = 20,
 };
 
 /// Dependency resolver with greedy and SAT solving capabilities
@@ -672,6 +702,12 @@ pub const Resolver = struct {
     last_stats: ?ResourceStats = null,
     /// Phase 29: Whether to show stats after resolution
     show_stats: bool = false,
+    /// Version preference for candidate selection
+    version_preference: VersionPreference = .newest,
+    /// Backtracking configuration
+    backtrack_config: BacktrackConfig = .{},
+    /// Backtracking statistics for current resolution
+    backtrack_count: u32 = 0,
 
     /// Initialize resolver with default greedy strategy
     pub fn init(allocator: std.mem.Allocator, store_ptr: *PackageStore) Resolver {
@@ -705,6 +741,19 @@ pub const Resolver = struct {
     /// Set resolution strategy
     pub fn setStrategy(self: *Resolver, strategy: ResolutionStrategy) void {
         self.strategy = strategy;
+    }
+
+    /// Set version preference (newest, stable, oldest)
+    pub fn setVersionPreference(self: *Resolver, preference: VersionPreference) void {
+        self.version_preference = preference;
+        if (preference == .stable) {
+            std.debug.print("  Using stable version preference: {s}\n", .{preference.description()});
+        }
+    }
+
+    /// Set backtracking configuration
+    pub fn setBacktrackConfig(self: *Resolver, config: BacktrackConfig) void {
+        self.backtrack_config = config;
     }
 
     /// Phase 29: Set resource limits
@@ -763,8 +812,12 @@ pub const Resolver = struct {
         // Phase 29: Initialize resource stats
         self.last_stats = ResourceStats.init(self.allocator);
 
+        // Reset backtrack counter
+        self.backtrack_count = 0;
+
         const result = switch (self.strategy) {
             .greedy => self.resolveGreedy(prof),
+            .greedy_with_backtracking => self.resolveGreedyWithBacktracking(prof),
             .sat => self.resolveSAT(prof),
             .greedy_with_sat_fallback => self.resolveWithFallback(prof),
         };
@@ -832,6 +885,273 @@ pub const Resolver = struct {
             .lock_version = 1,
             .resolved = try resolved_packages.toOwnedSlice(),
         };
+    }
+
+    /// Resolve using greedy algorithm with backtracking for small graphs
+    /// This attempts alternative versions when conflicts are detected
+    fn resolveGreedyWithBacktracking(self: *Resolver, prof: Profile) !ProfileLock {
+        std.debug.print("  Using greedy resolution with backtracking...\n", .{});
+
+        // For small graphs, try backtracking on failure
+        // For large graphs, fall through to SAT solver
+        const total_packages = prof.packages.len;
+        if (total_packages > self.backtrack_config.small_graph_threshold) {
+            std.debug.print("  Graph too large ({d} packages > {d} threshold), using SAT solver\n", .{
+                total_packages,
+                self.backtrack_config.small_graph_threshold,
+            });
+            return self.resolveSAT(prof);
+        }
+
+        // Try resolution with backtracking
+        var tried_versions = std.StringHashMap(std.ArrayList(Version)).init(self.allocator);
+        defer {
+            var iter = tried_versions.valueIterator();
+            while (iter.next()) |list| {
+                list.deinit();
+            }
+            tried_versions.deinit();
+        }
+
+        return self.resolveWithBacktrackingImpl(prof, &tried_versions, 0) catch |err| {
+            switch (err) {
+                ResolverError.NoSolution,
+                ResolverError.ConflictingPackages,
+                => {
+                    if (self.backtrack_count > 0) {
+                        std.debug.print("  Backtracking exhausted after {d} attempts, trying SAT solver...\n", .{self.backtrack_count});
+                    }
+                    return self.resolveSAT(prof);
+                },
+                else => return err,
+            }
+        };
+    }
+
+    /// Internal backtracking implementation
+    fn resolveWithBacktrackingImpl(
+        self: *Resolver,
+        prof: Profile,
+        tried_versions: *std.StringHashMap(std.ArrayList(Version)),
+        depth: u32,
+    ) !ProfileLock {
+        if (self.backtrack_count >= self.backtrack_config.max_total_backtracks) {
+            return ResolverError.NoSolution;
+        }
+
+        var ctx = ResolutionContext.init(self.allocator, self.store);
+        defer ctx.deinit();
+
+        // Add all requested packages to constraints
+        for (prof.packages) |pkg_req| {
+            try self.addConstraint(&ctx, pkg_req.name, pkg_req.constraint);
+            try ctx.requested.put(pkg_req.name, true);
+        }
+
+        // Resolve all packages with backtracking support
+        var constraint_iter = ctx.constraints.iterator();
+        while (constraint_iter.next()) |entry| {
+            const pkg_name = entry.key_ptr.*;
+            if (!ctx.resolved.contains(pkg_name)) {
+                self.resolvePackageWithBacktracking(&ctx, pkg_name, tried_versions) catch |err| {
+                    switch (err) {
+                        ResolverError.ConflictingPackages,
+                        ResolverError.NoSolution,
+                        => {
+                            // Try to backtrack by marking this version as tried
+                            // and retrying from the beginning
+                            self.backtrack_count += 1;
+                            if (depth < 3 and self.backtrack_count < self.backtrack_config.max_total_backtracks) {
+                                std.debug.print("  ↩ Backtracking (attempt {d})...\n", .{self.backtrack_count});
+                                return self.resolveWithBacktrackingImpl(prof, tried_versions, depth + 1);
+                            }
+                            return err;
+                        },
+                        else => return err,
+                    }
+                };
+            }
+        }
+
+        // Build result
+        var resolved_packages = std.ArrayList(ResolvedPackage).init(self.allocator);
+        defer resolved_packages.deinit();
+
+        var resolved_iter = ctx.resolved.iterator();
+        while (resolved_iter.next()) |entry| {
+            const is_requested = ctx.requested.get(entry.key_ptr.*) orelse false;
+            try resolved_packages.append(.{
+                .id = .{
+                    .name = try self.allocator.dupe(u8, entry.value_ptr.name),
+                    .version = entry.value_ptr.version,
+                    .revision = entry.value_ptr.revision,
+                    .build_id = try self.allocator.dupe(u8, entry.value_ptr.build_id),
+                },
+                .requested = is_requested,
+            });
+        }
+
+        if (self.backtrack_count > 0) {
+            std.debug.print("✓ Resolved {d} packages after {d} backtrack(s)\n", .{
+                resolved_packages.items.len,
+                self.backtrack_count,
+            });
+        } else {
+            std.debug.print("✓ Resolved {d} packages ({d} requested, {d} dependencies)\n", .{
+                resolved_packages.items.len,
+                prof.packages.len,
+                resolved_packages.items.len - prof.packages.len,
+            });
+        }
+
+        return ProfileLock{
+            .profile_name = try self.allocator.dupe(u8, prof.name),
+            .lock_version = 1,
+            .resolved = try resolved_packages.toOwnedSlice(),
+        };
+    }
+
+    /// Resolve a single package with backtracking support
+    fn resolvePackageWithBacktracking(
+        self: *Resolver,
+        ctx: *ResolutionContext,
+        pkg_name: []const u8,
+        tried_versions: *std.StringHashMap(std.ArrayList(Version)),
+    ) !void {
+        // Check for circular dependency
+        if (ctx.resolving.contains(pkg_name)) {
+            return ResolverError.CircularDependency;
+        }
+
+        try ctx.resolving.put(pkg_name, true);
+        defer _ = ctx.resolving.remove(pkg_name);
+
+        // Get all constraints for this package
+        const constraints = ctx.constraints.get(pkg_name) orelse {
+            return ResolverError.PackageNotFound;
+        };
+
+        // Find candidates that satisfy all constraints
+        const candidates = try self.findCandidates(ctx, pkg_name, constraints.items);
+        defer self.allocator.free(candidates);
+
+        if (candidates.len == 0) {
+            return ResolverError.NoSolution;
+        }
+
+        // Get list of already-tried versions for this package
+        const tried_entry = try tried_versions.getOrPut(pkg_name);
+        if (!tried_entry.found_existing) {
+            tried_entry.value_ptr.* = std.ArrayList(Version).init(self.allocator);
+        }
+
+        // Sort candidates by preference
+        const sorted_candidates = try self.sortCandidatesByPreference(candidates);
+        defer self.allocator.free(sorted_candidates);
+
+        // Try each candidate, skipping already-tried versions
+        for (sorted_candidates) |candidate| {
+            // Skip versions we've already tried
+            var already_tried = false;
+            for (tried_entry.value_ptr.items) |tried_ver| {
+                if (tried_ver.major == candidate.id.version.major and
+                    tried_ver.minor == candidate.id.version.minor and
+                    tried_ver.patch == candidate.id.version.patch)
+                {
+                    already_tried = true;
+                    break;
+                }
+            }
+            if (already_tried) continue;
+
+            // Check for conflicts
+            const has_conflict = try ctx.checkConflicts(candidate);
+            if (has_conflict) {
+                // Mark this version as tried
+                try tried_entry.value_ptr.append(candidate.id.version);
+                continue;
+            }
+
+            // Check kernel compatibility
+            if (candidate.kernel_compat) |kc| {
+                const compat_result = kernelIsCompatible(&self.kernel_ctx, &kc);
+                if (!compat_result.compatible) {
+                    try tried_entry.value_ptr.append(candidate.id.version);
+                    continue;
+                }
+            }
+
+            // Handle replaces
+            if (ctx.checkReplaces(candidate)) |replaced| {
+                _ = ctx.resolved.remove(replaced);
+                _ = ctx.resolved_candidates.remove(replaced);
+            }
+
+            // Select this candidate
+            std.debug.print("  → Resolved {s} to {}\n", .{ pkg_name, candidate.id.version });
+            try ctx.resolved.put(pkg_name, candidate.id);
+            try ctx.resolved_candidates.put(pkg_name, candidate);
+
+            // Register virtual packages
+            for (candidate.provides) |virtual_name| {
+                try ctx.virtual_index.addProvider(virtual_name, pkg_name);
+            }
+
+            // Recursively resolve dependencies
+            for (candidate.dependencies) |dep| {
+                if (!ctx.resolved.contains(dep.name)) {
+                    try self.addConstraint(ctx, dep.name, dep.constraint);
+                    try self.resolvePackageWithBacktracking(ctx, dep.name, tried_versions);
+                }
+            }
+
+            return; // Successfully resolved
+        }
+
+        // All candidates exhausted
+        return ResolverError.ConflictingPackages;
+    }
+
+    /// Sort candidates by version preference
+    fn sortCandidatesByPreference(self: *Resolver, candidates: []Candidate) ![]Candidate {
+        var sorted = try self.allocator.alloc(Candidate, candidates.len);
+        @memcpy(sorted, candidates);
+
+        // Sort based on preference
+        switch (self.version_preference) {
+            .newest => {
+                // Sort descending (newest first)
+                std.mem.sort(Candidate, sorted, {}, struct {
+                    fn cmp(_: void, a: Candidate, b: Candidate) bool {
+                        return a.id.version.greaterThan(b.id.version);
+                    }
+                }.cmp);
+            },
+            .oldest => {
+                // Sort ascending (oldest first)
+                std.mem.sort(Candidate, sorted, {}, struct {
+                    fn cmp(_: void, a: Candidate, b: Candidate) bool {
+                        return a.id.version.lessThan(b.id.version);
+                    }
+                }.cmp);
+            },
+            .stable => {
+                // For stable: prefer versions with patch=0, then older versions
+                // This heuristic assumes .0 releases are more stable than patch releases
+                std.mem.sort(Candidate, sorted, {}, struct {
+                    fn cmp(_: void, a: Candidate, b: Candidate) bool {
+                        const a_stable = a.id.version.patch == 0;
+                        const b_stable = b.id.version.patch == 0;
+                        if (a_stable and !b_stable) return true;
+                        if (!a_stable and b_stable) return false;
+                        // Both same stability, prefer older
+                        return a.id.version.lessThan(b.id.version);
+                    }
+                }.cmp);
+            },
+        }
+
+        return sorted;
     }
 
     /// Resolve using SAT solver
