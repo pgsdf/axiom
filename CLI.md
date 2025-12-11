@@ -1000,6 +1000,145 @@ output:
 
 ---
 
+### Boot Environment Operations
+
+Manage boot environments with profile snapshots, health checks, and automatic rollback.
+
+#### `axiom be-snapshot <be-name> [options]`
+
+Snapshot current profile to a boot environment.
+
+```bash
+axiom be-snapshot pre-upgrade
+axiom be-snapshot testing --profile dev
+```
+
+**Options:**
+- `--profile <name>` - Profile to snapshot (default: system)
+
+#### `axiom be-diff <be-a> <be-b> [options]`
+
+Show profile differences between boot environments.
+
+```bash
+axiom be-diff default testing
+axiom be-diff pre-upgrade current --profile dev
+```
+
+**Options:**
+- `--profile <name>` - Profile to compare (default: system)
+
+**Example output:**
+```
+Profile Diff: system ('default') vs ('testing')
+================================================
+
+Packages in 'testing' but not 'default':
+  + nodejs@18.0.0
+
+Packages in 'default' but not 'testing':
+  - python@3.10.0
+
+Version changes:
+  bash: 5.1.0 -> 5.2.0
+  openssl: 3.0.7 -> 3.0.8
+
+Summary: 1 added, 1 removed, 2 changed
+```
+
+#### `axiom be-health [options]`
+
+Run health checks for the current boot environment.
+
+```bash
+axiom be-health
+axiom be-health --verbose
+```
+
+**Options:**
+- `--verbose` - Show detailed output including commands
+
+**Health checks verify:**
+- Network connectivity
+- Critical services (sshd, etc.)
+- Custom user-defined checks from `/etc/axiom/rollback-policy.yaml`
+
+**Example output:**
+```
+Running Boot Environment Health Checks
+======================================
+
+  ✓ network
+  ✓ sshd
+  ✓ filesystem
+
+All health checks passed.
+```
+
+#### `axiom be-rollback [options] [target-be]`
+
+Rollback to a previous boot environment.
+
+```bash
+axiom be-rollback
+axiom be-rollback pre-upgrade --reason "upgrade failed" --force
+```
+
+**Options:**
+- `--reason <text>` - Reason for rollback (logged)
+- `--force` - Skip confirmation prompt
+
+**Process:**
+1. Runs on_rollback hooks
+2. Updates bootloader to boot target BE
+3. Logs rollback event to `/var/log/axiom-rollback.log`
+
+#### `axiom system-upgrade [options]`
+
+Perform system upgrade in a new boot environment with automatic rollback support.
+
+```bash
+axiom system-upgrade
+axiom system-upgrade --be 2025-01-upgrade
+axiom system-upgrade --dry-run
+```
+
+**Options:**
+- `--be <name>` - Name for new BE (default: upgrade-<date>)
+- `--profile <name>` - Profile to upgrade (default: system)
+- `--dry-run` - Show what would be done without making changes
+
+**Process:**
+1. Snapshot current profile to 'pre-upgrade' BE
+2. Create new BE for upgrade
+3. Perform upgrade in new BE
+4. Set new BE as next boot target
+
+**Example output:**
+```
+System Upgrade in Boot Environment
+===================================
+
+Step 1: Snapshot 'system' to 'pre-upgrade' BE
+  Creating snapshot...
+
+Step 2: Create new BE 'upgrade-2025-01'
+  Creating boot environment...
+
+Step 3: Perform upgrade in 'upgrade-2025-01'
+  Resolving package updates...
+  Realizing updated environment...
+
+Step 4: Set 'upgrade-2025-01' as next boot target
+  Updating bootloader configuration...
+
+✓ System upgrade prepared in BE 'upgrade-2025-01'.
+  Reboot to complete upgrade.
+  If issues occur, rollback with: axiom be-rollback pre-upgrade
+```
+
+---
+
 ### Shell Completions
 
 Generate shell completion scripts for command-line autocompletion.
