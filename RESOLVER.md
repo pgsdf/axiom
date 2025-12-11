@@ -273,48 +273,111 @@ resolved:
     requested: false
 ```
 
-## Future Improvements
+## Resolution Strategies
 
-### SAT Solver Integration
+Axiom supports multiple resolution strategies:
 
-For complex dependency graphs, a SAT (Boolean Satisfiability) solver provides optimal solutions:
+### Greedy (Default)
 
-**Advantages:**
-- Finds solutions when greedy algorithms fail
-- Can optimize for multiple criteria (size, security, etc.)
+Fast algorithm that picks the newest satisfying version:
+- Time complexity: O(P × V × D)
+- Good for most use cases
+- May fail on complex constraint graphs
+
+```bash
+axiom resolve myprofile --strategy greedy
+```
+
+### Greedy with Backtracking
+
+For small graphs, tries alternative versions when conflicts are detected:
+- Automatically falls back to SAT for large graphs (>20 packages)
+- Configurable backtrack limits
+- Better success rate than pure greedy
+
+```bash
+axiom resolve myprofile --strategy backtracking
+```
+
+### SAT Solver
+
+Uses Boolean Satisfiability solving for complex graphs:
+- Finds solutions when greedy fails
 - Handles complex constraint interactions
+- Higher computational cost
 
-**Implementation:**
-- Convert constraints to Boolean formulas
-- Use MiniSat or similar SAT solver
-- Extract package versions from satisfying assignment
+```bash
+axiom resolve myprofile --strategy sat
+```
 
-### Optimization Criteria
+### Greedy with SAT Fallback (Recommended)
 
-Beyond "newest version", we can optimize for:
+Tries greedy first, falls back to SAT on failure:
+- Best of both worlds
+- Fast for simple cases, robust for complex ones
 
-1. **Minimal Dependencies**: Fewest total packages
-2. **Security**: Prefer packages without known vulnerabilities
-3. **Size**: Minimize total installed size
-4. **Stability**: Prefer packages with more testing/usage
-5. **License Compatibility**: Avoid incompatible licenses
+```bash
+axiom resolve myprofile  # Default strategy
+```
 
-### Constraint Propagation
+## Version Preferences
 
-Improve efficiency with constraint propagation:
+Control which versions are preferred when multiple satisfy constraints:
 
-1. **Unit Propagation**: If only one version satisfies constraints, choose it immediately
-2. **Conflict Learning**: Remember why previous attempts failed
-3. **Backtracking**: Try alternative versions when conflicts occur
+### Newest (Default)
 
-### Package Pinning
+Always picks the newest satisfying version:
+```bash
+axiom resolve myprofile --prefer newest
+```
 
-Allow users to pin specific packages:
+### Stable
+
+Prefers older, more stable versions for production:
+- Favors .0 patch releases (1.2.0 over 1.2.5)
+- When equal stability, prefers older
+- Good for production environments
+
+```bash
+axiom resolve myprofile --prefer stable
+```
+
+### Oldest
+
+Picks the oldest satisfying version:
+```bash
+axiom resolve myprofile --prefer oldest
+```
+
+## Backtracking Configuration
+
+For the backtracking strategy, you can configure limits:
+
+```bash
+# Maximum backtracks per package (default: 5)
+axiom resolve myprofile --max-backtracks-per-package 10
+
+# Maximum total backtracks (default: 50)
+axiom resolve myprofile --max-total-backtracks 100
+
+# Small graph threshold - above this, use SAT instead (default: 20)
+axiom resolve myprofile --small-graph-threshold 30
+```
+
+## Package Pinning
+
+Pin specific packages to exact versions:
 
 ```yaml
-pins:
+# profile.yaml
+name: production
+packages:
   - name: python
-    version: "3.11.0"
+    version: "=3.11.0"  # Exact version pin
+    constraint: exact
+pins:
+  - name: openssl
+    version: "3.1.0"
     revision: 2
     build_id: xyz789
 ```
