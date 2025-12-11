@@ -8067,7 +8067,7 @@ pub const CLI = struct {
         std.debug.print("Snapshotting profile '{s}' to boot environment '{s}'...\n", .{ selected_profile, be_name.? });
 
         // In full implementation, would use BeProfileManager
-        var be_mgr = bootenv.BootEnvManager.init(self.allocator, self.zfs_handle);
+        const be_mgr = bootenv.BootEnvManager.init(self.allocator);
         _ = be_mgr;
 
         std.debug.print("Creating BE directory structure...\n", .{});
