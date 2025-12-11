@@ -406,7 +406,7 @@ pub const CacheEvictionEngine = struct {
             result.versions_removed += 1;
             result.bytes_freed += candidate.size;
 
-            std.debug.print("Would evict: {s} {} ({d} bytes) - {s}\n", .{
+            std.debug.print("Would evict: {s}@{s} ({d} bytes) - {s}\n", .{
                 candidate.package_name,
                 candidate.version,
                 candidate.size,
