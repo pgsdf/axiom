@@ -355,13 +355,18 @@ For the backtracking strategy, you can configure limits:
 
 ```bash
 # Maximum backtracks per package (default: 5)
-axiom resolve myprofile --max-backtracks-per-package 10
+axiom resolve myprofile --max-backtracks 10
 
 # Maximum total backtracks (default: 50)
-axiom resolve myprofile --max-total-backtracks 100
+axiom resolve myprofile --total-backtracks 100
 
 # Small graph threshold - above this, use SAT instead (default: 20)
-axiom resolve myprofile --small-graph-threshold 30
+axiom resolve myprofile --backtrack-threshold 30
+```
+
+Combined example for production use:
+```bash
+axiom resolve production --strategy backtracking --prefer stable --max-backtracks 10
 ```
 
 ## Package Pinning
@@ -450,20 +455,31 @@ ResourceLimits.unlimited()
 ### CLI Options
 
 ```bash
-# Set timeout (milliseconds)
-axiom resolve myprofile --timeout 60000
+# Set timeout (seconds, default: 30)
+axiom resolve myprofile --timeout 60
 
-# Set memory limit (bytes)
-axiom resolve myprofile --max-memory 134217728
+# Set memory limit (MB, default: 256)
+axiom resolve myprofile --max-memory 512
 
-# Set maximum dependency depth
+# Set maximum dependency depth (default: 100)
 axiom resolve myprofile --max-depth 50
 
-# Use strict preset
+# Use strict preset (10s timeout, 64MB, depth 50)
 axiom resolve myprofile --strict
 
 # Show resolution statistics
 axiom resolve myprofile --stats
+```
+
+Full example with all options:
+```bash
+axiom resolve production \
+    --strategy backtracking \
+    --prefer stable \
+    --max-backtracks 10 \
+    --timeout 120 \
+    --max-memory 1024 \
+    --stats
 ```
 
 ### Resource Statistics
