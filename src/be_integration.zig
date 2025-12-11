@@ -541,8 +541,6 @@ pub const BootloaderIntegration = struct {
     }
 
     fn activateFreeBSD(self: *Self, be_name: []const u8, next_boot_only: bool) !void {
-        _ = self;
-
         const config_path = if (next_boot_only)
             "/boot/loader.conf.local"
         else
@@ -585,7 +583,6 @@ pub const BootloaderIntegration = struct {
     }
 
     fn activateGrub(self: *Self, be_name: []const u8, next_boot_only: bool) !void {
-        _ = self;
         _ = next_boot_only;
 
         // Update GRUB default entry
@@ -607,10 +604,7 @@ pub const BootloaderIntegration = struct {
     }
 
     fn activateSystemdBoot(self: *Self, be_name: []const u8, next_boot_only: bool) !void {
-        _ = self;
-
-        const cmd = if (next_boot_only) "bootctl set-oneshot" else "bootctl set-default";
-        _ = cmd;
+        _ = next_boot_only;
 
         // Create loader entry
         const entry_path = try std.fmt.allocPrint(
