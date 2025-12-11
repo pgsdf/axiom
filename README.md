@@ -375,6 +375,18 @@ axiom remote-sources                            # List configured sources
 axiom remote-sources --add http://new-cache.example.com
 ```
 
+### Cache Server API
+
+The cache server exposes a RESTful API (Protocol v1.0):
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/info` | GET | Server information |
+| `/api/v1/packages` | GET | List all packages |
+| `/api/v1/packages/{name}/{version}` | GET | Package metadata |
+| `/api/v1/packages/{name}/{version}/nar` | GET | Package archive |
+| `/api/v1/upload/{name}/{version}` | POST | Upload package |
+
 ## Building
 
 Requires:
