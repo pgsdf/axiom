@@ -1586,7 +1586,7 @@ pub const CLI = struct {
         var found = false;
         var is_requested = false;
         for (lock.resolved) |pkg| {
-            if (std.mem.eql(u8, pkg.name, target_pkg)) {
+            if (std.mem.eql(u8, pkg.id.name, target_pkg)) {
                 found = true;
                 is_requested = pkg.requested;
                 break;
@@ -1614,10 +1614,10 @@ pub const CLI = struct {
         defer dependents.deinit();
 
         for (lock.resolved) |pkg| {
-            if (graph.edges.get(pkg.name)) |deps| {
+            if (graph.edges.get(pkg.id.name)) |deps| {
                 for (deps.items) |dep| {
                     if (std.mem.eql(u8, dep, target_pkg)) {
-                        try dependents.append(pkg.name);
+                        try dependents.append(pkg.id.name);
                         break;
                     }
                 }
@@ -1630,7 +1630,7 @@ pub const CLI = struct {
                 // Check if this dependent is requested
                 var dep_requested = false;
                 for (lock.resolved) |pkg| {
-                    if (std.mem.eql(u8, pkg.name, dep)) {
+                    if (std.mem.eql(u8, pkg.id.name, dep)) {
                         dep_requested = pkg.requested;
                         break;
                     }
@@ -1651,9 +1651,9 @@ pub const CLI = struct {
             if (pkg.requested) {
                 var path = std.ArrayList([]const u8).init(self.allocator);
                 defer path.deinit();
-                if (try self.findDependencyPath(graph, pkg.name, target_pkg, &path)) {
+                if (try self.findDependencyPath(graph, pkg.id.name, target_pkg, &path)) {
                     chains_found += 1;
-                    std.debug.print("\n  {s}", .{pkg.name});
+                    std.debug.print("\n  {s}", .{pkg.id.name});
                     for (path.items[1..]) |p| {
                         std.debug.print(" → {s}", .{p});
                     }
@@ -1693,8 +1693,8 @@ pub const CLI = struct {
         var from_found = false;
         var to_found = false;
         for (lock.resolved) |pkg| {
-            if (std.mem.eql(u8, pkg.name, from_pkg)) from_found = true;
-            if (std.mem.eql(u8, pkg.name, to_pkg)) to_found = true;
+            if (std.mem.eql(u8, pkg.id.name, from_pkg)) from_found = true;
+            if (std.mem.eql(u8, pkg.id.name, to_pkg)) to_found = true;
         }
 
         if (!from_found) {
@@ -1764,16 +1764,16 @@ pub const CLI = struct {
         for (lock.resolved) |pkg| {
             var deps = std.ArrayList([]const u8).init(self.allocator);
 
-            // Get package manifest to find dependencies
-            if (self.store.getPackageManifest(pkg.name, pkg.version)) |pkg_manifest| {
-                if (pkg_manifest.dependencies) |dependencies| {
-                    for (dependencies) |dep| {
-                        try deps.append(dep.name);
-                    }
+            // Get package metadata to find dependencies
+            if (self.store.getPackage(pkg.id)) |pkg_meta| {
+                for (pkg_meta.dependencies) |dep| {
+                    try deps.append(dep.name);
                 }
+            } else |_| {
+                // Package not in store, skip dependencies
             }
 
-            try graph.edges.put(pkg.name, deps);
+            try graph.edges.put(pkg.id.name, deps);
         }
 
         return graph;
@@ -1856,7 +1856,7 @@ pub const CLI = struct {
         var depth_count: u32 = 0;
         for (lock.resolved) |pkg| {
             if (pkg.requested) {
-                const depth = self.calculateDepth(graph, pkg.name, 0);
+                const depth = self.calculateDepth(graph, pkg.id.name, 0);
                 total_depth += depth;
                 depth_count += 1;
                 if (depth > stats.max_depth) {
@@ -1953,7 +1953,7 @@ pub const CLI = struct {
         // Print requested packages first
         for (lock.resolved) |pkg| {
             if (pkg.requested) {
-                try self.printTreeNode(writer, graph, pkg.name, 0, max_depth, &std.StringHashMap(void).init(self.allocator));
+                try self.printTreeNode(writer, graph, pkg.id.name, 0, max_depth, &std.StringHashMap(void).init(self.allocator));
                 try writer.print("\n", .{});
             }
         }
@@ -1999,7 +1999,7 @@ pub const CLI = struct {
         try writer.print("    // Requested packages\n", .{});
         for (lock.resolved) |pkg| {
             if (pkg.requested) {
-                try writer.print("    \"{s}\" [style=filled, fillcolor=lightblue];\n", .{pkg.name});
+                try writer.print("    \"{s}\" [style=filled, fillcolor=lightblue];\n", .{pkg.id.name});
             }
         }
         try writer.print("\n", .{});
@@ -2025,12 +2025,12 @@ pub const CLI = struct {
 
         for (lock.resolved, 0..) |pkg, idx| {
             try writer.print("    {{\n", .{});
-            try writer.print("      \"name\": \"{s}\",\n", .{pkg.name});
-            try writer.print("      \"version\": \"{s}\",\n", .{pkg.version});
+            try writer.print("      \"name\": \"{s}\",\n", .{pkg.id.name});
+            try writer.print("      \"version\": \"{d}.{d}.{d}\",\n", .{ pkg.id.version.major, pkg.id.version.minor, pkg.id.version.patch });
             try writer.print("      \"requested\": {s},\n", .{if (pkg.requested) "true" else "false"});
             try writer.print("      \"dependencies\": [", .{});
 
-            if (graph.edges.get(pkg.name)) |deps| {
+            if (graph.edges.get(pkg.id.name)) |deps| {
                 for (deps.items, 0..) |dep, dep_idx| {
                     try writer.print("\"{s}\"", .{dep});
                     if (dep_idx < deps.items.len - 1) {
