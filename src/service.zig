@@ -442,7 +442,6 @@ pub const ServiceManager = struct {
 
     /// Run a service command
     fn runServiceCommand(self: *ServiceManager, service_name: []const u8, action: []const u8) !CommandResult {
-        _ = self;
         var child = std.process.Child.init(
             &[_][]const u8{ "service", service_name, action },
             self.allocator,
