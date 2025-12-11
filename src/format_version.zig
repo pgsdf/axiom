@@ -179,8 +179,7 @@ pub fn validateVersion(format_type: FormatType, file_version_str: ?[]const u8) V
         return;
     };
 
-    const result = checkCompatibility(format_type, version_str) catch |err| {
-        _ = err;
+    const result = checkCompatibility(format_type, version_str) catch {
         return VersionError.InvalidVersion;
     };
 
