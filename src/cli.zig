@@ -20,6 +20,7 @@ const launcher_pkg = @import("launcher.zig");
 const bundle_pkg = @import("bundle.zig");
 const ports_pkg = @import("ports.zig");
 const bootstrap_pkg = @import("bootstrap.zig");
+const hsm = @import("hsm.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageStore = store.PackageStore;
@@ -90,7 +91,11 @@ pub const Command = enum {
     key_generate,
     sign,
     verify,
-    
+
+    // HSM operations (Phase 36)
+    hsm_list,
+    hsm_keys,
+
     // Garbage collection
     gc,
 
@@ -209,7 +214,12 @@ pub fn parseCommand(cmd: []const u8) Command {
     if (std.mem.eql(u8, cmd, "key-generate")) return .key_generate;
     if (std.mem.eql(u8, cmd, "sign")) return .sign;
     if (std.mem.eql(u8, cmd, "verify")) return .verify;
-    
+
+    // HSM commands (Phase 36)
+    if (std.mem.eql(u8, cmd, "hsm-list")) return .hsm_list;
+    if (std.mem.eql(u8, cmd, "hsm-slots")) return .hsm_list;
+    if (std.mem.eql(u8, cmd, "hsm-keys")) return .hsm_keys;
+
     // GC
     if (std.mem.eql(u8, cmd, "gc")) return .gc;
 
@@ -416,7 +426,11 @@ pub const CLI = struct {
             .key_generate => try self.keyGenerate(args[1..]),
             .sign => try self.signPackage(args[1..]),
             .verify => try self.verifyPackage(args[1..]),
-            
+
+            // HSM operations (Phase 36)
+            .hsm_list => try self.hsmListSlots(args[1..]),
+            .hsm_keys => try self.hsmListKeys(args[1..]),
+
             .gc => try self.garbageCollect(args[1..]),
 
             .build => try self.buildPackage(args[1..]),
@@ -2461,6 +2475,179 @@ pub const CLI = struct {
             std.debug.print("\n✗ Package verification failed\n", .{});
             if (result.error_message) |msg| std.debug.print("Error: {s}\n", .{msg});
         }
+    }
+
+    // HSM operations (Phase 36)
+
+    fn hsmListSlots(self: *CLI, args: []const []const u8) !void {
+        var library_path: []const u8 = "/usr/lib/pkcs11/opensc-pkcs11.so";
+        var verbose = false;
+
+        // Parse arguments
+        var i: usize = 0;
+        while (i < args.len) {
+            const arg = args[i];
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom hsm-list [options]\n", .{});
+                std.debug.print("\nList available HSM/PKCS#11 slots\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --library <path>   Path to PKCS#11 library (default: /usr/lib/pkcs11/opensc-pkcs11.so)\n", .{});
+                std.debug.print("  --verbose          Show detailed slot information\n", .{});
+                std.debug.print("\nExample:\n", .{});
+                std.debug.print("  axiom hsm-list\n", .{});
+                std.debug.print("  axiom hsm-list --library /usr/lib/softhsm/libsofthsm2.so\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--library") and i + 1 < args.len) {
+                library_path = args[i + 1];
+                i += 2;
+            } else if (std.mem.eql(u8, arg, "--verbose") or std.mem.eql(u8, arg, "-v")) {
+                verbose = true;
+                i += 1;
+            } else {
+                std.debug.print("Unknown option: {s}\n", .{arg});
+                return;
+            }
+        }
+
+        std.debug.print("HSM/PKCS#11 Slots\n", .{});
+        std.debug.print("=================\n\n", .{});
+        std.debug.print("Library: {s}\n\n", .{library_path});
+
+        // Initialize HSM provider
+        var config = hsm.HsmConfig{
+            .library_path = library_path,
+            .slot_id = 0,
+        };
+        var provider = hsm.HsmProvider.init(self.allocator, config);
+        defer provider.deinit();
+
+        provider.initialize() catch |err| {
+            std.debug.print("Error: Failed to initialize PKCS#11 library: {}\n", .{err});
+            std.debug.print("\nMake sure the PKCS#11 library exists and is accessible.\n", .{});
+            std.debug.print("Common library paths:\n", .{});
+            std.debug.print("  OpenSC:   /usr/lib/pkcs11/opensc-pkcs11.so\n", .{});
+            std.debug.print("  SoftHSM:  /usr/lib/softhsm/libsofthsm2.so\n", .{});
+            std.debug.print("  YubiKey:  /usr/lib/libykcs11.so\n", .{});
+            return;
+        };
+
+        const slots = provider.listSlots() catch |err| {
+            std.debug.print("Error: Failed to list slots: {}\n", .{err});
+            return;
+        };
+        defer self.allocator.free(slots);
+
+        if (slots.len == 0) {
+            std.debug.print("No slots found.\n", .{});
+            std.debug.print("\nMake sure your HSM/smart card is connected.\n", .{});
+            return;
+        }
+
+        for (slots) |slot| {
+            std.debug.print("Slot {d}: {s}\n", .{ slot.slot_id, slot.description });
+            std.debug.print("  Token present: {}\n", .{slot.token_present});
+            if (slot.token_present) {
+                if (slot.token_label) |label| {
+                    std.debug.print("  Token label:   {s}\n", .{label});
+                }
+                if (verbose) {
+                    std.debug.print("  Manufacturer:  {s}\n", .{slot.manufacturer});
+                }
+            }
+            std.debug.print("\n", .{});
+        }
+
+        std.debug.print("{d} slot(s) found\n", .{slots.len});
+    }
+
+    fn hsmListKeys(self: *CLI, args: []const []const u8) !void {
+        var library_path: []const u8 = "/usr/lib/pkcs11/opensc-pkcs11.so";
+        var slot_id: c_ulong = 0;
+        var pin: ?[]const u8 = null;
+
+        // Parse arguments
+        var i: usize = 0;
+        while (i < args.len) {
+            const arg = args[i];
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom hsm-keys [options]\n", .{});
+                std.debug.print("\nList signing keys available on HSM\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --library <path>   Path to PKCS#11 library\n", .{});
+                std.debug.print("  --slot <id>        Slot ID to use (default: 0)\n", .{});
+                std.debug.print("  --pin <pin>        PIN for token authentication\n", .{});
+                std.debug.print("\nExample:\n", .{});
+                std.debug.print("  axiom hsm-keys --slot 0 --pin 123456\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--library") and i + 1 < args.len) {
+                library_path = args[i + 1];
+                i += 2;
+            } else if (std.mem.eql(u8, arg, "--slot") and i + 1 < args.len) {
+                slot_id = std.fmt.parseInt(c_ulong, args[i + 1], 10) catch {
+                    std.debug.print("Invalid slot ID: {s}\n", .{args[i + 1]});
+                    return;
+                };
+                i += 2;
+            } else if (std.mem.eql(u8, arg, "--pin") and i + 1 < args.len) {
+                pin = args[i + 1];
+                i += 2;
+            } else {
+                std.debug.print("Unknown option: {s}\n", .{arg});
+                return;
+            }
+        }
+
+        std.debug.print("HSM Signing Keys\n", .{});
+        std.debug.print("================\n\n", .{});
+
+        // Initialize HSM provider
+        var config = hsm.HsmConfig{
+            .library_path = library_path,
+            .slot_id = slot_id,
+            .pin = pin,
+        };
+        var provider = hsm.HsmProvider.init(self.allocator, config);
+        defer provider.deinit();
+
+        provider.initialize() catch |err| {
+            std.debug.print("Error: Failed to initialize PKCS#11 library: {}\n", .{err});
+            return;
+        };
+
+        // Login if PIN provided
+        if (pin) |p| {
+            provider.login(p) catch |err| {
+                std.debug.print("Error: Failed to login to token: {}\n", .{err});
+                std.debug.print("Check your PIN and try again.\n", .{});
+                return;
+            };
+        }
+
+        const keys = provider.listKeys() catch |err| {
+            std.debug.print("Error: Failed to list keys: {}\n", .{err});
+            if (pin == null) {
+                std.debug.print("\nYou may need to provide a PIN with --pin\n", .{});
+            }
+            return;
+        };
+        defer self.allocator.free(keys);
+
+        if (keys.len == 0) {
+            std.debug.print("No signing keys found on slot {d}.\n", .{slot_id});
+            return;
+        }
+
+        for (keys) |key| {
+            std.debug.print("Key: {s}\n", .{key.label});
+            std.debug.print("  Type:     {s}\n", .{@tagName(key.key_type)});
+            std.debug.print("  Can sign: {}\n", .{key.can_sign});
+            if (key.key_id) |kid| {
+                std.debug.print("  ID:       {s}\n", .{kid});
+            }
+            std.debug.print("\n", .{});
+        }
+
+        std.debug.print("{d} key(s) found\n", .{keys.len});
     }
 
     // Cache operations

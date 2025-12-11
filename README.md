@@ -194,6 +194,33 @@ axiom deps-graph myprofile --format dot > deps.dot
 dot -Tpng deps.dot -o deps.png    # Requires graphviz
 ```
 
+## HSM/PKCS#11 Signing
+
+Axiom supports hardware security modules for package signing via the PKCS#11 standard.
+
+### List Available HSM Slots
+
+```bash
+axiom hsm-list                                    # Use default library
+axiom hsm-list --library /usr/lib/libykcs11.so   # Use YubiKey
+axiom hsm-list --verbose                          # Show detailed info
+```
+
+### List Signing Keys
+
+```bash
+axiom hsm-keys --slot 0 --pin 123456             # List keys on slot 0
+axiom hsm-keys --library /usr/local/lib/softhsm/libsofthsm2.so --slot 0 --pin mypin
+```
+
+### Supported HSM Devices
+
+| Device | Linux Library | FreeBSD Library |
+|--------|--------------|-----------------|
+| SoftHSM | `/usr/lib/softhsm/libsofthsm2.so` | `/usr/local/lib/softhsm/libsofthsm2.so` |
+| YubiKey | `/usr/lib/libykcs11.so` | `/usr/local/lib/libykcs11.so` |
+| OpenSC | `/usr/lib/opensc-pkcs11.so` | `/usr/local/lib/opensc-pkcs11.so` |
+
 ## Building
 
 Requires:
