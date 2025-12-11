@@ -40,7 +40,7 @@ This document outlines the planned enhancements for Axiom beyond the core 8 phas
 | 38 | Service Management Integration | High | High | Phase 22 | ✓ Complete |
 | 39 | Boot Environment Support | High | Medium | None | ✓ Complete |
 | 40 | Remote Binary Cache Protocol | High | High | Phase 17 | ✓ Complete |
-| 41 | Format Versioning | High | Low | None | Planned |
+| 41 | Format Versioning | High | Low | None | ✓ Complete |
 | 42 | Store Invariants & GC Guarantees | High | Medium | None | Planned |
 | 43 | Advanced Resolver Semantics | Medium | High | Phase 16 | Planned |
 | 44 | Realization Specification | High | Medium | None | Planned |
@@ -3844,7 +3844,7 @@ Created `src/cache_protocol.zig` with complete binary cache protocol:
 
 **Priority**: High
 **Complexity**: Low
-**Status**: Planned
+**Status**: ✅ Implemented
 
 ### Purpose
 
@@ -3924,14 +3924,39 @@ Define version identifiers for all on-disk formats to enable future migrations, 
 
 ### Deliverables
 
-- [ ] Add `format_version` field to manifest.yaml schema
-- [ ] Add `format_version` field to profile.yaml schema
-- [ ] Add `format_version` field to profile.lock.yaml schema
-- [ ] Add `format_version` field to provenance.yaml schema
-- [ ] Create `.store_version` file in store root
-- [ ] Implement version parsing and validation
-- [ ] Implement migration framework
-- [ ] Document version compatibility matrix
+- [x] Add `format_version` field to manifest.yaml schema
+- [x] Add `format_version` field to profile.yaml schema
+- [x] Add `format_version` field to profile.lock.yaml schema
+- [x] Add `format_version` field to provenance.yaml schema
+- [x] Create `.store_version` file in store root
+- [x] Implement version parsing and validation
+- [x] Implement migration framework
+- [x] Document version compatibility matrix
+
+### Implementation Notes
+
+**New Files:**
+- `src/format_version.zig` - Format versioning module with:
+  - `FormatVersions` - Current version constants for all formats
+  - `SemanticVersion` - Version parsing and comparison
+  - `CompatibilityResult` - Compatibility check results
+  - `StoreVersion` - Store version file management
+  - `Migration` - Migration framework
+  - `extractFormatVersion()` - Extract version from YAML
+  - `validateVersion()` - Validate format compatibility
+
+**Modified Files:**
+- `src/manifest.zig` - Added `format_version` field, parsing, validation, deinit
+- `src/profile.zig` - Added `format_version` field to Profile and ProfileLock
+- `src/cli.zig` - Added `store-version` and `migrate` commands
+
+**CLI Commands:**
+```bash
+axiom store-version              # Show all format versions
+axiom migrate --check            # Check if migration needed
+axiom migrate --dry-run          # Show migration plan
+axiom migrate                    # Perform migration
+```
 
 ---
 

@@ -54,6 +54,9 @@ const BootEnvManager = bootenv.BootEnvManager;
 const CacheServer = cache_protocol.CacheServer;
 const RemoteCacheClient = cache_protocol.CacheClient;
 const RemoteCacheConfig = cache_protocol.CacheConfig;
+const format_version = @import("format_version.zig");
+const FormatVersions = format_version.FormatVersions;
+const StoreVersion = format_version.StoreVersion;
 
 /// CLI command enumeration
 pub const Command = enum {
@@ -200,6 +203,10 @@ pub const Command = enum {
     remote_push,
     remote_sync,
     remote_sources,
+
+    // Format version operations (Phase 41)
+    store_version,
+    migrate,
 
     unknown,
 };
@@ -365,6 +372,10 @@ pub fn parseCommand(cmd: []const u8) Command {
     if (std.mem.eql(u8, cmd, "remote-push")) return .remote_push;
     if (std.mem.eql(u8, cmd, "remote-sync")) return .remote_sync;
     if (std.mem.eql(u8, cmd, "remote-sources")) return .remote_sources;
+
+    // Format version commands (Phase 41)
+    if (std.mem.eql(u8, cmd, "store-version")) return .store_version;
+    if (std.mem.eql(u8, cmd, "migrate")) return .migrate;
 
     return .unknown;
 }
@@ -590,6 +601,10 @@ pub const CLI = struct {
             .remote_push => try self.remotePush(args[1..]),
             .remote_sync => try self.remoteSync(args[1..]),
             .remote_sources => try self.remoteSources(args[1..]),
+
+            // Format version commands (Phase 41)
+            .store_version => try self.storeVersion(args[1..]),
+            .migrate => try self.migrateStore(args[1..]),
 
             .unknown => {
                 std.debug.print("Unknown command: {s}\n", .{args[0]});
@@ -6464,6 +6479,156 @@ pub const CLI = struct {
         std.debug.print("  Verify signatures: {}\n", .{config.verify_signatures});
         std.debug.print("  Parallel downloads: {d}\n", .{config.parallel_downloads});
         std.debug.print("  Timeout: {d}ms\n", .{config.timeout_ms});
+    }
+
+    /// Show store and format version information (Phase 41)
+    fn storeVersion(self: *CLI, args: []const []const u8) !void {
+        // Parse arguments
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
+                std.debug.print("Usage: axiom store-version [options]\n", .{});
+                std.debug.print("\nShow store and format version information.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  -h, --help       Show this help message\n", .{});
+                std.debug.print("\nFormat Versions:\n", .{});
+                std.debug.print("  Manifest:    {s}\n", .{FormatVersions.manifest});
+                std.debug.print("  Profile:     {s}\n", .{FormatVersions.profile});
+                std.debug.print("  Lock file:   {s}\n", .{FormatVersions.lock});
+                std.debug.print("  Store:       {s}\n", .{FormatVersions.store});
+                std.debug.print("  Provenance:  {s}\n", .{FormatVersions.provenance});
+                return;
+            }
+        }
+
+        std.debug.print("Axiom Format Versions\n", .{});
+        std.debug.print("═════════════════════════════════════════════════════\n", .{});
+
+        // Show current format versions
+        std.debug.print("\nCurrent Format Versions:\n", .{});
+        std.debug.print("  Manifest:        {s}\n", .{FormatVersions.manifest});
+        std.debug.print("  Profile:         {s}\n", .{FormatVersions.profile});
+        std.debug.print("  Lock file:       {s}\n", .{FormatVersions.lock});
+        std.debug.print("  Store layout:    {s}\n", .{FormatVersions.store});
+        std.debug.print("  Provenance:      {s}\n", .{FormatVersions.provenance});
+        std.debug.print("  Cache index:     {s}\n", .{FormatVersions.cache_index});
+
+        // Try to read store version
+        const store_path = "/axiom/store";
+        const store_version = StoreVersion.read(store_path, self.allocator) catch |err| {
+            std.debug.print("\nStore Version: (error reading: {})\n", .{err});
+            return;
+        };
+
+        if (store_version) |sv| {
+            defer self.allocator.free(sv);
+            std.debug.print("\nInstalled Store Version: {s}\n", .{sv});
+
+            // Check compatibility
+            const result = format_version.checkCompatibility(.store, sv) catch |err| {
+                std.debug.print("  Status: Error checking compatibility ({})\n", .{err});
+                return;
+            };
+
+            if (result.compatible and !result.needs_migration) {
+                std.debug.print("  Status: Current (no migration needed)\n", .{});
+            } else if (result.compatible and result.needs_migration) {
+                std.debug.print("  Status: Compatible but older - migration recommended\n", .{});
+                std.debug.print("  Run 'axiom migrate' to update\n", .{});
+            } else {
+                std.debug.print("  Status: Incompatible - migration required\n", .{});
+                std.debug.print("  Run 'axiom migrate --check' for details\n", .{});
+            }
+        } else {
+            std.debug.print("\nInstalled Store Version: (not initialized)\n", .{});
+            std.debug.print("  Run 'axiom setup' to initialize the store\n", .{});
+        }
+    }
+
+    /// Migrate store and data formats (Phase 41)
+    fn migrateStore(self: *CLI, args: []const []const u8) !void {
+        var check_only = false;
+        var dry_run = false;
+
+        // Parse arguments
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
+                std.debug.print("Usage: axiom migrate [options]\n", .{});
+                std.debug.print("\nMigrate store and data formats to current version.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --check          Check if migration is needed (no changes)\n", .{});
+                std.debug.print("  --dry-run        Show migration plan without executing\n", .{});
+                std.debug.print("  -h, --help       Show this help message\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom migrate --check      # Check migration status\n", .{});
+                std.debug.print("  axiom migrate --dry-run    # Show migration plan\n", .{});
+                std.debug.print("  axiom migrate              # Perform migration\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--check")) {
+                check_only = true;
+            } else if (std.mem.eql(u8, arg, "--dry-run")) {
+                dry_run = true;
+            }
+        }
+
+        std.debug.print("Axiom Migration Check\n", .{});
+        std.debug.print("═════════════════════════════════════════════════════\n", .{});
+
+        const store_path = "/axiom/store";
+        var needs_migration = false;
+
+        // Check store version
+        const store_version = StoreVersion.read(store_path, self.allocator) catch |err| {
+            std.debug.print("Error reading store version: {}\n", .{err});
+            return;
+        };
+
+        if (store_version) |sv| {
+            defer self.allocator.free(sv);
+
+            const result = format_version.checkCompatibility(.store, sv) catch |err| {
+                std.debug.print("Error checking store compatibility: {}\n", .{err});
+                return;
+            };
+
+            std.debug.print("\nStore Layout:\n", .{});
+            std.debug.print("  Current version:  {s}\n", .{sv});
+            std.debug.print("  Expected version: {s}\n", .{FormatVersions.store});
+
+            if (result.needs_migration) {
+                std.debug.print("  Status: Migration needed\n", .{});
+                needs_migration = true;
+            } else {
+                std.debug.print("  Status: Up to date\n", .{});
+            }
+        } else {
+            std.debug.print("\nStore Layout:\n", .{});
+            std.debug.print("  Status: Not initialized (run 'axiom setup')\n", .{});
+        }
+
+        // Summary
+        std.debug.print("\n───────────────────────────────────────────────────────\n", .{});
+        if (needs_migration) {
+            if (check_only) {
+                std.debug.print("Migration is needed. Run 'axiom migrate' to update.\n", .{});
+            } else if (dry_run) {
+                std.debug.print("Dry run: Would perform the following migrations:\n", .{});
+                std.debug.print("  - Update store version file to {s}\n", .{FormatVersions.store});
+                std.debug.print("\nRun 'axiom migrate' without --dry-run to execute.\n", .{});
+            } else {
+                std.debug.print("Performing migration...\n", .{});
+
+                // Update store version
+                StoreVersion.write(store_path, FormatVersions.store, self.allocator) catch |err| {
+                    std.debug.print("Error updating store version: {}\n", .{err});
+                    return;
+                };
+
+                std.debug.print("  Updated store version to {s}\n", .{FormatVersions.store});
+                std.debug.print("\nMigration completed successfully.\n", .{});
+            }
+        } else {
+            std.debug.print("All formats are up to date. No migration needed.\n", .{});
+        }
     }
 };
 

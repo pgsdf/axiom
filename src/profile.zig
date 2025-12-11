@@ -2,12 +2,14 @@ const std = @import("std");
 const types = @import("types.zig");
 const zfs = @import("zfs.zig");
 const manifest = @import("manifest.zig");
+const format_version = @import("format_version.zig");
 
 const Version = types.Version;
 const VersionConstraint = types.VersionConstraint;
 const Dependency = types.Dependency;
 const PackageId = types.PackageId;
 const ZfsHandle = zfs.ZfsHandle;
+const FormatVersions = format_version.FormatVersions;
 
 /// Errors that can occur during profile operations
 pub const ProfileError = error{
@@ -32,6 +34,9 @@ pub const ResolvedPackage = struct {
 
 /// Profile definition (profile.yaml)
 pub const Profile = struct {
+    /// Format version for this profile file (e.g., "1.0")
+    format_version: ?[]const u8 = null,
+
     name: []const u8,
     description: ?[]const u8 = null,
     packages: []PackageRequest,
@@ -113,7 +118,9 @@ pub const Profile = struct {
             const key = std.mem.trim(u8, parts.next() orelse continue, " \t");
             const value = std.mem.trim(u8, parts.rest(), " \t\"");
 
-            if (std.mem.eql(u8, key, "name")) {
+            if (std.mem.eql(u8, key, "format_version")) {
+                profile.format_version = try allocator.dupe(u8, value);
+            } else if (std.mem.eql(u8, key, "name")) {
                 if (current_pkg == null) {
                     profile.name = try allocator.dupe(u8, value);
                 } else {
@@ -153,6 +160,8 @@ pub const Profile = struct {
 
     /// Write profile to YAML format
     pub fn write(self: Profile, writer: anytype) !void {
+        // Always write format_version first
+        try writer.print("format_version: \"{s}\"\n", .{FormatVersions.profile});
         try writer.print("name: {s}\n", .{self.name});
         if (self.description) |desc| {
             try writer.print("description: {s}\n", .{desc});
@@ -204,8 +213,28 @@ pub const Profile = struct {
         }
     }
 
+    /// Validate profile format version
+    pub fn validate(self: Profile) !void {
+        if (self.format_version) |fv| {
+            format_version.validateVersion(.profile, fv) catch |err| {
+                return switch (err) {
+                    format_version.VersionError.IncompatibleMajorVersion => error.IncompatibleFormatVersion,
+                    format_version.VersionError.VersionTooNew => error.FormatVersionTooNew,
+                    format_version.VersionError.InvalidVersion => error.InvalidFormatVersion,
+                    else => error.InvalidFormatVersion,
+                };
+            };
+        }
+    }
+
+    /// Get the current format version string for writing profiles
+    pub fn currentFormatVersion() []const u8 {
+        return FormatVersions.profile;
+    }
+
     /// Free all allocated memory
     pub fn deinit(self: *Profile, allocator: std.mem.Allocator) void {
+        if (self.format_version) |fv| allocator.free(fv);
         allocator.free(self.name);
         if (self.description) |d| allocator.free(d);
         for (self.packages) |pkg| {
@@ -217,6 +246,9 @@ pub const Profile = struct {
 
 /// Profile lock file (profile.lock.yaml) - resolved dependencies
 pub const ProfileLock = struct {
+    /// Format version for this lock file (e.g., "1.0")
+    format_version: ?[]const u8 = null,
+
     profile_name: []const u8,
     lock_version: u32 = 1,
     resolved: []ResolvedPackage,
@@ -271,7 +303,9 @@ pub const ProfileLock = struct {
             const key = std.mem.trim(u8, parts.next() orelse continue, " \t");
             const value = std.mem.trim(u8, parts.rest(), " \t\"");
 
-            if (std.mem.eql(u8, key, "profile_name")) {
+            if (std.mem.eql(u8, key, "format_version")) {
+                lock.format_version = try allocator.dupe(u8, value);
+            } else if (std.mem.eql(u8, key, "profile_name")) {
                 lock.profile_name = try allocator.dupe(u8, value);
             } else if (std.mem.eql(u8, key, "lock_version")) {
                 lock.lock_version = try std.fmt.parseInt(u32, value, 10);
@@ -321,6 +355,8 @@ pub const ProfileLock = struct {
 
     /// Write lock file to YAML format
     pub fn write(self: ProfileLock, writer: anytype) !void {
+        // Always write format_version first
+        try writer.print("format_version: \"{s}\"\n", .{FormatVersions.lock});
         try writer.print("profile_name: {s}\n", .{self.profile_name});
         try writer.print("lock_version: {d}\n", .{self.lock_version});
         try writer.writeAll("resolved:\n");
@@ -334,8 +370,28 @@ pub const ProfileLock = struct {
         }
     }
 
+    /// Validate lock file format version
+    pub fn validate(self: ProfileLock) !void {
+        if (self.format_version) |fv| {
+            format_version.validateVersion(.lock, fv) catch |err| {
+                return switch (err) {
+                    format_version.VersionError.IncompatibleMajorVersion => error.IncompatibleFormatVersion,
+                    format_version.VersionError.VersionTooNew => error.FormatVersionTooNew,
+                    format_version.VersionError.InvalidVersion => error.InvalidFormatVersion,
+                    else => error.InvalidFormatVersion,
+                };
+            };
+        }
+    }
+
+    /// Get the current format version string for writing lock files
+    pub fn currentFormatVersion() []const u8 {
+        return FormatVersions.lock;
+    }
+
     /// Free all allocated memory
     pub fn deinit(self: *ProfileLock, allocator: std.mem.Allocator) void {
+        if (self.format_version) |fv| allocator.free(fv);
         allocator.free(self.profile_name);
         for (self.resolved) |pkg| {
             allocator.free(pkg.id.name);
