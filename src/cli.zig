@@ -1043,17 +1043,28 @@ pub const CLI = struct {
     fn resolveProfile(self: *CLI, args: []const []const u8) !void {
         if (args.len < 1) {
             std.debug.print("Usage: axiom resolve <profile> [options]\n", .{});
-            std.debug.print("\nOptions:\n", .{});
+            std.debug.print("\nStrategy Options:\n", .{});
             std.debug.print("  --strategy <strategy>  Resolution strategy to use\n", .{});
+            std.debug.print("  --prefer <preference>  Version selection preference\n", .{});
+            std.debug.print("\nBacktracking Options:\n", .{});
+            std.debug.print("  --max-backtracks <n>       Max backtrack attempts per package (default: 5)\n", .{});
+            std.debug.print("  --total-backtracks <n>     Max total backtracks (default: 50)\n", .{});
+            std.debug.print("  --backtrack-threshold <n>  Max packages for backtracking (default: 20)\n", .{});
+            std.debug.print("\nResource Limit Options:\n", .{});
             std.debug.print("  --timeout <seconds>    Maximum resolution time (default: 30)\n", .{});
             std.debug.print("  --max-memory <MB>      Maximum memory usage (default: 256)\n", .{});
             std.debug.print("  --max-depth <n>        Maximum dependency depth (default: 100)\n", .{});
             std.debug.print("  --strict               Use strict limits for untrusted inputs\n", .{});
             std.debug.print("  --stats                Show resolution statistics\n", .{});
             std.debug.print("\nStrategies:\n", .{});
-            std.debug.print("  greedy         Fast greedy algorithm (default)\n", .{});
+            std.debug.print("  greedy         Fast greedy algorithm\n", .{});
+            std.debug.print("  backtracking   Greedy with backtracking on conflicts\n", .{});
             std.debug.print("  sat            SAT solver for complex constraints\n", .{});
-            std.debug.print("  auto           Try greedy first, fallback to SAT\n", .{});
+            std.debug.print("  auto           Try greedy first, fallback to SAT (default)\n", .{});
+            std.debug.print("\nVersion Preferences:\n", .{});
+            std.debug.print("  newest         Always pick newest version (default)\n", .{});
+            std.debug.print("  stable         Prefer older, more stable versions\n", .{});
+            std.debug.print("  oldest         Pick oldest satisfying version\n", .{});
             return;
         }
 
@@ -1061,6 +1072,8 @@ pub const CLI = struct {
 
         // Parse options
         var strategy: ResolutionStrategy = .greedy_with_sat_fallback;
+        var preference: resolver.VersionPreference = .newest;
+        var backtrack_config = resolver.BacktrackConfig{};
         var limits = resolver.ResourceLimits{};
         var show_stats = false;
         var i: usize = 1;
@@ -1069,15 +1082,49 @@ pub const CLI = struct {
                 const strat_str = args[i + 1];
                 if (std.mem.eql(u8, strat_str, "greedy")) {
                     strategy = .greedy;
+                } else if (std.mem.eql(u8, strat_str, "backtracking")) {
+                    strategy = .greedy_with_backtracking;
                 } else if (std.mem.eql(u8, strat_str, "sat")) {
                     strategy = .sat;
                 } else if (std.mem.eql(u8, strat_str, "auto")) {
                     strategy = .greedy_with_sat_fallback;
                 } else {
                     std.debug.print("Unknown strategy: {s}\n", .{strat_str});
-                    std.debug.print("Valid options: greedy, sat, auto\n", .{});
+                    std.debug.print("Valid options: greedy, backtracking, sat, auto\n", .{});
                     return;
                 }
+                i += 1;
+            } else if (std.mem.eql(u8, args[i], "--prefer") and i + 1 < args.len) {
+                const pref_str = args[i + 1];
+                if (std.mem.eql(u8, pref_str, "newest")) {
+                    preference = .newest;
+                } else if (std.mem.eql(u8, pref_str, "stable")) {
+                    preference = .stable;
+                } else if (std.mem.eql(u8, pref_str, "oldest")) {
+                    preference = .oldest;
+                } else {
+                    std.debug.print("Unknown preference: {s}\n", .{pref_str});
+                    std.debug.print("Valid options: newest, stable, oldest\n", .{});
+                    return;
+                }
+                i += 1;
+            } else if (std.mem.eql(u8, args[i], "--max-backtracks") and i + 1 < args.len) {
+                backtrack_config.max_backtracks_per_package = std.fmt.parseInt(u32, args[i + 1], 10) catch {
+                    std.debug.print("Invalid max-backtracks value: {s}\n", .{args[i + 1]});
+                    return;
+                };
+                i += 1;
+            } else if (std.mem.eql(u8, args[i], "--total-backtracks") and i + 1 < args.len) {
+                backtrack_config.max_total_backtracks = std.fmt.parseInt(u32, args[i + 1], 10) catch {
+                    std.debug.print("Invalid total-backtracks value: {s}\n", .{args[i + 1]});
+                    return;
+                };
+                i += 1;
+            } else if (std.mem.eql(u8, args[i], "--backtrack-threshold") and i + 1 < args.len) {
+                backtrack_config.small_graph_threshold = std.fmt.parseInt(u32, args[i + 1], 10) catch {
+                    std.debug.print("Invalid backtrack-threshold value: {s}\n", .{args[i + 1]});
+                    return;
+                };
                 i += 1;
             } else if (std.mem.eql(u8, args[i], "--timeout") and i + 1 < args.len) {
                 const seconds = std.fmt.parseInt(u64, args[i + 1], 10) catch {
@@ -1111,14 +1158,17 @@ pub const CLI = struct {
         }
 
         std.debug.print("Resolving profile: {s}\n", .{name});
-        std.debug.print("Strategy: {s}\n\n", .{@tagName(strategy)});
+        std.debug.print("Strategy: {s}\n", .{@tagName(strategy)});
+        std.debug.print("Version preference: {s}\n\n", .{@tagName(preference)});
 
         // Load profile
         var prof = try self.profile_mgr.loadProfile(name);
         defer prof.deinit(self.allocator);
 
-        // Set resolution strategy and limits
+        // Set resolution strategy, preferences, and limits
         self.resolver.setStrategy(strategy);
+        self.resolver.setVersionPreference(preference);
+        self.resolver.setBacktrackConfig(backtrack_config);
         self.resolver.setResourceLimits(limits);
         self.resolver.setShowStats(show_stats);
 
