@@ -2514,7 +2514,7 @@ pub const CLI = struct {
         std.debug.print("Library: {s}\n\n", .{library_path});
 
         // Initialize HSM provider
-        var config = hsm.HsmConfig{
+        const config = hsm.HsmConfig{
             .library_path = library_path,
             .slot_id = 0,
         };
@@ -2601,7 +2601,7 @@ pub const CLI = struct {
         std.debug.print("================\n\n", .{});
 
         // Initialize HSM provider
-        var config = hsm.HsmConfig{
+        const config = hsm.HsmConfig{
             .library_path = library_path,
             .slot_id = slot_id,
             .pin = pin,
