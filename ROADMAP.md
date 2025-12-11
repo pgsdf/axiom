@@ -4708,7 +4708,7 @@ axiom cache-conflicts --resolve         # Resolve conflicts per policy
 
 **Priority**: Medium
 **Complexity**: High
-**Status**: Planned
+**Status**: Complete
 
 ### Purpose
 
@@ -4808,14 +4808,14 @@ axiom system-upgrade --be               # Upgrade in new BE
 
 ### Deliverables
 
-- [ ] Design BE-aware profile storage layout
-- [ ] Implement profile snapshotting to BEs
-- [ ] Implement FreeBSD bootloader integration
-- [ ] Implement auto-rollback with health checks
-- [ ] Implement activation hooks
-- [ ] Add be-diff command
-- [ ] Add be-health command
-- [ ] Document BE integration workflows
+- [x] Design BE-aware profile storage layout
+- [x] Implement profile snapshotting to BEs
+- [x] Implement FreeBSD bootloader integration
+- [x] Implement auto-rollback with health checks
+- [x] Implement activation hooks
+- [x] Add be-diff command
+- [x] Add be-health command
+- [x] Document BE integration workflows
 
 ---
 
