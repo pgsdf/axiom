@@ -4329,20 +4329,16 @@ pub const CLI = struct {
             return;
         }
 
-        // Initialize ports migrator
-        var migrator = try PortsMigrator.init(
-            self.allocator,
-            self.zfs_handle,
-            self.store,
-            self.importer,
-        );
-        defer migrator.deinit();
-
-        // Configure migrator
-        migrator.setParallelJobs(jobs);
-        if (verbose) {
-            migrator.setVerbose(true);
-        }
+        // Initialize ports migrator with options
+        var migrator = PortsMigrator.init(self.allocator, .{
+            .verbose = verbose,
+            .build_jobs = jobs,
+            .build_after_generate = true,
+            .import_after_build = true,
+            .zfs_handle = self.zfs_handle,
+            .store = self.store,
+            .importer = self.importer,
+        });
 
         // Build each package in order
         var success_count: u32 = 0;
