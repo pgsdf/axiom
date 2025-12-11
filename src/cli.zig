@@ -6164,7 +6164,7 @@ pub const CLI = struct {
             std.debug.print("Querying cache server: {s}\n", .{u});
             std.debug.print("────────────────────────────────────────────────────\n", .{});
 
-            var client = RemoteCacheClient.init(self.allocator, config);
+            const client = RemoteCacheClient.init(self.allocator, config);
             const info_url = try std.fmt.allocPrint(self.allocator, "{s}/api/v1/info", .{u});
             defer self.allocator.free(info_url);
 

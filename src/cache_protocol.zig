@@ -406,7 +406,7 @@ pub const CacheServer = struct {
     /// Get server info
     pub fn getInfo(self: *Self) !CacheInfo {
         var package_count: u64 = 0;
-        var total_size: u64 = 0;
+        const total_size: u64 = 0;
 
         // Count packages in store
         const pkg_path = try std.fmt.allocPrint(self.allocator, "{s}/pkg", .{self.store_path});
@@ -694,7 +694,7 @@ pub const CacheClient = struct {
     /// Fetch package from cache
     pub fn fetchPackage(self: *Self, name: []const u8, version: []const u8) !?FetchResult {
         // Sort sources by priority (higher first)
-        var sorted_sources = try self.allocator.alloc(CacheSource, self.config.sources.len);
+        const sorted_sources = try self.allocator.alloc(CacheSource, self.config.sources.len);
         defer self.allocator.free(sorted_sources);
         @memcpy(sorted_sources, self.config.sources);
 
