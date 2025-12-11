@@ -4585,7 +4585,7 @@ axiom provenance-show <package>         # Display provenance details
 
 **Priority**: High
 **Complexity**: Medium
-**Status**: Planned
+**Status**: Complete
 
 ### Purpose
 
@@ -4693,14 +4693,14 @@ axiom cache-conflicts --resolve         # Resolve conflicts per policy
 
 ### Deliverables
 
-- [ ] Define cache-index.yaml format specification
-- [ ] Implement signed index verification
-- [ ] Implement index merging from multiple sources
-- [ ] Implement eviction policy engine
-- [ ] Implement conflict detection and resolution
-- [ ] Add cache-index management commands
-- [ ] Add cache-evict command
-- [ ] Document cache trust model
+- [x] Define cache-index.yaml format specification
+- [x] Implement signed index verification
+- [x] Implement index merging from multiple sources
+- [x] Implement eviction policy engine
+- [x] Implement conflict detection and resolution
+- [x] Add cache-index management commands
+- [x] Add cache-evict command
+- [x] Document cache trust model
 
 ---
 
