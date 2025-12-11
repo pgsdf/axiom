@@ -252,7 +252,6 @@ pub const Command = enum {
     be_snapshot,
     be_diff,
     be_health,
-    be_rollback,
     system_upgrade,
 
     unknown,
@@ -450,7 +449,6 @@ pub fn parseCommand(cmd: []const u8) Command {
     if (std.mem.eql(u8, cmd, "be-snapshot")) return .be_snapshot;
     if (std.mem.eql(u8, cmd, "be-diff")) return .be_diff;
     if (std.mem.eql(u8, cmd, "be-health")) return .be_health;
-    if (std.mem.eql(u8, cmd, "be-rollback")) return .be_rollback;
     if (std.mem.eql(u8, cmd, "system-upgrade")) return .system_upgrade;
 
     return .unknown;
@@ -705,7 +703,6 @@ pub const CLI = struct {
             .be_snapshot => try self.beSnapshot(args[1..]),
             .be_diff => try self.beDiff(args[1..]),
             .be_health => try self.beHealth(args[1..]),
-            .be_rollback => try self.beRollback(args[1..]),
             .system_upgrade => try self.systemUpgrade(args[1..]),
 
             .unknown => {
@@ -8180,63 +8177,6 @@ pub const CLI = struct {
         } else {
             std.debug.print("Some health checks failed!\n", .{});
         }
-
-        _ = self;
-    }
-
-    /// Perform manual rollback to previous boot environment
-    fn beRollback(self: *CLI, args: []const []const u8) !void {
-        var reason: ?[]const u8 = null;
-        var target_be: ?[]const u8 = null;
-        var force = false;
-
-        var i: usize = 0;
-        while (i < args.len) : (i += 1) {
-            const arg = args[i];
-            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
-                std.debug.print("Usage: axiom be-rollback [options] [target-be]\n", .{});
-                std.debug.print("\nRollback to a previous boot environment.\n", .{});
-                std.debug.print("\nOptions:\n", .{});
-                std.debug.print("  --reason <text>   Reason for rollback (logged)\n", .{});
-                std.debug.print("  --force           Skip confirmation\n", .{});
-                std.debug.print("\nExamples:\n", .{});
-                std.debug.print("  axiom be-rollback\n", .{});
-                std.debug.print("  axiom be-rollback pre-upgrade --reason \"upgrade failed\"\n", .{});
-                return;
-            } else if (std.mem.eql(u8, arg, "--reason") and i + 1 < args.len) {
-                i += 1;
-                reason = args[i];
-            } else if (std.mem.eql(u8, arg, "--force") or std.mem.eql(u8, arg, "-f")) {
-                force = true;
-            } else if (target_be == null and !std.mem.startsWith(u8, arg, "-")) {
-                target_be = arg;
-            }
-        }
-
-        const be = target_be orelse "pre-upgrade";
-        const rollback_reason = reason orelse "manual rollback";
-
-        if (!force) {
-            std.debug.print("About to rollback to boot environment '{s}'.\n", .{be});
-            std.debug.print("Reason: {s}\n", .{rollback_reason});
-            std.debug.print("\nThis will:\n", .{});
-            std.debug.print("  1. Run on_rollback hooks\n", .{});
-            std.debug.print("  2. Update bootloader to boot '{s}'\n", .{be});
-            std.debug.print("  3. Log rollback event\n", .{});
-            std.debug.print("\nUse --force to skip this confirmation.\n", .{});
-            return;
-        }
-
-        std.debug.print("Rolling back to boot environment '{s}'...\n", .{be});
-        std.debug.print("Reason: {s}\n\n", .{rollback_reason});
-
-        // In full implementation, would use BootloaderIntegration.rollback()
-        std.debug.print("Running on_rollback hooks...\n", .{});
-        std.debug.print("Updating bootloader configuration...\n", .{});
-        std.debug.print("Logging rollback event...\n", .{});
-
-        std.debug.print("\n✓ Rollback to '{s}' complete.\n", .{be});
-        std.debug.print("Reboot to activate the previous boot environment.\n", .{});
 
         _ = self;
     }
