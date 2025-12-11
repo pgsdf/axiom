@@ -1953,7 +1953,9 @@ pub const CLI = struct {
         // Print requested packages first
         for (lock.resolved) |pkg| {
             if (pkg.requested) {
-                try self.printTreeNode(writer, graph, pkg.id.name, 0, max_depth, &std.StringHashMap(void).init(self.allocator));
+                var visited = std.StringHashMap(void).init(self.allocator);
+                defer visited.deinit();
+                try self.printTreeNode(writer, graph, pkg.id.name, 0, max_depth, &visited);
                 try writer.print("\n", .{});
             }
         }
