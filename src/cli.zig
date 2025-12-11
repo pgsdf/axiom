@@ -1540,10 +1540,7 @@ pub const CLI = struct {
 
             // Parse outputs filter if provided
             if (outputs_filter) |filter_str| {
-                var output_selections = std.ArrayList(OutputSelection).init(self.allocator);
-                defer output_selections.deinit();
-
-                // Parse comma-separated outputs for each package
+                // Parse comma-separated outputs
                 var outputs_list = std.ArrayList([]const u8).init(self.allocator);
                 defer outputs_list.deinit();
 
@@ -1557,12 +1554,11 @@ pub const CLI = struct {
 
                 // Apply to all packages in lock
                 for (lock.resolved) |pkg| {
-                    try output_selections.append(.{
+                    try spec.output_selections.append(.{
                         .package = pkg.id.name,
                         .outputs = outputs_list.items,
                     });
                 }
-                spec.output_selections = try output_selections.toOwnedSlice();
             }
 
             // Realize with spec
@@ -3819,9 +3815,6 @@ pub const CLI = struct {
 
             // Parse outputs filter if provided
             if (outputs_filter) |filter_str| {
-                var output_selections = std.ArrayList(OutputSelection).init(self.allocator);
-                defer output_selections.deinit();
-
                 var outputs_list = std.ArrayList([]const u8).init(self.allocator);
                 defer outputs_list.deinit();
 
@@ -3834,12 +3827,11 @@ pub const CLI = struct {
                 }
 
                 for (lock.resolved) |pkg| {
-                    try output_selections.append(.{
+                    try spec.output_selections.append(.{
                         .package = pkg.id.name,
                         .outputs = outputs_list.items,
                     });
                 }
-                spec.output_selections = try output_selections.toOwnedSlice();
             }
 
             // Realize with spec
