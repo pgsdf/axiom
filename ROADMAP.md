@@ -33,7 +33,7 @@ This document outlines the planned enhancements for Axiom beyond the core 8 phas
 | 31 | Resolver Backtracking | Medium | Medium | Phase 16 | ✓ Complete |
 | 32 | Bootstrap Automation | High | Low | Phase 22 | ✓ Complete |
 | 33 | Unified Test Infrastructure | Medium | Low | None | ✓ Complete |
-| 34 | CLI Resolution Options | Medium | Low | Phase 31 | Planned |
+| 34 | CLI Resolution Options | Medium | Low | Phase 31 | ✓ Complete |
 | 35 | Dependency Graph Visualization | Low | Medium | Phase 16 | Planned |
 | 36 | HSM/PKCS#11 Signing | Medium | High | Phase 15 | Planned |
 | 37 | Multi-Party Signing | Medium | High | Phase 36 | Planned |
@@ -3354,43 +3354,56 @@ sudo zig build ci-full # Complete test suite
 
 **Priority**: Medium
 **Complexity**: Low
-**Status**: Planned
+**Status**: Complete
 
 ### Purpose
 
 Expose resolver backtracking and version preference options through the CLI.
 
-### Requirements
+### Changes Made
 
-1. **Strategy Selection**
+1. **Strategy Selection** - Added `--strategy` option with `backtracking` support:
    ```bash
    axiom resolve myprofile --strategy greedy
    axiom resolve myprofile --strategy backtracking
    axiom resolve myprofile --strategy sat
+   axiom resolve myprofile --strategy auto  # default - greedy with SAT fallback
    ```
 
-2. **Version Preference**
+2. **Version Preference** - Added `--prefer` option:
    ```bash
-   axiom resolve myprofile --prefer newest
-   axiom resolve myprofile --prefer stable
-   axiom resolve myprofile --prefer oldest
+   axiom resolve myprofile --prefer newest   # default
+   axiom resolve myprofile --prefer stable   # for production environments
+   axiom resolve myprofile --prefer oldest   # minimum required versions
    ```
 
-3. **Backtrack Configuration**
+3. **Backtrack Configuration** - Added granular control:
    ```bash
-   axiom resolve myprofile --max-backtracks 100
-   axiom resolve myprofile --backtrack-threshold 30
+   axiom resolve myprofile --max-backtracks 10      # per-package limit
+   axiom resolve myprofile --total-backtracks 100   # total limit
+   axiom resolve myprofile --backtrack-threshold 30 # graph size threshold
    ```
 
-4. **Profile-Level Defaults**
-   ```yaml
-   # profile.yaml
-   name: production
-   resolver:
-     strategy: greedy_with_sat_fallback
-     preference: stable
-     max_backtracks: 50
+4. **Combined Usage Example**:
+   ```bash
+   # Production-grade resolution with stable versions
+   axiom resolve production --strategy backtracking --prefer stable --max-backtracks 10
+
+   # Fast development resolution
+   axiom resolve dev --strategy greedy --prefer newest
    ```
+
+### Future Enhancement
+
+Profile-level defaults (deferred to future phase):
+```yaml
+# profile.yaml
+name: production
+resolver:
+  strategy: greedy_with_sat_fallback
+  preference: stable
+  max_backtracks: 50
+```
 
 ---
 
