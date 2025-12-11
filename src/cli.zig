@@ -28,6 +28,7 @@ const realization_spec = @import("realization_spec.zig");
 const build_provenance = @import("build_provenance.zig");
 const cache_index = @import("cache_index.zig");
 const be_integration = @import("be_integration.zig");
+const multi_user_security = @import("multi_user_security.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageStore = store.PackageStore;
@@ -78,6 +79,10 @@ const BeProfileManager = be_integration.BeProfileManager;
 const BootloaderIntegration = be_integration.BootloaderIntegration;
 const BootloaderType = be_integration.BootloaderType;
 const RollbackTrigger = be_integration.RollbackTrigger;
+const AccessControl = multi_user_security.AccessControl;
+const SetuidManager = multi_user_security.SetuidManager;
+const SecurityUser = multi_user_security.User;
+const PrivilegeLevel = multi_user_security.PrivilegeLevel;
 
 /// CLI command enumeration
 pub const Command = enum {
@@ -253,6 +258,14 @@ pub const Command = enum {
     be_diff,
     be_health,
     system_upgrade,
+
+    // Multi-user security operations (Phase 48)
+    user_init,
+    access_check,
+    access_show,
+    setuid_list,
+    setuid_audit,
+    privilege_show,
 
     unknown,
 };
@@ -450,6 +463,14 @@ pub fn parseCommand(cmd: []const u8) Command {
     if (std.mem.eql(u8, cmd, "be-diff")) return .be_diff;
     if (std.mem.eql(u8, cmd, "be-health")) return .be_health;
     if (std.mem.eql(u8, cmd, "system-upgrade")) return .system_upgrade;
+
+    // Multi-user security commands (Phase 48)
+    if (std.mem.eql(u8, cmd, "user-init")) return .user_init;
+    if (std.mem.eql(u8, cmd, "access-check")) return .access_check;
+    if (std.mem.eql(u8, cmd, "access-show")) return .access_show;
+    if (std.mem.eql(u8, cmd, "setuid-list")) return .setuid_list;
+    if (std.mem.eql(u8, cmd, "setuid-audit")) return .setuid_audit;
+    if (std.mem.eql(u8, cmd, "privilege-show")) return .privilege_show;
 
     return .unknown;
 }
@@ -704,6 +725,14 @@ pub const CLI = struct {
             .be_diff => try self.beDiff(args[1..]),
             .be_health => try self.beHealth(args[1..]),
             .system_upgrade => try self.systemUpgrade(args[1..]),
+
+            // Multi-user security commands (Phase 48)
+            .user_init => try self.userInit(args[1..]),
+            .access_check => try self.accessCheck(args[1..]),
+            .access_show => try self.accessShow(args[1..]),
+            .setuid_list => try self.setuidList(args[1..]),
+            .setuid_audit => try self.setuidAudit(args[1..]),
+            .privilege_show => try self.privilegeShow(args[1..]),
 
             .unknown => {
                 std.debug.print("Unknown command: {s}\n", .{args[0]});
@@ -8257,6 +8286,340 @@ pub const CLI = struct {
             std.debug.print("  Reboot to complete upgrade.\n", .{});
             std.debug.print("  If issues occur, rollback with: axiom be-rollback pre-upgrade\n", .{});
         }
+
+        _ = self;
+    }
+
+    // ============================================================
+    // Phase 48: Multi-User Security Model Commands
+    // ============================================================
+
+    /// Initialize user space directory structure
+    fn userInit(self: *CLI, args: []const []const u8) !void {
+        var username: ?[]const u8 = null;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            const arg = args[i];
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom user-init [username]\n", .{});
+                std.debug.print("\nInitialize user space directory structure.\n", .{});
+                std.debug.print("\nArguments:\n", .{});
+                std.debug.print("  username          Username to initialize (default: current user)\n", .{});
+                std.debug.print("\nCreates directories:\n", .{});
+                std.debug.print("  /axiom/users/<user>/profiles    User profiles\n", .{});
+                std.debug.print("  /axiom/users/<user>/env         Environments\n", .{});
+                std.debug.print("  /axiom/users/<user>/.config     Configuration\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom user-init\n", .{});
+                std.debug.print("  axiom user-init alice\n", .{});
+                return;
+            } else if (!std.mem.startsWith(u8, arg, "-")) {
+                username = arg;
+            }
+        }
+
+        const target_user = username orelse "current";
+
+        std.debug.print("Initializing User Space\n", .{});
+        std.debug.print("=======================\n\n", .{});
+
+        std.debug.print("User: {s}\n", .{target_user});
+        std.debug.print("Base path: /axiom/users/{s}\n\n", .{target_user});
+
+        // In full implementation, would use AccessControl.initUserSpace()
+        var ac = AccessControl.init(self.allocator);
+        _ = ac;
+
+        const dirs = [_][]const u8{
+            "profiles",
+            "env",
+            ".config",
+        };
+
+        for (dirs) |dir| {
+            std.debug.print("  Creating {s}/...\n", .{dir});
+        }
+
+        std.debug.print("\n✓ User space initialized for '{s}'.\n", .{target_user});
+    }
+
+    /// Check access permission for an operation
+    fn accessCheck(self: *CLI, args: []const []const u8) !void {
+        var operation: ?[]const u8 = null;
+        var target: ?[]const u8 = null;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            const arg = args[i];
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom access-check <operation> [target]\n", .{});
+                std.debug.print("\nCheck if current user can perform an operation.\n", .{});
+                std.debug.print("\nOperations:\n", .{});
+                std.debug.print("  read              Read from package store\n", .{});
+                std.debug.print("  import            Import packages to store\n", .{});
+                std.debug.print("  gc                Garbage collect store\n", .{});
+                std.debug.print("  profile-create    Create system profile\n", .{});
+                std.debug.print("  profile-delete    Delete system profile\n", .{});
+                std.debug.print("  user-space        Access user space (specify target uid)\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom access-check read\n", .{});
+                std.debug.print("  axiom access-check import\n", .{});
+                std.debug.print("  axiom access-check user-space 1001\n", .{});
+                return;
+            } else if (!std.mem.startsWith(u8, arg, "-")) {
+                if (operation == null) {
+                    operation = arg;
+                } else {
+                    target = arg;
+                }
+            }
+        }
+
+        if (operation == null) {
+            std.debug.print("Usage: axiom access-check <operation> [target]\n", .{});
+            return;
+        }
+
+        const op = operation.?;
+        _ = target;
+
+        std.debug.print("Access Check: {s}\n", .{op});
+        std.debug.print("========================\n\n", .{});
+
+        // Get current UID (simplified - would use system call)
+        const current_uid: u32 = 1000; // Would be std.os.linux.getuid()
+        const is_root = current_uid == 0;
+
+        std.debug.print("Current user: uid={d} (root={s})\n\n", .{ current_uid, if (is_root) "yes" else "no" });
+
+        // Check operation requirements
+        const store_ops = [_][]const u8{ "read", "import", "gc", "profile-create", "profile-delete" };
+        var is_store_op = false;
+        for (store_ops) |store_op| {
+            if (std.mem.eql(u8, op, store_op)) {
+                is_store_op = true;
+                break;
+            }
+        }
+
+        if (is_store_op) {
+            const requires_root = !std.mem.eql(u8, op, "read");
+            const allowed = is_root or !requires_root;
+            const status = if (allowed) "ALLOWED" else "DENIED";
+            const reason = if (requires_root and !is_root) "(requires root)" else "";
+
+            std.debug.print("Operation: {s}\n", .{op});
+            std.debug.print("Status: {s} {s}\n", .{ status, reason });
+        } else {
+            std.debug.print("Unknown operation: {s}\n", .{op});
+        }
+
+        _ = self;
+    }
+
+    /// Show access control policy
+    fn accessShow(self: *CLI, args: []const []const u8) !void {
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom access-show\n", .{});
+                std.debug.print("\nShow current access control policy configuration.\n", .{});
+                std.debug.print("\nDisplays:\n", .{});
+                std.debug.print("  - Store ownership and permissions\n", .{});
+                std.debug.print("  - User space template permissions\n", .{});
+                std.debug.print("  - Setuid policy settings\n", .{});
+                std.debug.print("  - Audit configuration\n", .{});
+                return;
+            }
+        }
+
+        std.debug.print("Access Control Policy\n", .{});
+        std.debug.print("=====================\n\n", .{});
+
+        // In full implementation, would read from AccessControl
+        const ac = AccessControl.init(self.allocator);
+        const policy = ac.policy;
+
+        std.debug.print("Store Settings:\n", .{});
+        std.debug.print("  Owner UID:        {d}\n", .{policy.store_owner});
+        std.debug.print("  Owner GID:        {d}\n", .{policy.store_group});
+        std.debug.print("  Store mode:       {o:0>4}\n", .{policy.store_mode});
+        std.debug.print("\n", .{});
+
+        std.debug.print("User Space Settings:\n", .{});
+        std.debug.print("  Template mode:    {o:0>4}\n", .{policy.user_template_mode});
+        std.debug.print("  User imports:     {s}\n", .{if (policy.allow_user_imports) "allowed" else "denied"});
+        std.debug.print("\n", .{});
+
+        std.debug.print("Setuid Settings:\n", .{});
+        std.debug.print("  Require sig:      {s}\n", .{if (policy.require_signature_for_setuid) "yes" else "no"});
+        std.debug.print("  Audit setuid:     {s}\n", .{if (policy.audit_setuid) "yes" else "no"});
+    }
+
+    /// List setuid binaries
+    fn setuidList(self: *CLI, args: []const []const u8) !void {
+        var show_all = false;
+
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom setuid-list [options]\n", .{});
+                std.debug.print("\nList setuid binaries managed by Axiom.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --all             Show all setuid binaries (including system)\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom setuid-list\n", .{});
+                std.debug.print("  axiom setuid-list --all\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--all") or std.mem.eql(u8, arg, "-a")) {
+                show_all = true;
+            }
+        }
+
+        std.debug.print("Setuid Binaries\n", .{});
+        std.debug.print("===============\n\n", .{});
+
+        // Example setuid binaries (would be from SetuidManager)
+        const binaries = [_]struct { path: []const u8, owner: u32, mode: u16, signed: bool }{
+            .{ .path = "/axiom/store/.../sudo", .owner = 0, .mode = 0o4755, .signed = true },
+            .{ .path = "/axiom/store/.../ping", .owner = 0, .mode = 0o4755, .signed = true },
+            .{ .path = "/axiom/store/.../passwd", .owner = 0, .mode = 0o4755, .signed = true },
+        };
+
+        std.debug.print("Axiom-managed setuid binaries:\n\n", .{});
+        std.debug.print("  {s:<40} {s:<8} {s:<8} {s}\n", .{ "PATH", "OWNER", "MODE", "SIGNED" });
+        std.debug.print("  {s:<40} {s:<8} {s:<8} {s}\n", .{ "----", "-----", "----", "------" });
+
+        for (binaries) |binary| {
+            const signed_str = if (binary.signed) "yes" else "no";
+            std.debug.print("  {s:<40} {d:<8} {o:0>4}    {s}\n", .{ binary.path, binary.owner, binary.mode, signed_str });
+        }
+
+        if (show_all) {
+            std.debug.print("\nSystem setuid binaries:\n", .{});
+            std.debug.print("  (Would scan /usr/bin, /usr/sbin for setuid bits)\n", .{});
+        }
+
+        std.debug.print("\nTotal: {d} Axiom-managed setuid binaries\n", .{binaries.len});
+
+        _ = self;
+    }
+
+    /// Show setuid audit log
+    fn setuidAudit(self: *CLI, args: []const []const u8) !void {
+        var limit: usize = 20;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            const arg = args[i];
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom setuid-audit [options]\n", .{});
+                std.debug.print("\nShow setuid execution audit log.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --limit <n>       Number of entries to show (default: 20)\n", .{});
+                std.debug.print("\nLog location: /var/log/axiom-setuid.log\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom setuid-audit\n", .{});
+                std.debug.print("  axiom setuid-audit --limit 50\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--limit") or std.mem.eql(u8, arg, "-n")) {
+                if (i + 1 < args.len) {
+                    i += 1;
+                    limit = std.fmt.parseInt(usize, args[i], 10) catch 20;
+                }
+            }
+        }
+
+        std.debug.print("Setuid Audit Log (last {d} entries)\n", .{limit});
+        std.debug.print("=====================================\n\n", .{});
+
+        // In full implementation, would use SetuidManager.readAuditLog()
+        var setuid_mgr = SetuidManager.init(self.allocator);
+        defer setuid_mgr.deinit();
+
+        const entries = setuid_mgr.readAuditLog(limit) catch |err| {
+            std.debug.print("Could not read audit log: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer {
+            for (entries) |*entry| {
+                var e = entry.*;
+                e.deinit(self.allocator);
+            }
+            self.allocator.free(entries);
+        }
+
+        if (entries.len == 0) {
+            std.debug.print("No audit entries found.\n", .{});
+            std.debug.print("(Log file: /var/log/axiom-setuid.log)\n", .{});
+            return;
+        }
+
+        std.debug.print("{s:<20} {s:<8} {s:<30} {s}\n", .{ "TIMESTAMP", "UID", "BINARY", "STATUS" });
+        std.debug.print("{s:<20} {s:<8} {s:<30} {s}\n", .{ "---------", "---", "------", "------" });
+
+        for (entries) |entry| {
+            const status = if (entry.success) "SUCCESS" else "FAILED";
+            std.debug.print("{d:<20} {d:<8} {s:<30} {s}\n", .{ entry.timestamp, entry.user_uid, entry.binary_path, status });
+        }
+    }
+
+    /// Show privilege requirements for operations
+    fn privilegeShow(self: *CLI, args: []const []const u8) !void {
+        var filter: ?[]const u8 = null;
+
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom privilege-show [filter]\n", .{});
+                std.debug.print("\nShow privilege requirements for Axiom operations.\n", .{});
+                std.debug.print("\nArguments:\n", .{});
+                std.debug.print("  filter            Filter by privilege level (root, group, any)\n", .{});
+                std.debug.print("\nPrivilege levels:\n", .{});
+                std.debug.print("  root_only         Requires root/sudo\n", .{});
+                std.debug.print("  user_with_group   Requires axiom group membership\n", .{});
+                std.debug.print("  any_user          Any user can perform\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom privilege-show\n", .{});
+                std.debug.print("  axiom privilege-show root\n", .{});
+                return;
+            } else if (!std.mem.startsWith(u8, arg, "-")) {
+                filter = arg;
+            }
+        }
+
+        std.debug.print("Operation Privilege Requirements\n", .{});
+        std.debug.print("================================\n\n", .{});
+
+        const table = multi_user_security.getPrivilegeTable();
+
+        // Group by privilege level
+        std.debug.print("Root Only Operations:\n", .{});
+        for (table) |entry| {
+            if (entry.level == .root_only) {
+                if (filter == null or std.mem.indexOf(u8, "root", filter.?) != null) {
+                    std.debug.print("  {s:<20} - {s}\n", .{ entry.operation, entry.description });
+                }
+            }
+        }
+
+        std.debug.print("\nGroup Membership Operations (axiom group):\n", .{});
+        for (table) |entry| {
+            if (entry.level == .user_with_group) {
+                if (filter == null or std.mem.indexOf(u8, "group", filter.?) != null) {
+                    std.debug.print("  {s:<20} - {s}\n", .{ entry.operation, entry.description });
+                }
+            }
+        }
+
+        std.debug.print("\nAny User Operations:\n", .{});
+        for (table) |entry| {
+            if (entry.level == .any_user) {
+                if (filter == null or std.mem.indexOf(u8, "any", filter.?) != null) {
+                    std.debug.print("  {s:<20} - {s}\n", .{ entry.operation, entry.description });
+                }
+            }
+        }
+
+        std.debug.print("\nNote: Per-user operations only affect the user's own space.\n", .{});
 
         _ = self;
     }

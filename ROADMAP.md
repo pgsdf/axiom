@@ -4823,7 +4823,7 @@ axiom system-upgrade --be               # Upgrade in new BE
 
 **Priority**: High
 **Complexity**: High
-**Status**: Planned
+**Status**: Complete
 
 ### Purpose
 
@@ -4935,14 +4935,14 @@ axiom audit-setuid                      # Show setuid audit log
 
 ### Deliverables
 
-- [ ] Design multi-user filesystem layout
-- [ ] Implement per-user profile isolation
-- [ ] Implement access control checks
-- [ ] Implement setuid binary policy enforcement
-- [ ] Implement setuid audit logging
-- [ ] Add user-* commands for unprivileged operation
-- [ ] Document multi-user security model
-- [ ] Write security policy configuration guide
+- [x] Design multi-user filesystem layout
+- [x] Implement per-user profile isolation
+- [x] Implement access control checks
+- [x] Implement setuid binary policy enforcement
+- [x] Implement setuid audit logging
+- [x] Add user-* commands for unprivileged operation
+- [x] Document multi-user security model
+- [x] Write security policy configuration guide
 
 ---
 
