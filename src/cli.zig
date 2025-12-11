@@ -4386,7 +4386,7 @@ pub const CLI = struct {
         }
 
         // Summary
-        std.debug.print("\n");
+        std.debug.print("\n", .{});
         std.debug.print("════════════════════════════════════════\n", .{});
         std.debug.print("Bootstrap Complete\n", .{});
         std.debug.print("════════════════════════════════════════\n", .{});
