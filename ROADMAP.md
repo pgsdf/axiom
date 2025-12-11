@@ -30,6 +30,16 @@ This document outlines the planned enhancements for Axiom beyond the core 8 phas
 | 28 | Secure Bundle Verification | High | Medium | Phase 18 | ✓ Complete |
 | 29 | Resolver Resource Limits | Medium | Low | Phase 16 | ✓ Complete |
 | 30 | Thread-Safe libzfs | Medium | Medium | None | ✓ Complete |
+| 31 | Resolver Backtracking | Medium | Medium | Phase 16 | ✓ Complete |
+| 32 | Bootstrap Automation | High | Low | Phase 22 | ✓ Complete |
+| 33 | Unified Test Infrastructure | Medium | Low | None | ✓ Complete |
+| 34 | CLI Resolution Options | Medium | Low | Phase 31 | Planned |
+| 35 | Dependency Graph Visualization | Low | Medium | Phase 16 | Planned |
+| 36 | HSM/PKCS#11 Signing | Medium | High | Phase 15 | Planned |
+| 37 | Multi-Party Signing | Medium | High | Phase 36 | Planned |
+| 38 | Service Management Integration | High | High | Phase 22 | Planned |
+| 39 | Boot Environment Support | High | Medium | None | Planned |
+| 40 | Remote Binary Cache Protocol | High | High | Phase 17 | Planned |
 
 ---
 
@@ -3217,6 +3227,389 @@ fn concurrentZfsWorker(zfs: *ThreadSafeZfs) void {
     }
 }
 ```
+
+---
+
+## Phase 31: Resolver Backtracking
+
+**Priority**: Medium
+**Complexity**: Medium
+**Status**: ✓ Complete
+
+### Purpose
+
+Enhance the greedy resolver with backtracking capability for small dependency graphs, improving resolution success rate without the overhead of full SAT solving.
+
+### Features Implemented
+
+1. **Backtracking Strategy**
+   - New `greedy_with_backtracking` resolution strategy
+   - Tries alternative versions when conflicts detected
+   - Automatic fallback to SAT for large graphs (>20 packages)
+   - Configurable backtrack limits
+
+2. **Version Preferences**
+   - `newest` - Pick newest satisfying version (default)
+   - `stable` - Prefer .0 patch releases and older versions
+   - `oldest` - Pick oldest satisfying version
+
+3. **Configuration**
+   ```zig
+   pub const BacktrackConfig = struct {
+       max_backtracks_per_package: u32 = 5,
+       max_total_backtracks: u32 = 50,
+       small_graph_threshold: u32 = 20,
+   };
+   ```
+
+### Usage
+
+```bash
+# Use backtracking strategy
+axiom resolve myprofile --strategy backtracking
+
+# Use stable version preference
+axiom resolve myprofile --prefer stable
+```
+
+---
+
+## Phase 32: Bootstrap Automation
+
+**Priority**: High
+**Complexity**: Low
+**Status**: ✓ Complete
+
+### Purpose
+
+Provide a single command to bootstrap Axiom from FreeBSD ports, eliminating the need for users to manually determine and sequence the bootstrap chain.
+
+### Features Implemented
+
+1. **`axiom bootstrap-ports` Command**
+   - Automatically builds help2man → m4 → gmake chain
+   - Supports minimal (3 packages) or full (9 packages) bootstrap
+   - Checks for existing installations and skips
+   - Dry-run mode to preview build plan
+
+2. **Bootstrap Chain**
+   - Minimal: help2man, m4, gmake
+   - Full: + gettext-runtime, perl, autoconf, automake, libtool, pkgconf
+
+### Usage
+
+```bash
+# Full bootstrap
+sudo axiom bootstrap-ports
+
+# Minimal bootstrap
+sudo axiom bootstrap-ports --minimal
+
+# Preview what would be built
+axiom bootstrap-ports --dry-run
+
+# With parallel jobs
+sudo axiom bootstrap-ports --jobs 8
+```
+
+---
+
+## Phase 33: Unified Test Infrastructure
+
+**Priority**: Medium
+**Complexity**: Low
+**Status**: ✓ Complete
+
+### Purpose
+
+Consolidate test execution into unified build targets for CI/CD and local development.
+
+### Features Implemented
+
+1. **New Build Targets**
+   - `zig build check` - Quick compilation check
+   - `zig build test` - Unit tests (no root required)
+   - `zig build test-full` - All unit tests including ZFS
+   - `zig build ci` - CI suite (build + safe unit tests)
+   - `zig build ci-full` - Full CI (requires root + ZFS)
+
+2. **Test Organization**
+   - Tests organized by privilege requirements
+   - Module-level unit tests for types, manifest, signature
+   - Integration tests via test executables
+
+### CI Usage
+
+```bash
+# GitHub Actions / CI Pipeline
+zig build ci           # Safe for unprivileged CI runners
+
+# Local development with ZFS
+sudo zig build ci-full # Complete test suite
+```
+
+---
+
+## Phase 34: CLI Resolution Options
+
+**Priority**: Medium
+**Complexity**: Low
+**Status**: Planned
+
+### Purpose
+
+Expose resolver backtracking and version preference options through the CLI.
+
+### Requirements
+
+1. **Strategy Selection**
+   ```bash
+   axiom resolve myprofile --strategy greedy
+   axiom resolve myprofile --strategy backtracking
+   axiom resolve myprofile --strategy sat
+   ```
+
+2. **Version Preference**
+   ```bash
+   axiom resolve myprofile --prefer newest
+   axiom resolve myprofile --prefer stable
+   axiom resolve myprofile --prefer oldest
+   ```
+
+3. **Backtrack Configuration**
+   ```bash
+   axiom resolve myprofile --max-backtracks 100
+   axiom resolve myprofile --backtrack-threshold 30
+   ```
+
+4. **Profile-Level Defaults**
+   ```yaml
+   # profile.yaml
+   name: production
+   resolver:
+     strategy: greedy_with_sat_fallback
+     preference: stable
+     max_backtracks: 50
+   ```
+
+---
+
+## Phase 35: Dependency Graph Visualization
+
+**Priority**: Low
+**Complexity**: Medium
+**Status**: Planned
+
+### Purpose
+
+Provide tools to visualize and analyze dependency graphs for debugging and optimization.
+
+### Requirements
+
+1. **Graph Export**
+   ```bash
+   axiom deps-graph myprofile --format dot > deps.dot
+   axiom deps-graph myprofile --format json > deps.json
+   ```
+
+2. **Analysis Tools**
+   ```bash
+   axiom deps-analyze myprofile    # Show depth, breadth, cycles
+   axiom deps-why myprofile pkg    # Why is pkg included?
+   axiom deps-path myprofile a b   # Path from a to b
+   ```
+
+3. **Output Formats**
+   - DOT (Graphviz)
+   - JSON (for tooling)
+   - ASCII tree (for terminal)
+
+---
+
+## Phase 36: HSM/PKCS#11 Signing
+
+**Priority**: Medium
+**Complexity**: High
+**Status**: Planned
+
+### Purpose
+
+Support hardware security modules for package signing in high-security environments.
+
+### Requirements
+
+1. **PKCS#11 Integration**
+   - Load keys from HSM
+   - Sign packages without exposing private key
+   - Support for YubiKey, SoftHSM, cloud HSMs
+
+2. **Configuration**
+   ```yaml
+   # /etc/axiom/signing.yaml
+   signing:
+     provider: pkcs11
+     library: /usr/lib/opensc-pkcs11.so
+     slot: 0
+     key_id: "axiom-release"
+   ```
+
+3. **CLI**
+   ```bash
+   axiom sign mypackage --hsm --slot 0
+   axiom key-list --hsm
+   ```
+
+---
+
+## Phase 37: Multi-Party Signing
+
+**Priority**: Medium
+**Complexity**: High
+**Status**: Planned
+
+### Purpose
+
+Require multiple signatures for critical packages, implementing threshold signing.
+
+### Requirements
+
+1. **Threshold Configuration**
+   ```yaml
+   # Package requires 2-of-3 signatures
+   signing:
+     threshold: 2
+     signers:
+       - pgsd-release-key
+       - security-team-key
+       - qa-team-key
+   ```
+
+2. **Verification**
+   - Count valid signatures
+   - Verify threshold met
+   - Report which signers approved
+
+3. **CLI**
+   ```bash
+   axiom sign mypackage --key my-key    # Add signature
+   axiom verify mypackage --threshold 2  # Verify threshold
+   axiom signatures mypackage           # List all signatures
+   ```
+
+---
+
+## Phase 38: Service Management Integration
+
+**Priority**: High
+**Complexity**: High
+**Status**: Planned
+
+### Purpose
+
+Integrate with FreeBSD rc.d service management for packages that provide services.
+
+### Requirements
+
+1. **Service Declaration**
+   ```yaml
+   # manifest.yaml
+   services:
+     - name: nginx
+       type: daemon
+       rc_script: etc/rc.d/nginx
+       dependencies: [networking]
+   ```
+
+2. **Service Commands**
+   ```bash
+   axiom service list                  # List services from profile
+   axiom service enable nginx          # Enable service
+   axiom service start nginx           # Start service
+   axiom service status                # Show all service status
+   ```
+
+3. **Environment Activation**
+   - Automatically configure rc.conf.d
+   - Handle service conflicts between environments
+   - Support service restart on package update
+
+---
+
+## Phase 39: Boot Environment Support
+
+**Priority**: High
+**Complexity**: Medium
+**Status**: Planned
+
+### Purpose
+
+First-class support for ZFS boot environments, enabling atomic system upgrades with rollback.
+
+### Requirements
+
+1. **Boot Environment Commands**
+   ```bash
+   axiom be list                       # List boot environments
+   axiom be create myenv               # Create from current
+   axiom be activate myenv             # Set as default boot
+   axiom be destroy myenv              # Remove boot environment
+   axiom be rollback                   # Revert to previous
+   ```
+
+2. **System Profile Integration**
+   ```bash
+   axiom system-upgrade --be           # Upgrade in new BE
+   axiom realize-system prod --be new  # Realize to new BE
+   ```
+
+3. **Automatic BE Creation**
+   - Create BE before system changes
+   - Name with timestamp
+   - Configurable retention policy
+
+---
+
+## Phase 40: Remote Binary Cache Protocol
+
+**Priority**: High
+**Complexity**: High
+**Status**: Planned
+
+### Purpose
+
+Define and implement a standard protocol for Axiom binary caches, enabling efficient package distribution.
+
+### Requirements
+
+1. **Protocol Specification**
+   - RESTful API for package queries
+   - Efficient binary transfer (range requests, compression)
+   - Signature verification at source
+   - Metadata synchronization
+
+2. **Cache Server**
+   ```bash
+   axiom-cache-server --port 8080 --store /path/to/store
+   ```
+
+3. **Client Configuration**
+   ```yaml
+   # /etc/axiom/caches.yaml
+   caches:
+     - url: https://cache.pgsd.org
+       priority: 100
+       trust: pgsd-release-key
+     - url: https://internal.example.com/axiom
+       priority: 50
+       trust: internal-key
+   ```
+
+4. **Operations**
+   ```bash
+   axiom cache fetch bash@5.2.0       # Fetch from cache
+   axiom cache push bash@5.2.0        # Push to cache
+   axiom cache sync                   # Sync metadata
+   ```
 
 ---
 
