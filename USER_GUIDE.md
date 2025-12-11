@@ -427,12 +427,32 @@ sudo axiom realize dev-env development
 
 # With conflict handling
 sudo axiom realize dev-env development --conflict-policy priority
+
+# With merge strategy (space-efficient hard links)
+sudo axiom realize dev-env development --merge-strategy hardlink
+
+# Install only specific outputs (skip dev/doc files)
+sudo axiom realize prod-env production --outputs bin,lib
 ```
 
-Conflict policies:
+**Conflict policies:**
 - `error` - Fail on any file conflict (default, safest)
 - `priority` - Later packages in lock file override earlier ones
 - `keep-both` - Keep both files with package name suffixes
+
+**Merge strategies:**
+- `symlink` - Use symbolic links (default, most space-efficient)
+- `hardlink` - Use hard links (fast, space-efficient)
+- `copy` - Copy files (allows modifications, uses more space)
+- `zfs_clone` - Use ZFS clones (fast, space-efficient with ZFS)
+
+**Package outputs:**
+- `bin` - Executable binaries
+- `lib` - Runtime libraries
+- `dev` - Development headers and pkg-config files
+- `doc` - Documentation and man pages
+
+Use `--outputs` to create minimal environments for production or containers.
 
 ### Activating Environments
 

@@ -348,15 +348,31 @@ Create an environment from a profile's lock file.
 ```bash
 axiom realize dev-env development
 axiom realize dev-env development --conflict-policy priority
+axiom realize dev-env development --merge-strategy hardlink
+axiom realize dev-env development --outputs bin,lib
 ```
 
 **Options:**
 - `--conflict-policy <policy>` - How to handle file conflicts between packages
+- `--merge-strategy <strategy>` - File merge strategy for environment creation
+- `--outputs <outputs>` - Comma-separated list of package outputs to install
 
 **Conflict Policies:**
 - `error` - Fail on any file conflict (default)
 - `priority` - Later packages in the lock file override earlier ones
 - `keep-both` - Keep both files with package name suffix
+
+**Merge Strategies:**
+- `symlink` - Use symbolic links (default, space-efficient)
+- `hardlink` - Use hard links (space-efficient, fast)
+- `copy` - Copy files (isolated, allows modifications)
+- `zfs_clone` - Use ZFS clones (requires ZFS, fast, space-efficient)
+
+**Common Outputs:**
+- `bin` - Executable binaries
+- `lib` - Runtime libraries
+- `dev` - Development headers and pkg-config files
+- `doc` - Documentation and man pages
 
 **Process:**
 1. Loads `profile.lock.yaml`
@@ -587,6 +603,117 @@ Verifying package: bash 5.2.0
   All hashes: match
 ✓ Package verification passed
 ```
+
+---
+
+### Build Provenance Operations
+
+Verify build provenance and policy compliance for packages.
+
+#### `axiom verify-provenance <package> [options]`
+
+Verify build provenance of a package.
+
+```bash
+axiom verify-provenance bash
+axiom verify-provenance openssl --rebuild
+```
+
+**Options:**
+- `--rebuild` - Attempt reproducible rebuild to verify output matches
+
+**Example output:**
+```
+Verifying provenance for: bash
+
+Provenance Report for bash:
+───────────────────────────────────────────────────────────────
+  Provenance: ✓ Present
+  Builder: axiom-builder
+  Source: ✓ Verified
+  Signature: ✓ Valid
+  Signer: PGSD0001A7E3F9B2
+  Trust: ✓ Signer is trusted
+  Build age: 15 days
+
+Result: ✓ Package provenance is valid and trusted
+```
+
+#### `axiom provenance-show <package>`
+
+Display detailed provenance information for a package.
+
+```bash
+axiom provenance-show bash
+axiom provenance openssl
+```
+
+**Example output:**
+```yaml
+format_version: "1.0"
+
+builder:
+  name: "axiom-builder"
+  version: "1.0.0"
+  host: "builder01.pgsdf.org"
+
+source:
+  url: "https://ftp.gnu.org/gnu/bash/bash-5.2.tar.gz"
+  sha256: "abc123..."
+  fetched_at: "2025-01-15T10:00:00Z"
+
+build:
+  started_at: "2025-01-15T10:05:00Z"
+  completed_at: "2025-01-15T10:15:00Z"
+
+output:
+  hash: "sha256:def456..."
+  files_count: 142
+  total_size: 5242880
+
+signature:
+  key_id: "PGSD0001A7E3F9B2"
+  algorithm: "ed25519"
+  value: "base64..."
+```
+
+#### `axiom provenance-policy [options] [package]`
+
+Check provenance policy compliance.
+
+```bash
+axiom provenance-policy --show
+axiom provenance-policy --check
+axiom provenance-policy bash
+```
+
+**Options:**
+- `--show` - Display current policy settings
+- `--check` - Check all packages for policy compliance
+
+**Example output (--check):**
+```
+Checking provenance policy compliance for all packages...
+
+  ✓ bash
+  ✓ git
+  ✗ custom-pkg
+      - Package has no provenance record
+  ✓ openssl
+
+───────────────────────────────────────────────────────────────
+Summary: 3 compliant, 1 non-compliant
+```
+
+**Policy violations:**
+- `missing_provenance` - Package has no provenance record
+- `missing_signature` - Provenance is not signed
+- `untrusted_builder` - Builder is not in trusted list
+- `untrusted_signer` - Signer is not trusted
+- `expired_build` - Build is older than maximum allowed age
+- `source_hash_mismatch` - Source hash does not match
+- `output_hash_mismatch` - Output hash does not match package contents
+- `signature_invalid` - Provenance signature is invalid
 
 ---
 
