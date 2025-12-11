@@ -9,11 +9,13 @@ This document describes common workflows for using the Axiom package manager. Ea
 3. [Environment Management](#environment-management)
 4. [Building from Source](#building-from-source)
 5. [Binary Cache Operations](#binary-cache-operations)
-6. [Bundle Distribution](#bundle-distribution)
-7. [Multi-User Setup](#multi-user-setup)
-8. [Security Operations](#security-operations)
-9. [Ports Migration](#ports-migration)
-10. [Maintenance Operations](#maintenance-operations)
+6. [Remote Cache Server](#remote-cache-server)
+7. [Bundle Distribution](#bundle-distribution)
+8. [Multi-User Setup](#multi-user-setup)
+9. [Security Operations](#security-operations)
+10. [Ports Migration](#ports-migration)
+11. [Boot Environments](#boot-environments)
+12. [Maintenance Operations](#maintenance-operations)
 
 ---
 
@@ -454,6 +456,118 @@ sudo axiom cache-clean
 # Force clean without confirmation
 sudo axiom cache-clean --force
 ```
+
+---
+
+## Remote Cache Server
+
+Axiom includes a built-in cache server for hosting your own binary cache, enabling efficient package distribution across your organization.
+
+### Workflow: Run a Cache Server
+
+```
+┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
+│ Start Server    │ ──▶ │ Clients Connect │ ──▶ │ Serve Packages  │
+└─────────────────┘      └─────────────────┘      └─────────────────┘
+```
+
+**Step 1: Start the Cache Server**
+
+```bash
+# Start on default port (8080)
+axiom cache-server
+
+# Start on custom port
+axiom cache-server --port 9000
+
+# Use custom package store
+axiom cache-server --store /data/axiom-store --port 8080
+```
+
+**Step 2: Verify Server is Running**
+
+```bash
+# From another terminal or machine
+axiom cache-info http://localhost:8080
+```
+
+### API Endpoints
+
+The cache server exposes a RESTful API (Protocol v1.0):
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/info` | GET | Server information |
+| `/api/v1/packages` | GET | List all packages |
+| `/api/v1/packages/{name}/{version}` | GET | Package metadata |
+| `/api/v1/packages/{name}/{version}/nar` | GET | Package archive |
+| `/api/v1/upload/{name}/{version}` | POST | Upload package |
+
+### Workflow: Configure Remote Sources
+
+**Step 1: Create Configuration File**
+
+Create `/etc/axiom/caches.yaml`:
+
+```yaml
+caches:
+  - url: https://cache.pgsdf.org
+    priority: 100
+    trust: pgsd-release-key
+  - url: http://internal-cache.example.com:8080
+    priority: 50
+    trust: internal-key
+  - url: http://backup-cache.example.com:8080
+    priority: 10
+    trust: internal-key
+
+verify_signatures: true
+parallel_downloads: 4
+timeout_ms: 30000
+retry_count: 3
+```
+
+**Step 2: Manage Sources**
+
+```bash
+# List configured sources
+axiom remote-sources
+
+# Add a new source
+axiom remote-sources --add http://new-cache.example.com:8080
+
+# Remove a source
+axiom remote-sources --remove http://old-cache.example.com:8080
+```
+
+### Workflow: Fetch from Remote Cache
+
+```bash
+# Fetch latest version
+axiom remote-fetch bash
+
+# Fetch specific version
+axiom remote-fetch bash@5.2.0
+
+# Fetch from specific source
+axiom remote-fetch bash@5.2.0 --source http://cache.example.com:8080
+```
+
+### Workflow: Push to Remote Cache
+
+```bash
+# Push a package to remote cache
+axiom remote-push mypackage@1.0.0 --target http://cache.example.com:8080
+```
+
+### Workflow: Sync Metadata
+
+```bash
+# Sync package metadata from all configured sources
+axiom remote-sync
+```
+
+This updates the local cache index with available packages from all remote caches.
 
 ---
 
@@ -901,6 +1015,176 @@ axiom ports-import devel/git
 
 ---
 
+## Boot Environments
+
+Axiom provides first-class support for ZFS boot environments, enabling atomic system upgrades with safe rollback capabilities.
+
+### Understanding Boot Environments
+
+```
+┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
+│ Current System  │      │ Create BE       │      │ Activate BE     │
+│ (Running)       │ ──▶ │ (Clone)         │ ──▶ │ (Next Boot)     │
+└─────────────────┘      └─────────────────┘      └─────────────────┘
+         │                                                │
+         │              ┌─────────────────┐               │
+         └──────────── │ Rollback        │ ◀─────────────┘
+                        │ (If problems)   │
+                        └─────────────────┘
+```
+
+Boot environments are ZFS clones of the root filesystem. They allow you to:
+- Create a snapshot before system changes
+- Test upgrades safely
+- Instantly rollback if something goes wrong
+
+### Workflow: List Boot Environments
+
+```bash
+# List all boot environments
+axiom be
+
+# Same as above (explicit)
+axiom be-list
+```
+
+**Output:**
+
+```
+NAME                           ACTIVE   MOUNTPOINT           SPACE
+────────────────────────────── ──────── ──────────────────── ──────────
+default                        NR       /                    1G+
+pre-upgrade-20241201           --       -                    1M+
+test-upgrade                   --       -                    1M+
+
+Total: 3 boot environment(s)
+```
+
+- `N` = Currently active (running now)
+- `R` = Active on reboot (will boot into this)
+
+### Workflow: Safe System Upgrade
+
+**Step 1: Create Pre-Upgrade Snapshot**
+
+```bash
+# Create a boot environment before making changes
+axiom be-create pre-upgrade
+
+# Or with automatic timestamp naming
+axiom be-create pre-upgrade-$(date +%Y%m%d)
+```
+
+**Step 2: Perform System Changes**
+
+```bash
+# Make your system changes (package updates, config changes, etc.)
+sudo axiom resolve production
+sudo axiom realize prod-env production
+```
+
+**Step 3: Test and Decide**
+
+If everything works, you can delete the old BE later:
+```bash
+axiom be-destroy pre-upgrade-20241201
+```
+
+If something is broken, rollback:
+```bash
+axiom be-rollback
+# Then reboot
+```
+
+### Workflow: Test New Configuration
+
+**Step 1: Create Test Environment**
+
+```bash
+# Create BE for testing
+axiom be-create test-config --activate
+```
+
+**Step 2: Reboot into Test Environment**
+
+```bash
+sudo reboot
+```
+
+**Step 3: Test Changes**
+
+Make your changes and test them in the new boot environment.
+
+**Step 4: Make Permanent or Rollback**
+
+If satisfied, keep the new environment. If not:
+
+```bash
+# Activate the previous environment
+axiom be-activate default
+sudo reboot
+```
+
+### Workflow: Inspect Boot Environment
+
+```bash
+# Mount a BE for inspection (without booting into it)
+axiom be-mount old-backup
+
+# Mount to specific location
+axiom be-mount old-backup /mnt/inspect
+
+# Browse the mounted filesystem
+ls /mnt/inspect/etc
+
+# Unmount when done
+axiom be-unmount old-backup
+```
+
+### Boot Environment Commands Reference
+
+| Command | Description |
+|---------|-------------|
+| `axiom be` | List all boot environments |
+| `axiom be-create <name>` | Create new BE from current |
+| `axiom be-create <name> --source <be>` | Clone from specific BE |
+| `axiom be-create <name> --activate` | Create and activate |
+| `axiom be-activate <name>` | Activate for next boot |
+| `axiom be-activate <name> --temporary` | Activate for one boot only |
+| `axiom be-destroy <name>` | Remove boot environment |
+| `axiom be-rollback` | Revert to previous BE |
+| `axiom be-rename <old> <new>` | Rename boot environment |
+| `axiom be-mount <name> [path]` | Mount BE for inspection |
+| `axiom be-unmount <name>` | Unmount boot environment |
+
+### Best Practices
+
+1. **Always create a BE before major changes**
+   ```bash
+   axiom be-create pre-$(date +%Y%m%d-%H%M)
+   ```
+
+2. **Use descriptive names**
+   ```bash
+   axiom be-create before-kernel-update
+   axiom be-create testing-new-nginx
+   ```
+
+3. **Clean up old BEs periodically**
+   ```bash
+   axiom be-list
+   axiom be-destroy old-unused-be
+   ```
+
+4. **Test with temporary activation first**
+   ```bash
+   axiom be-activate test-be --temporary
+   # After reboot, if you don't explicitly activate,
+   # system returns to previous BE on next reboot
+   ```
+
+---
+
 ## Maintenance Operations
 
 ### Garbage Collection
@@ -988,6 +1272,13 @@ sudo zfs receive -F zroot/axiom < /backup/axiom-backup.zfs
 | Run bundle | `axiom bundle-run <bundle>` |
 | Sign package | `axiom sign <path> --key <keyfile>` |
 | Garbage collect | `axiom gc` |
+| List boot environments | `axiom be` |
+| Create boot environment | `axiom be-create <name>` |
+| Activate boot environment | `axiom be-activate <name>` |
+| Rollback boot environment | `axiom be-rollback` |
+| Start cache server | `axiom cache-server` |
+| Fetch from remote | `axiom remote-fetch <pkg>[@ver]` |
+| Sync remote metadata | `axiom remote-sync` |
 
 ### Environment Variables
 
