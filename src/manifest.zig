@@ -1,11 +1,14 @@
 const std = @import("std");
 const types = @import("types.zig");
 const service_mod = @import("service.zig");
+const format_version = @import("format_version.zig");
 
 const Version = types.Version;
 const Dependency = types.Dependency;
 const VersionConstraint = types.VersionConstraint;
 const ServiceDeclaration = service_mod.ServiceDeclaration;
+const FormatVersions = format_version.FormatVersions;
+const FormatType = format_version.FormatType;
 
 /// Virtual package relationship with optional version constraint
 pub const VirtualPackage = struct {
@@ -84,6 +87,10 @@ pub const KernelCompat = struct {
 
 /// Package manifest (manifest.yaml)
 pub const Manifest = struct {
+    /// Format version for this manifest file (e.g., "1.0")
+    /// Used for compatibility checking and migrations
+    format_version: ?[]const u8 = null,
+
     name: []const u8,
     version: Version,
     revision: u32,
@@ -247,6 +254,8 @@ pub const Manifest = struct {
                 } else if (std.mem.eql(u8, key, "kld_names")) {
                     list_context = .kld_names;
                 }
+            } else if (std.mem.eql(u8, key, "format_version")) {
+                manifest.format_version = try allocator.dupe(u8, value);
             } else if (std.mem.eql(u8, key, "name")) {
                 manifest.name = try allocator.dupe(u8, value);
             } else if (std.mem.eql(u8, key, "version")) {
@@ -292,8 +301,20 @@ pub const Manifest = struct {
         return manifest;
     }
 
-    /// Validate manifest for required fields
+    /// Validate manifest for required fields and format version compatibility
     pub fn validate(self: Manifest) !void {
+        // Validate format version if present
+        if (self.format_version) |fv| {
+            format_version.validateVersion(.manifest, fv) catch |err| {
+                return switch (err) {
+                    format_version.VersionError.IncompatibleMajorVersion => error.IncompatibleFormatVersion,
+                    format_version.VersionError.VersionTooNew => error.FormatVersionTooNew,
+                    format_version.VersionError.InvalidVersion => error.InvalidFormatVersion,
+                    else => error.InvalidFormatVersion,
+                };
+            };
+        }
+
         if (self.name.len == 0) {
             return error.MissingName;
         }
@@ -302,8 +323,14 @@ pub const Manifest = struct {
         }
     }
 
+    /// Get the current format version string for writing manifests
+    pub fn currentFormatVersion() []const u8 {
+        return FormatVersions.manifest;
+    }
+
     /// Free all allocated memory
     pub fn deinit(self: *Manifest, allocator: std.mem.Allocator) void {
+        if (self.format_version) |fv| allocator.free(fv);
         allocator.free(self.name);
         if (self.description) |d| allocator.free(d);
         if (self.license) |l| allocator.free(l);
