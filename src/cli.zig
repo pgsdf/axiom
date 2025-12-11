@@ -1558,7 +1558,7 @@ pub const CLI = struct {
                 // Apply to all packages in lock
                 for (lock.resolved) |pkg| {
                     try output_selections.append(.{
-                        .package = pkg.name,
+                        .package = pkg.id.name,
                         .outputs = outputs_list.items,
                     });
                 }
@@ -3835,7 +3835,7 @@ pub const CLI = struct {
 
                 for (lock.resolved) |pkg| {
                     try output_selections.append(.{
-                        .package = pkg.name,
+                        .package = pkg.id.name,
                         .outputs = outputs_list.items,
                     });
                 }
