@@ -22,6 +22,7 @@ const ports_pkg = @import("ports.zig");
 const bootstrap_pkg = @import("bootstrap.zig");
 const hsm = @import("hsm.zig");
 const service_pkg = @import("service.zig");
+const bootenv = @import("bootenv.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageStore = store.PackageStore;
@@ -48,6 +49,7 @@ const BundleFormat = bundle_pkg.BundleFormat;
 const PortsMigrator = ports_pkg.PortsMigrator;
 const BootstrapManager = bootstrap_pkg.BootstrapManager;
 const ServiceManager = service_pkg.ServiceManager;
+const BootEnvManager = bootenv.BootEnvManager;
 
 /// CLI command enumeration
 pub const Command = enum {
@@ -176,6 +178,16 @@ pub const Command = enum {
     bootstrap_import,
     bootstrap_export,
     bootstrap_ports,
+
+    // Boot environment operations (Phase 39)
+    be_list,
+    be_create,
+    be_activate,
+    be_destroy,
+    be_rollback,
+    be_rename,
+    be_mount,
+    be_unmount,
 
     unknown,
 };
@@ -322,6 +334,17 @@ pub fn parseCommand(cmd: []const u8) Command {
     if (std.mem.eql(u8, cmd, "bootstrap-export")) return .bootstrap_export;
     if (std.mem.eql(u8, cmd, "bootstrap-ports")) return .bootstrap_ports;
     if (std.mem.eql(u8, cmd, "bootstrap-freebsd-ports")) return .bootstrap_ports;
+
+    // Boot environment commands (Phase 39)
+    if (std.mem.eql(u8, cmd, "be")) return .be_list;
+    if (std.mem.eql(u8, cmd, "be-list")) return .be_list;
+    if (std.mem.eql(u8, cmd, "be-create")) return .be_create;
+    if (std.mem.eql(u8, cmd, "be-activate")) return .be_activate;
+    if (std.mem.eql(u8, cmd, "be-destroy")) return .be_destroy;
+    if (std.mem.eql(u8, cmd, "be-rollback")) return .be_rollback;
+    if (std.mem.eql(u8, cmd, "be-rename")) return .be_rename;
+    if (std.mem.eql(u8, cmd, "be-mount")) return .be_mount;
+    if (std.mem.eql(u8, cmd, "be-unmount")) return .be_unmount;
 
     return .unknown;
 }
@@ -530,6 +553,16 @@ pub const CLI = struct {
             .bootstrap_export => try self.bootstrapExport(args[1..]),
             .bootstrap_ports => try self.bootstrapPorts(args[1..]),
 
+            // Boot environment commands (Phase 39)
+            .be_list => try self.beList(args[1..]),
+            .be_create => try self.beCreate(args[1..]),
+            .be_activate => try self.beActivate(args[1..]),
+            .be_destroy => try self.beDestroy(args[1..]),
+            .be_rollback => try self.beRollback(args[1..]),
+            .be_rename => try self.beRename(args[1..]),
+            .be_mount => try self.beMount(args[1..]),
+            .be_unmount => try self.beUnmount(args[1..]),
+
             .unknown => {
                 std.debug.print("Unknown command: {s}\n", .{args[0]});
                 std.debug.print("Run 'axiom help' for usage information.\n", .{});
@@ -673,6 +706,22 @@ pub const CLI = struct {
             \\Kernel Compatibility:
             \\  kernel                      Check kernel-bound package compatibility
             \\  kernel-check                (alias for kernel)
+            \\
+            \\Boot Environments (ZFS):
+            \\  be                          List boot environments
+            \\  be-list                     List boot environments (alias)
+            \\  be-create <name>            Create new boot environment
+            \\    --source <be>               Clone from specific BE (default: current)
+            \\    --activate                  Activate immediately after creation
+            \\  be-activate <name>          Set boot environment for next boot
+            \\    --temporary                 Activate only for next boot
+            \\  be-destroy <name>           Remove boot environment
+            \\    --force                     Force removal
+            \\  be-rollback                 Revert to previous boot environment
+            \\  be-rename <old> <new>       Rename boot environment
+            \\  be-mount <name> [path]      Mount boot environment
+            \\  be-unmount <name>           Unmount boot environment
+            \\    --force                     Force unmount
             \\
             \\Setup:
             \\  setup                      Run the setup wizard to initialize Axiom
@@ -5586,4 +5635,411 @@ pub const CLI = struct {
         dir.close();
         return true;
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Boot Environment Commands (Phase 39)
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// List boot environments
+    fn beList(self: *CLI, args: []const []const u8) !void {
+        // Check for help flag
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom be-list [options]\n", .{});
+                std.debug.print("\nList all ZFS boot environments.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  -h, --help     Show this help message\n", .{});
+                std.debug.print("\nOutput columns:\n", .{});
+                std.debug.print("  NAME           Boot environment name\n", .{});
+                std.debug.print("  ACTIVE         N=active now, R=active on reboot\n", .{});
+                std.debug.print("  MOUNTPOINT     Where BE is mounted (- if not)\n", .{});
+                std.debug.print("  SPACE          Disk space used\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom be               # List all boot environments\n", .{});
+                std.debug.print("  axiom be-list          # Same as above\n", .{});
+                return;
+            }
+        }
+
+        var manager = BootEnvManager.init(self.allocator);
+
+        // Check if BE support is available
+        if (!manager.isSupported()) {
+            std.debug.print("Boot environments are not supported on this system.\n", .{});
+            std.debug.print("Requires FreeBSD with ZFS root filesystem.\n", .{});
+            return;
+        }
+
+        const envs = manager.list() catch |err| {
+            std.debug.print("Failed to list boot environments: {}\n", .{err});
+            return;
+        };
+        defer {
+            for (@constCast(envs)) |*env| {
+                env.deinit(self.allocator);
+            }
+            self.allocator.free(envs);
+        }
+
+        if (envs.len == 0) {
+            std.debug.print("No boot environments found.\n", .{});
+            return;
+        }
+
+        // Print header
+        std.debug.print("{s:<30} {s:<8} {s:<20} {s:<10}\n", .{ "NAME", "ACTIVE", "MOUNTPOINT", "SPACE" });
+        std.debug.print("{s:─<30} {s:─<8} {s:─<20} {s:─<10}\n", .{ "", "", "", "" });
+
+        // Print each boot environment
+        for (envs) |env| {
+            var active_str: [3]u8 = .{ '-', '-', 0 };
+            if (env.active) active_str[0] = 'N';
+            if (env.active_on_reboot) active_str[1] = 'R';
+
+            const mountpoint = env.mountpoint orelse "-";
+            const space = formatSize(env.space_used);
+
+            std.debug.print("{s:<30} {s:<8} {s:<20} {s:<10}\n", .{
+                env.name,
+                active_str[0..2],
+                mountpoint,
+                space,
+            });
+        }
+
+        std.debug.print("\nTotal: {d} boot environment(s)\n", .{envs.len});
+    }
+
+    /// Create a new boot environment
+    fn beCreate(self: *CLI, args: []const []const u8) !void {
+        var name: ?[]const u8 = null;
+        var source: ?[]const u8 = null;
+        var do_activate = false;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) {
+                std.debug.print("Usage: axiom be-create <name> [options]\n", .{});
+                std.debug.print("\nCreate a new ZFS boot environment.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --source <be>    Clone from specific BE (default: current)\n", .{});
+                std.debug.print("  --activate       Activate immediately after creation\n", .{});
+                std.debug.print("  -h, --help       Show this help message\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom be-create upgrade-test         # Create from current\n", .{});
+                std.debug.print("  axiom be-create backup --activate    # Create and activate\n", .{});
+                std.debug.print("  axiom be-create new --source old     # Clone from 'old' BE\n", .{});
+                return;
+            } else if (std.mem.eql(u8, args[i], "--source")) {
+                i += 1;
+                if (i >= args.len) {
+                    std.debug.print("Error: --source requires a value\n", .{});
+                    return;
+                }
+                source = args[i];
+            } else if (std.mem.eql(u8, args[i], "--activate")) {
+                do_activate = true;
+            } else if (!std.mem.startsWith(u8, args[i], "-")) {
+                name = args[i];
+            }
+        }
+
+        if (name == null) {
+            std.debug.print("Error: Boot environment name is required\n", .{});
+            std.debug.print("Usage: axiom be-create <name> [options]\n", .{});
+            return;
+        }
+
+        var manager = BootEnvManager.init(self.allocator);
+
+        std.debug.print("Creating boot environment: {s}\n", .{name.?});
+        if (source) |s| {
+            std.debug.print("  Source: {s}\n", .{s});
+        } else {
+            std.debug.print("  Source: (current)\n", .{});
+        }
+
+        manager.create(name.?, .{
+            .source = source,
+            .activate = do_activate,
+        }) catch |err| {
+            std.debug.print("Failed to create boot environment: {}\n", .{err});
+            return;
+        };
+
+        std.debug.print("✓ Boot environment '{s}' created successfully\n", .{name.?});
+        if (do_activate) {
+            std.debug.print("✓ Activated for next boot\n", .{});
+        }
+    }
+
+    /// Activate a boot environment
+    fn beActivate(self: *CLI, args: []const []const u8) !void {
+        var name: ?[]const u8 = null;
+        var temporary = false;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) {
+                std.debug.print("Usage: axiom be-activate <name> [options]\n", .{});
+                std.debug.print("\nActivate a boot environment for next boot.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --temporary      Activate only for next boot\n", .{});
+                std.debug.print("  -h, --help       Show this help message\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom be-activate stable             # Activate 'stable'\n", .{});
+                std.debug.print("  axiom be-activate test --temporary   # Test for one boot\n", .{});
+                return;
+            } else if (std.mem.eql(u8, args[i], "--temporary") or std.mem.eql(u8, args[i], "-t")) {
+                temporary = true;
+            } else if (!std.mem.startsWith(u8, args[i], "-")) {
+                name = args[i];
+            }
+        }
+
+        if (name == null) {
+            std.debug.print("Error: Boot environment name is required\n", .{});
+            std.debug.print("Usage: axiom be-activate <name>\n", .{});
+            return;
+        }
+
+        var manager = BootEnvManager.init(self.allocator);
+
+        std.debug.print("Activating boot environment: {s}\n", .{name.?});
+
+        manager.activate(name.?, .{
+            .temporary = temporary,
+        }) catch |err| {
+            std.debug.print("Failed to activate boot environment: {}\n", .{err});
+            return;
+        };
+
+        if (temporary) {
+            std.debug.print("✓ Boot environment '{s}' activated for next boot only\n", .{name.?});
+        } else {
+            std.debug.print("✓ Boot environment '{s}' activated\n", .{name.?});
+        }
+        std.debug.print("\nReboot to use the new boot environment.\n", .{});
+    }
+
+    /// Destroy a boot environment
+    fn beDestroy(self: *CLI, args: []const []const u8) !void {
+        var name: ?[]const u8 = null;
+        var force = false;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) {
+                std.debug.print("Usage: axiom be-destroy <name> [options]\n", .{});
+                std.debug.print("\nDestroy a boot environment.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --force          Force removal\n", .{});
+                std.debug.print("  -h, --help       Show this help message\n", .{});
+                std.debug.print("\nNote: Cannot destroy the currently active boot environment.\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom be-destroy old-backup          # Remove 'old-backup'\n", .{});
+                std.debug.print("  axiom be-destroy test --force        # Force removal\n", .{});
+                return;
+            } else if (std.mem.eql(u8, args[i], "--force") or std.mem.eql(u8, args[i], "-f")) {
+                force = true;
+            } else if (!std.mem.startsWith(u8, args[i], "-")) {
+                name = args[i];
+            }
+        }
+
+        if (name == null) {
+            std.debug.print("Error: Boot environment name is required\n", .{});
+            std.debug.print("Usage: axiom be-destroy <name>\n", .{});
+            return;
+        }
+
+        var manager = BootEnvManager.init(self.allocator);
+
+        std.debug.print("Destroying boot environment: {s}\n", .{name.?});
+
+        manager.destroy(name.?, force) catch |err| {
+            if (err == error.CannotDestroyActive) {
+                std.debug.print("Error: Cannot destroy the currently active boot environment.\n", .{});
+                std.debug.print("Activate a different BE first: axiom be-activate <other>\n", .{});
+            } else {
+                std.debug.print("Failed to destroy boot environment: {}\n", .{err});
+            }
+            return;
+        };
+
+        std.debug.print("✓ Boot environment '{s}' destroyed\n", .{name.?});
+    }
+
+    /// Rollback to previous boot environment
+    fn beRollback(self: *CLI, args: []const []const u8) !void {
+        // Check for help flag
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom be-rollback\n", .{});
+                std.debug.print("\nRollback to the previous boot environment.\n", .{});
+                std.debug.print("\nThis will activate the most recently used boot environment\n", .{});
+                std.debug.print("that isn't currently active.\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom be-rollback    # Revert to previous BE\n", .{});
+                return;
+            }
+        }
+
+        var manager = BootEnvManager.init(self.allocator);
+
+        std.debug.print("Rolling back to previous boot environment...\n", .{});
+
+        const target = manager.rollback() catch |err| {
+            if (err == error.NoPreviousBE) {
+                std.debug.print("Error: No previous boot environment to rollback to.\n", .{});
+            } else {
+                std.debug.print("Failed to rollback: {}\n", .{err});
+            }
+            return;
+        };
+        defer self.allocator.free(target);
+
+        std.debug.print("✓ Activated boot environment: {s}\n", .{target});
+        std.debug.print("\nReboot to complete the rollback.\n", .{});
+    }
+
+    /// Rename a boot environment
+    fn beRename(self: *CLI, args: []const []const u8) !void {
+        var old_name: ?[]const u8 = null;
+        var new_name: ?[]const u8 = null;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) {
+                std.debug.print("Usage: axiom be-rename <old-name> <new-name>\n", .{});
+                std.debug.print("\nRename a boot environment.\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom be-rename temp stable    # Rename 'temp' to 'stable'\n", .{});
+                return;
+            } else if (!std.mem.startsWith(u8, args[i], "-")) {
+                if (old_name == null) {
+                    old_name = args[i];
+                } else {
+                    new_name = args[i];
+                }
+            }
+        }
+
+        if (old_name == null or new_name == null) {
+            std.debug.print("Error: Both old and new names are required\n", .{});
+            std.debug.print("Usage: axiom be-rename <old-name> <new-name>\n", .{});
+            return;
+        }
+
+        var manager = BootEnvManager.init(self.allocator);
+
+        std.debug.print("Renaming boot environment: {s} -> {s}\n", .{ old_name.?, new_name.? });
+
+        manager.rename(old_name.?, new_name.?) catch |err| {
+            std.debug.print("Failed to rename boot environment: {}\n", .{err});
+            return;
+        };
+
+        std.debug.print("✓ Boot environment renamed to '{s}'\n", .{new_name.?});
+    }
+
+    /// Mount a boot environment
+    fn beMount(self: *CLI, args: []const []const u8) !void {
+        var name: ?[]const u8 = null;
+        var mountpoint: ?[]const u8 = null;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) {
+                std.debug.print("Usage: axiom be-mount <name> [mountpoint]\n", .{});
+                std.debug.print("\nMount a boot environment for inspection or modification.\n", .{});
+                std.debug.print("\nIf mountpoint is not specified, a temporary location will be used.\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom be-mount backup                # Mount to temp location\n", .{});
+                std.debug.print("  axiom be-mount backup /mnt/backup    # Mount to specific path\n", .{});
+                return;
+            } else if (!std.mem.startsWith(u8, args[i], "-")) {
+                if (name == null) {
+                    name = args[i];
+                } else {
+                    mountpoint = args[i];
+                }
+            }
+        }
+
+        if (name == null) {
+            std.debug.print("Error: Boot environment name is required\n", .{});
+            std.debug.print("Usage: axiom be-mount <name> [mountpoint]\n", .{});
+            return;
+        }
+
+        var manager = BootEnvManager.init(self.allocator);
+
+        std.debug.print("Mounting boot environment: {s}\n", .{name.?});
+
+        const mounted_path = manager.mount(name.?, mountpoint) catch |err| {
+            std.debug.print("Failed to mount boot environment: {}\n", .{err});
+            return;
+        };
+        defer self.allocator.free(mounted_path);
+
+        std.debug.print("✓ Boot environment '{s}' mounted at: {s}\n", .{ name.?, mounted_path });
+        std.debug.print("\nUse 'axiom be-unmount {s}' when done.\n", .{name.?});
+    }
+
+    /// Unmount a boot environment
+    fn beUnmount(self: *CLI, args: []const []const u8) !void {
+        var name: ?[]const u8 = null;
+        var force = false;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) {
+                std.debug.print("Usage: axiom be-unmount <name> [options]\n", .{});
+                std.debug.print("\nUnmount a boot environment.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --force          Force unmount\n", .{});
+                std.debug.print("  -h, --help       Show this help message\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom be-unmount backup          # Unmount 'backup'\n", .{});
+                std.debug.print("  axiom be-unmount backup --force  # Force unmount\n", .{});
+                return;
+            } else if (std.mem.eql(u8, args[i], "--force") or std.mem.eql(u8, args[i], "-f")) {
+                force = true;
+            } else if (!std.mem.startsWith(u8, args[i], "-")) {
+                name = args[i];
+            }
+        }
+
+        if (name == null) {
+            std.debug.print("Error: Boot environment name is required\n", .{});
+            std.debug.print("Usage: axiom be-unmount <name>\n", .{});
+            return;
+        }
+
+        var manager = BootEnvManager.init(self.allocator);
+
+        std.debug.print("Unmounting boot environment: {s}\n", .{name.?});
+
+        manager.unmount(name.?, force) catch |err| {
+            std.debug.print("Failed to unmount boot environment: {}\n", .{err});
+            return;
+        };
+
+        std.debug.print("✓ Boot environment '{s}' unmounted\n", .{name.?});
+    }
 };
+
+/// Format size in human-readable format
+fn formatSize(size: u64) []const u8 {
+    if (size >= 1024 * 1024 * 1024 * 1024) {
+        return "1T+";
+    } else if (size >= 1024 * 1024 * 1024) {
+        return "1G+";
+    } else if (size >= 1024 * 1024) {
+        return "1M+";
+    } else if (size >= 1024) {
+        return "1K+";
+    }
+    return "<1K";
+}
