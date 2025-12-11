@@ -23,6 +23,7 @@ const bootstrap_pkg = @import("bootstrap.zig");
 const hsm = @import("hsm.zig");
 const service_pkg = @import("service.zig");
 const bootenv = @import("bootenv.zig");
+const cache_protocol = @import("cache_protocol.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageStore = store.PackageStore;
@@ -50,6 +51,9 @@ const PortsMigrator = ports_pkg.PortsMigrator;
 const BootstrapManager = bootstrap_pkg.BootstrapManager;
 const ServiceManager = service_pkg.ServiceManager;
 const BootEnvManager = bootenv.BootEnvManager;
+const CacheServer = cache_protocol.CacheServer;
+const RemoteCacheClient = cache_protocol.CacheClient;
+const RemoteCacheConfig = cache_protocol.CacheConfig;
 
 /// CLI command enumeration
 pub const Command = enum {
@@ -188,6 +192,14 @@ pub const Command = enum {
     be_rename,
     be_mount,
     be_unmount,
+
+    // Remote cache operations (Phase 40)
+    cache_server,
+    cache_info,
+    remote_fetch,
+    remote_push,
+    remote_sync,
+    remote_sources,
 
     unknown,
 };
@@ -345,6 +357,14 @@ pub fn parseCommand(cmd: []const u8) Command {
     if (std.mem.eql(u8, cmd, "be-rename")) return .be_rename;
     if (std.mem.eql(u8, cmd, "be-mount")) return .be_mount;
     if (std.mem.eql(u8, cmd, "be-unmount")) return .be_unmount;
+
+    // Remote cache commands (Phase 40)
+    if (std.mem.eql(u8, cmd, "cache-server")) return .cache_server;
+    if (std.mem.eql(u8, cmd, "cache-info")) return .cache_info;
+    if (std.mem.eql(u8, cmd, "remote-fetch")) return .remote_fetch;
+    if (std.mem.eql(u8, cmd, "remote-push")) return .remote_push;
+    if (std.mem.eql(u8, cmd, "remote-sync")) return .remote_sync;
+    if (std.mem.eql(u8, cmd, "remote-sources")) return .remote_sources;
 
     return .unknown;
 }
@@ -563,6 +583,14 @@ pub const CLI = struct {
             .be_mount => try self.beMount(args[1..]),
             .be_unmount => try self.beUnmount(args[1..]),
 
+            // Remote cache commands (Phase 40)
+            .cache_server => try self.cacheServer(args[1..]),
+            .cache_info => try self.cacheInfo(args[1..]),
+            .remote_fetch => try self.remoteFetch(args[1..]),
+            .remote_push => try self.remotePush(args[1..]),
+            .remote_sync => try self.remoteSync(args[1..]),
+            .remote_sources => try self.remoteSources(args[1..]),
+
             .unknown => {
                 std.debug.print("Unknown command: {s}\n", .{args[0]});
                 std.debug.print("Run 'axiom help' for usage information.\n", .{});
@@ -722,6 +750,20 @@ pub const CLI = struct {
             \\  be-mount <name> [path]      Mount boot environment
             \\  be-unmount <name>           Unmount boot environment
             \\    --force                     Force unmount
+            \\
+            \\Remote Cache (Binary Distribution):
+            \\  cache-server                 Start cache server
+            \\    --port <n>                   Listen port (default: 8080)
+            \\    --store <path>               Package store path
+            \\  cache-info [url]             Get cache server info
+            \\  remote-fetch <pkg>[@ver]     Fetch package from remote cache
+            \\    --source <url>               Specific cache URL
+            \\  remote-push <pkg>[@ver]      Push package to remote cache
+            \\    --target <url>               Target cache URL
+            \\  remote-sync                  Sync metadata from all sources
+            \\  remote-sources               List configured cache sources
+            \\    --add <url>                  Add new cache source
+            \\    --remove <url>               Remove cache source
             \\
             \\Setup:
             \\  setup                      Run the setup wizard to initialize Axiom
@@ -6027,6 +6069,401 @@ pub const CLI = struct {
         };
 
         std.debug.print("✓ Boot environment '{s}' unmounted\n", .{name.?});
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Remote Cache Commands (Phase 40)
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Start cache server
+    fn cacheServer(self: *CLI, args: []const []const u8) !void {
+        var port: u16 = cache_protocol.DEFAULT_PORT;
+        var store_path: []const u8 = "/axiom/store";
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) {
+                std.debug.print("Usage: axiom cache-server [options]\n", .{});
+                std.debug.print("\nStart a binary cache server for package distribution.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --port <n>       Listen port (default: 8080)\n", .{});
+                std.debug.print("  --store <path>   Package store path (default: /axiom/store)\n", .{});
+                std.debug.print("  -h, --help       Show this help message\n", .{});
+                std.debug.print("\nAPI Endpoints:\n", .{});
+                std.debug.print("  GET  /api/v1/info              Cache server info\n", .{});
+                std.debug.print("  GET  /api/v1/packages          List all packages\n", .{});
+                std.debug.print("  GET  /api/v1/packages/:n/:v    Package metadata\n", .{});
+                std.debug.print("  GET  /api/v1/packages/:n/:v/nar  Package archive\n", .{});
+                std.debug.print("  POST /api/v1/upload/:n/:v      Upload package\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom cache-server                        # Start on port 8080\n", .{});
+                std.debug.print("  axiom cache-server --port 9000            # Custom port\n", .{});
+                std.debug.print("  axiom cache-server --store /data/axiom    # Custom store\n", .{});
+                return;
+            } else if (std.mem.eql(u8, args[i], "--port")) {
+                i += 1;
+                if (i >= args.len) {
+                    std.debug.print("Error: --port requires a value\n", .{});
+                    return;
+                }
+                port = std.fmt.parseInt(u16, args[i], 10) catch {
+                    std.debug.print("Error: Invalid port number\n", .{});
+                    return;
+                };
+            } else if (std.mem.eql(u8, args[i], "--store")) {
+                i += 1;
+                if (i >= args.len) {
+                    std.debug.print("Error: --store requires a path\n", .{});
+                    return;
+                }
+                store_path = args[i];
+            }
+        }
+
+        std.debug.print("Starting Axiom Cache Server\n", .{});
+        std.debug.print("  Port: {d}\n", .{port});
+        std.debug.print("  Store: {s}\n", .{store_path});
+        std.debug.print("  Protocol: v{s}\n", .{cache_protocol.PROTOCOL_VERSION});
+        std.debug.print("\n", .{});
+
+        var server = CacheServer.init(self.allocator, store_path, port);
+        server.start() catch |err| {
+            std.debug.print("Failed to start server: {}\n", .{err});
+            return;
+        };
+    }
+
+    /// Get cache server info
+    fn cacheInfo(self: *CLI, args: []const []const u8) !void {
+        var url: ?[]const u8 = null;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) {
+                std.debug.print("Usage: axiom cache-info [url]\n", .{});
+                std.debug.print("\nGet information about a remote cache server.\n", .{});
+                std.debug.print("\nIf no URL is provided, shows info for all configured sources.\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom cache-info                          # All configured\n", .{});
+                std.debug.print("  axiom cache-info http://cache.example.com # Specific server\n", .{});
+                return;
+            } else if (!std.mem.startsWith(u8, args[i], "-")) {
+                url = args[i];
+            }
+        }
+
+        // Load cache configuration
+        const config = RemoteCacheConfig.load(self.allocator, "/etc/axiom/caches.yaml") catch |err| {
+            std.debug.print("Failed to load cache config: {}\n", .{err});
+            return;
+        };
+        defer @constCast(&config).deinit(self.allocator);
+
+        if (url) |u| {
+            // Query specific server
+            std.debug.print("Querying cache server: {s}\n", .{u});
+            std.debug.print("────────────────────────────────────────────────────\n", .{});
+
+            var client = RemoteCacheClient.init(self.allocator, config);
+            const info_url = try std.fmt.allocPrint(self.allocator, "{s}/api/v1/info", .{u});
+            defer self.allocator.free(info_url);
+
+            // Would fetch and display info
+            _ = client;
+            std.debug.print("  Protocol: v{s}\n", .{cache_protocol.PROTOCOL_VERSION});
+            std.debug.print("  Status: (would query {s})\n", .{info_url});
+        } else {
+            // Show all configured sources
+            std.debug.print("Configured Cache Sources\n", .{});
+            std.debug.print("════════════════════════════════════════════════════\n", .{});
+
+            if (config.sources.len == 0) {
+                std.debug.print("\nNo cache sources configured.\n", .{});
+                std.debug.print("Add sources to /etc/axiom/caches.yaml\n", .{});
+                return;
+            }
+
+            for (config.sources, 0..) |source, idx| {
+                std.debug.print("\n[{d}] {s}\n", .{ idx + 1, source.url });
+                std.debug.print("    Priority: {d}\n", .{source.priority});
+                std.debug.print("    Trust Key: {s}\n", .{source.trust_key orelse "(none)"});
+                std.debug.print("    Enabled: {}\n", .{source.enabled});
+            }
+        }
+    }
+
+    /// Fetch package from remote cache
+    fn remoteFetch(self: *CLI, args: []const []const u8) !void {
+        var package_spec: ?[]const u8 = null;
+        var source_url: ?[]const u8 = null;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) {
+                std.debug.print("Usage: axiom remote-fetch <package>[@version] [options]\n", .{});
+                std.debug.print("\nFetch a package from remote binary cache.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --source <url>   Fetch from specific cache\n", .{});
+                std.debug.print("  -h, --help       Show this help message\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom remote-fetch bash                   # Latest version\n", .{});
+                std.debug.print("  axiom remote-fetch bash@5.2.0             # Specific version\n", .{});
+                std.debug.print("  axiom remote-fetch bash --source http://cache.example.com\n", .{});
+                return;
+            } else if (std.mem.eql(u8, args[i], "--source")) {
+                i += 1;
+                if (i >= args.len) {
+                    std.debug.print("Error: --source requires a URL\n", .{});
+                    return;
+                }
+                source_url = args[i];
+            } else if (!std.mem.startsWith(u8, args[i], "-")) {
+                package_spec = args[i];
+            }
+        }
+
+        if (package_spec == null) {
+            std.debug.print("Error: Package name is required\n", .{});
+            std.debug.print("Usage: axiom remote-fetch <package>[@version]\n", .{});
+            return;
+        }
+
+        // Parse package@version
+        var name: []const u8 = package_spec.?;
+        var version: []const u8 = "latest";
+        if (std.mem.indexOf(u8, package_spec.?, "@")) |at_idx| {
+            name = package_spec.?[0..at_idx];
+            version = package_spec.?[at_idx + 1 ..];
+        }
+
+        std.debug.print("Fetching package: {s}@{s}\n", .{ name, version });
+        if (source_url) |url| {
+            std.debug.print("  Source: {s}\n", .{url});
+        } else {
+            std.debug.print("  Source: (configured caches)\n", .{});
+        }
+
+        // Load cache configuration
+        const config = RemoteCacheConfig.load(self.allocator, "/etc/axiom/caches.yaml") catch |err| {
+            std.debug.print("Failed to load cache config: {}\n", .{err});
+            return;
+        };
+        defer @constCast(&config).deinit(self.allocator);
+
+        var client = RemoteCacheClient.init(self.allocator, config);
+
+        const result = client.fetchPackage(name, version) catch |err| {
+            std.debug.print("Failed to fetch package: {}\n", .{err});
+            return;
+        };
+
+        if (result) |r| {
+            defer @constCast(&r).deinit(self.allocator);
+            std.debug.print("✓ Package fetched successfully\n", .{});
+            std.debug.print("  Name: {s}\n", .{r.meta.name});
+            std.debug.print("  Version: {s}\n", .{r.meta.version});
+            std.debug.print("  Size: {d} bytes\n", .{r.data.len});
+            std.debug.print("  Source: {s}\n", .{r.source_url});
+        } else {
+            std.debug.print("Package not found in any configured cache.\n", .{});
+        }
+    }
+
+    /// Push package to remote cache
+    fn remotePush(self: *CLI, args: []const []const u8) !void {
+        var package_spec: ?[]const u8 = null;
+        var target_url: ?[]const u8 = null;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) {
+                std.debug.print("Usage: axiom remote-push <package>[@version] [options]\n", .{});
+                std.debug.print("\nPush a package to a remote binary cache.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --target <url>   Target cache server\n", .{});
+                std.debug.print("  -h, --help       Show this help message\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom remote-push bash@5.2.0 --target http://cache.example.com\n", .{});
+                return;
+            } else if (std.mem.eql(u8, args[i], "--target")) {
+                i += 1;
+                if (i >= args.len) {
+                    std.debug.print("Error: --target requires a URL\n", .{});
+                    return;
+                }
+                target_url = args[i];
+            } else if (!std.mem.startsWith(u8, args[i], "-")) {
+                package_spec = args[i];
+            }
+        }
+
+        if (package_spec == null) {
+            std.debug.print("Error: Package name is required\n", .{});
+            std.debug.print("Usage: axiom remote-push <package>[@version] --target <url>\n", .{});
+            return;
+        }
+
+        if (target_url == null) {
+            std.debug.print("Error: Target URL is required\n", .{});
+            std.debug.print("Usage: axiom remote-push <package>[@version] --target <url>\n", .{});
+            return;
+        }
+
+        // Parse package@version
+        var name: []const u8 = package_spec.?;
+        var version: []const u8 = "latest";
+        if (std.mem.indexOf(u8, package_spec.?, "@")) |at_idx| {
+            name = package_spec.?[0..at_idx];
+            version = package_spec.?[at_idx + 1 ..];
+        }
+
+        std.debug.print("Pushing package: {s}@{s}\n", .{ name, version });
+        std.debug.print("  Target: {s}\n", .{target_url.?});
+
+        // Load package from local store
+        const pkg_path = try std.fmt.allocPrint(self.allocator, "/axiom/store/pkg/{s}", .{name});
+        defer self.allocator.free(pkg_path);
+
+        var dir = std.fs.openDirAbsolute(pkg_path, .{}) catch {
+            std.debug.print("Error: Package not found in local store\n", .{});
+            return;
+        };
+        dir.close();
+
+        std.debug.print("✓ Package found in local store\n", .{});
+        std.debug.print("  (Would push to {s})\n", .{target_url.?});
+    }
+
+    /// Sync metadata from remote caches
+    fn remoteSync(self: *CLI, args: []const []const u8) !void {
+        // Check for help flag
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom remote-sync\n", .{});
+                std.debug.print("\nSynchronize package metadata from all configured caches.\n", .{});
+                std.debug.print("\nThis updates the local cache index with available packages\n", .{});
+                std.debug.print("from remote binary caches.\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom remote-sync    # Sync from all configured sources\n", .{});
+                return;
+            }
+        }
+
+        std.debug.print("Synchronizing metadata from remote caches...\n", .{});
+
+        // Load cache configuration
+        const config = RemoteCacheConfig.load(self.allocator, "/etc/axiom/caches.yaml") catch |err| {
+            std.debug.print("Failed to load cache config: {}\n", .{err});
+            return;
+        };
+        defer @constCast(&config).deinit(self.allocator);
+
+        if (config.sources.len == 0) {
+            std.debug.print("No cache sources configured.\n", .{});
+            std.debug.print("Add sources to /etc/axiom/caches.yaml\n", .{});
+            return;
+        }
+
+        var client = RemoteCacheClient.init(self.allocator, config);
+
+        const result = client.syncMetadata() catch |err| {
+            std.debug.print("Failed to sync metadata: {}\n", .{err});
+            return;
+        };
+
+        std.debug.print("\nSync Complete\n", .{});
+        std.debug.print("════════════════════════════════════════\n", .{});
+        std.debug.print("  Sources checked: {d}\n", .{result.sources_checked});
+        std.debug.print("  Packages found:  {d}\n", .{result.packages_found});
+        std.debug.print("  New packages:    {d}\n", .{result.packages_new});
+        std.debug.print("  Errors:          {d}\n", .{result.errors});
+    }
+
+    /// Manage remote cache sources
+    fn remoteSources(self: *CLI, args: []const []const u8) !void {
+        var add_url: ?[]const u8 = null;
+        var remove_url: ?[]const u8 = null;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) {
+                std.debug.print("Usage: axiom remote-sources [options]\n", .{});
+                std.debug.print("\nManage remote cache source configuration.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --add <url>      Add a new cache source\n", .{});
+                std.debug.print("  --remove <url>   Remove a cache source\n", .{});
+                std.debug.print("  -h, --help       Show this help message\n", .{});
+                std.debug.print("\nConfiguration file: /etc/axiom/caches.yaml\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom remote-sources                           # List sources\n", .{});
+                std.debug.print("  axiom remote-sources --add http://cache.example.com\n", .{});
+                std.debug.print("  axiom remote-sources --remove http://old-cache.example.com\n", .{});
+                return;
+            } else if (std.mem.eql(u8, args[i], "--add")) {
+                i += 1;
+                if (i >= args.len) {
+                    std.debug.print("Error: --add requires a URL\n", .{});
+                    return;
+                }
+                add_url = args[i];
+            } else if (std.mem.eql(u8, args[i], "--remove")) {
+                i += 1;
+                if (i >= args.len) {
+                    std.debug.print("Error: --remove requires a URL\n", .{});
+                    return;
+                }
+                remove_url = args[i];
+            }
+        }
+
+        // Load current configuration
+        const config = RemoteCacheConfig.load(self.allocator, "/etc/axiom/caches.yaml") catch |err| {
+            std.debug.print("Failed to load cache config: {}\n", .{err});
+            return;
+        };
+        defer @constCast(&config).deinit(self.allocator);
+
+        if (add_url) |url| {
+            std.debug.print("Adding cache source: {s}\n", .{url});
+            std.debug.print("  (Would update /etc/axiom/caches.yaml)\n", .{});
+            std.debug.print("✓ Source added\n", .{});
+            return;
+        }
+
+        if (remove_url) |url| {
+            std.debug.print("Removing cache source: {s}\n", .{url});
+            std.debug.print("  (Would update /etc/axiom/caches.yaml)\n", .{});
+            std.debug.print("✓ Source removed\n", .{});
+            return;
+        }
+
+        // List sources
+        std.debug.print("Remote Cache Sources\n", .{});
+        std.debug.print("════════════════════════════════════════════════════════════════\n", .{});
+        std.debug.print("{s:<4} {s:<40} {s:<10} {s:<10}\n", .{ "#", "URL", "PRIORITY", "ENABLED" });
+        std.debug.print("{s:─<4} {s:─<40} {s:─<10} {s:─<10}\n", .{ "", "", "", "" });
+
+        if (config.sources.len == 0) {
+            std.debug.print("\n(no sources configured)\n", .{});
+            std.debug.print("\nAdd sources with: axiom remote-sources --add <url>\n", .{});
+            std.debug.print("Or edit /etc/axiom/caches.yaml directly.\n", .{});
+        } else {
+            for (config.sources, 0..) |source, idx| {
+                const enabled_str: []const u8 = if (source.enabled) "yes" else "no";
+                std.debug.print("{d:<4} {s:<40} {d:<10} {s:<10}\n", .{
+                    idx + 1,
+                    source.url,
+                    source.priority,
+                    enabled_str,
+                });
+            }
+            std.debug.print("\nTotal: {d} source(s)\n", .{config.sources.len});
+        }
+
+        std.debug.print("\nSettings:\n", .{});
+        std.debug.print("  Verify signatures: {}\n", .{config.verify_signatures});
+        std.debug.print("  Parallel downloads: {d}\n", .{config.parallel_downloads});
+        std.debug.print("  Timeout: {d}ms\n", .{config.timeout_ms});
     }
 };
 

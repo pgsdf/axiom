@@ -332,6 +332,49 @@ axiom be-mount backup /mnt/backup               # Mount to specific path
 axiom be-unmount backup                         # Unmount when done
 ```
 
+## Remote Binary Cache
+
+Axiom implements a binary cache protocol for efficient package distribution across networks.
+
+### Cache Server
+
+```bash
+axiom cache-server                              # Start on default port 8080
+axiom cache-server --port 9000                  # Custom port
+axiom cache-server --store /data/axiom          # Custom store path
+```
+
+### Cache Configuration
+
+Configure remote cache sources in `/etc/axiom/caches.yaml`:
+
+```yaml
+caches:
+  - url: https://cache.example.com
+    priority: 100
+    trust: release-key
+  - url: https://internal.example.com/axiom
+    priority: 50
+    trust: internal-key
+
+verify_signatures: true
+parallel_downloads: 4
+timeout_ms: 30000
+```
+
+### Remote Operations
+
+```bash
+axiom remote-fetch bash                         # Fetch latest version
+axiom remote-fetch bash@5.2.0                   # Fetch specific version
+axiom remote-fetch bash --source http://cache.example.com
+
+axiom remote-push bash@5.2.0 --target http://cache.example.com
+axiom remote-sync                               # Sync metadata from all sources
+axiom remote-sources                            # List configured sources
+axiom remote-sources --add http://new-cache.example.com
+```
+
 ## Building
 
 Requires:
