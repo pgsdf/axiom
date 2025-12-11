@@ -3648,7 +3648,7 @@ Integrate with FreeBSD rc.d service management for packages that provide service
 
 **Priority**: High
 **Complexity**: Medium
-**Status**: Planned
+**Status**: ✅ Implemented
 
 ### Purpose
 
@@ -3675,6 +3675,45 @@ First-class support for ZFS boot environments, enabling atomic system upgrades w
    - Create BE before system changes
    - Name with timestamp
    - Configurable retention policy
+
+### Implementation
+
+Created `src/bootenv.zig` with complete ZFS boot environment management:
+
+**Core Types:**
+- `BootEnvironment` - BE information (name, active status, mountpoint, space, creation time)
+- `CreateOptions` - Options for BE creation (source, activate, description)
+- `ActivateOptions` - Options for BE activation (temporary)
+- `RetentionPolicy` - Policy for automatic BE cleanup (max count, max age, patterns)
+- `BeHooks` - Integration hooks for automatic snapshots before system changes
+
+**Boot Environment Manager:**
+- `list()` - List all boot environments via `bectl list -H`
+- `getActive()` - Get currently active boot environment
+- `create()` - Create new BE with optional source and activation
+- `createTimestamped()` - Create BE with automatic timestamp naming
+- `activate()` - Activate BE for next boot (permanent or temporary)
+- `destroy()` - Remove BE (with active protection)
+- `rename()` - Rename a boot environment
+- `mount()` / `unmount()` - Mount/unmount BE for inspection
+- `rollback()` - Revert to previous boot environment
+- `applyRetention()` - Apply retention policy to clean old BEs
+- `isSupported()` - Check if system supports boot environments
+
+**CLI Commands:**
+- `axiom be` / `axiom be-list` - List all boot environments
+- `axiom be-create <name> [--source <be>] [--activate]` - Create new BE
+- `axiom be-activate <name> [--temporary]` - Activate BE for next boot
+- `axiom be-destroy <name> [--force]` - Remove boot environment
+- `axiom be-rollback` - Revert to previous BE
+- `axiom be-rename <old> <new>` - Rename boot environment
+- `axiom be-mount <name> [path]` - Mount BE for inspection
+- `axiom be-unmount <name> [--force]` - Unmount boot environment
+
+**Helper Functions:**
+- `epochToDatetime()` - Convert timestamps for BE naming
+- `parseSize()` - Parse ZFS size strings (K, M, G, T)
+- `matchGlob()` - Glob pattern matching for retention policies
 
 ---
 

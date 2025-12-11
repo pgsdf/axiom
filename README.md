@@ -295,6 +295,43 @@ services:
       - 443
 ```
 
+## Boot Environments
+
+Axiom provides first-class support for ZFS boot environments, enabling atomic system upgrades with rollback.
+
+### List Boot Environments
+
+```bash
+axiom be                                        # List all boot environments
+axiom be-list                                   # Same as above
+```
+
+### Create Boot Environment
+
+```bash
+axiom be-create myenv                           # Create from current
+axiom be-create upgrade-test --source stable    # Clone from specific BE
+axiom be-create backup --activate               # Create and activate
+```
+
+### Manage Boot Environments
+
+```bash
+axiom be-activate myenv                         # Activate for next boot
+axiom be-activate test --temporary              # Temporary activation (one boot only)
+axiom be-destroy old-backup                     # Remove boot environment
+axiom be-rollback                               # Revert to previous BE
+axiom be-rename temp stable                     # Rename boot environment
+```
+
+### Mount/Unmount for Inspection
+
+```bash
+axiom be-mount backup                           # Mount to temp location
+axiom be-mount backup /mnt/backup               # Mount to specific path
+axiom be-unmount backup                         # Unmount when done
+```
+
 ## Building
 
 Requires:
