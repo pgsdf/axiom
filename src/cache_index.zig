@@ -574,7 +574,7 @@ pub const ConflictResolver = struct {
                 // Compare versions
                 const local_ver = types.Version.parse(l.version) catch break :blk .use_local;
                 const remote_ver = types.Version.parse(r.version) catch break :blk .use_local;
-                break :blk if (remote_ver.isNewerThan(local_ver)) .use_remote else .use_local;
+                break :blk if (remote_ver.greaterThan(local_ver)) .use_remote else .use_local;
             },
             else => .use_local,
         };
