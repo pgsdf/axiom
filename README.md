@@ -221,6 +221,39 @@ axiom hsm-keys --library /usr/local/lib/softhsm/libsofthsm2.so --slot 0 --pin my
 | YubiKey | `/usr/lib/libykcs11.so` | `/usr/local/lib/libykcs11.so` |
 | OpenSC | `/usr/lib/opensc-pkcs11.so` | `/usr/local/lib/opensc-pkcs11.so` |
 
+## Multi-Party Signing
+
+Axiom supports threshold signing requiring multiple signatures from authorized parties.
+
+### List Package Signatures
+
+```bash
+axiom signatures /axiom/store/mypackage-1.0.0
+```
+
+### Verify Threshold Requirement
+
+```bash
+# Require at least 2 trusted signatures
+axiom signatures mypackage --threshold 2
+```
+
+### Multi-Signature Policy
+
+Create a policy file to define signing requirements:
+
+```yaml
+# signing-policy.yaml
+threshold: 2
+policy_name: "Release Policy"
+signers:
+  - pgsd-release-key
+  - security-team-key
+  - qa-team-key
+required_signers:
+  - pgsd-release-key
+```
+
 ## Building
 
 Requires:
