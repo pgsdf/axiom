@@ -2178,9 +2178,11 @@ pub const CLI = struct {
 
     fn buildDependencyGraph(self: *CLI, lock: anytype) !DependencyGraph {
         var graph = DependencyGraph.init(self.allocator);
+        errdefer graph.deinit();
 
         for (lock.resolved) |pkg| {
             var deps = std.ArrayList([]const u8).init(self.allocator);
+            errdefer deps.deinit();
 
             // Get package metadata to find dependencies
             if (self.store.getPackage(pkg.id)) |pkg_meta| {
