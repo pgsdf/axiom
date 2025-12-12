@@ -1108,8 +1108,8 @@ pub const PortsMigrator = struct {
                     result.status = .failed;
                     // Clean up build output before returning
                     if (!self.options.keep_sandbox) {
-                        std.fs.cwd().deleteTree(build_result.output_dir) catch |err| {
-                            errors.logFileCleanup(@src(), err, build_result.output_dir);
+                        std.fs.cwd().deleteTree(build_result.output_dir) catch |cleanup_err| {
+                            errors.logFileCleanup(@src(), cleanup_err, build_result.output_dir);
                         };
                     }
                     self.allocator.free(build_result.output_dir);
