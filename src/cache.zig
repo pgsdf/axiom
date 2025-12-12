@@ -3,6 +3,7 @@ const types = @import("types.zig");
 const store = @import("store.zig");
 const signature = @import("signature.zig");
 const zfs = @import("zfs.zig");
+const errors = @import("errors.zig");
 
 const PackageId = types.PackageId;
 const Version = types.Version;
@@ -473,7 +474,9 @@ pub const CacheClient = struct {
 
         // Create parent directories
         const dir_path = std.fs.path.dirname(dest_path) orelse ".";
-        std.fs.cwd().makePath(dir_path) catch {};
+        std.fs.cwd().makePath(dir_path) catch |err| {
+            errors.logMkdirBestEffort(@src(), err, dir_path);
+        };
 
         var file = try std.fs.cwd().createFile(dest_path, .{});
         defer file.close();
@@ -581,12 +584,16 @@ pub const CacheClient = struct {
             var verifier = Verifier.init(self.allocator, self.trust_store, .strict);
             const result = verifier.verifyPackage(parent_dir) catch {
                 // Clean up failed download
-                std.fs.cwd().deleteFile(local_path) catch {};
+                std.fs.cwd().deleteFile(local_path) catch |err| {
+                    errors.logFileCleanup(@src(), err, local_path);
+                };
                 return error.VerificationFailed;
             };
 
             if (!result.valid) {
-                std.fs.cwd().deleteFile(local_path) catch {};
+                std.fs.cwd().deleteFile(local_path) catch |err| {
+                    errors.logFileCleanup(@src(), err, local_path);
+                };
                 return error.VerificationFailed;
             }
         }
@@ -601,7 +608,9 @@ pub const CacheClient = struct {
 
         // Create parent dataset if needed
         const parent = std.fs.path.dirname(dataset) orelse dataset;
-        self.zfs_handle.createDataset(self.allocator, parent, .{}) catch {};
+        self.zfs_handle.createDataset(self.allocator, parent, .{}) catch |err| {
+            errors.logNonCriticalWithCategory(@src(), err, .zfs, "create parent dataset", parent);
+        };
 
         // Receive the stream
         try self.zfs_handle.receive(dataset, stream_path);
@@ -892,7 +901,9 @@ pub const CacheServer = struct {
         // Final chunk
         try stream.writeAll("0\r\n\r\n");
 
-        _ = child.wait() catch {};
+        _ = child.wait() catch |err| {
+            errors.logProcessCleanup(@src(), err, "zfs send for cache");
+        };
     }
 
     /// Serve package manifest
@@ -1020,7 +1031,9 @@ pub fn pushPackage(
     // Create temporary file for ZFS stream
     const tmp_path = try std.fmt.allocPrint(allocator, "/tmp/axiom-push-{s}.zfs", .{pkg_id.build_id});
     defer allocator.free(tmp_path);
-    defer std.fs.deleteFileAbsolute(tmp_path) catch {};
+    defer std.fs.deleteFileAbsolute(tmp_path) catch |err| {
+        errors.logFileCleanup(@src(), err, tmp_path);
+    };
 
     // Send ZFS stream to file
     try zfs_handle.sendToFile(snapshot, tmp_path);

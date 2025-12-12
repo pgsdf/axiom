@@ -1,4 +1,5 @@
 const std = @import("std");
+const errors = @import("errors.zig");
 
 // Direct libzfs C bindings
 const c = @cImport({
@@ -634,7 +635,9 @@ pub const ZfsHandle = struct {
 
         // Pipe file contents to stdin
         const stdin = child.stdin orelse {
-            _ = child.wait() catch {};
+            _ = child.wait() catch |err| {
+                errors.logProcessCleanup(@src(), err, "zfs receive");
+            };
             return ZfsError.InternalError;
         };
 
@@ -670,14 +673,18 @@ pub const ZfsHandle = struct {
 
         // Create output file
         const file = std.fs.createFileAbsolute(dest_path, .{}) catch {
-            _ = child.wait() catch {};
+            _ = child.wait() catch |err| {
+                errors.logProcessCleanup(@src(), err, "zfs send");
+            };
             return ZfsError.InternalError;
         };
         defer file.close();
 
         // Read from child stdout and write to file
         const stdout = child.stdout orelse {
-            _ = child.wait() catch {};
+            _ = child.wait() catch |err| {
+                errors.logProcessCleanup(@src(), err, "zfs send");
+            };
             return ZfsError.InternalError;
         };
         var buf: [8192]u8 = undefined;
@@ -711,13 +718,17 @@ pub const ZfsHandle = struct {
         child.spawn() catch return ZfsError.InternalError;
 
         const file = std.fs.createFileAbsolute(dest_path, .{}) catch {
-            _ = child.wait() catch {};
+            _ = child.wait() catch |err| {
+                errors.logProcessCleanup(@src(), err, "zfs send incremental");
+            };
             return ZfsError.InternalError;
         };
         defer file.close();
 
         const stdout = child.stdout orelse {
-            _ = child.wait() catch {};
+            _ = child.wait() catch |err| {
+                errors.logProcessCleanup(@src(), err, "zfs send incremental");
+            };
             return ZfsError.InternalError;
         };
         var buf: [8192]u8 = undefined;
@@ -1166,7 +1177,9 @@ test "dataset operations" {
 
     // Clean up if exists from previous test
     if (try zfs.datasetExists(allocator, test_dataset, .filesystem)) {
-        zfs.destroyDataset(allocator, test_dataset, false) catch {};
+        zfs.destroyDataset(allocator, test_dataset, false) catch |err| {
+            errors.logZfsCleanup(@src(), err, test_dataset);
+        };
     }
 
     // Create dataset
@@ -1375,10 +1388,14 @@ test "snapshot and clone" {
 
     // Clean up from previous tests
     if (try zfs.datasetExists(allocator, clone_target, .filesystem)) {
-        zfs.destroyDataset(allocator, clone_target, false) catch {};
+        zfs.destroyDataset(allocator, clone_target, false) catch |err| {
+            errors.logZfsCleanup(@src(), err, clone_target);
+        };
     }
     if (try zfs.datasetExists(allocator, test_dataset, .filesystem)) {
-        zfs.destroyDataset(allocator, test_dataset, true) catch {};
+        zfs.destroyDataset(allocator, test_dataset, true) catch |err| {
+            errors.logZfsCleanup(@src(), err, test_dataset);
+        };
     }
 
     // Create dataset

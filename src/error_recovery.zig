@@ -1,4 +1,5 @@
 const std = @import("std");
+const errors = @import("errors.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -602,14 +603,18 @@ pub const RecoveryEngine = struct {
 
         // Clean partial import data
         if (recovery.partial_path.len > 0) {
-            std.fs.cwd().deleteTree(recovery.partial_path) catch {};
+            std.fs.cwd().deleteTree(recovery.partial_path) catch |err| {
+                errors.logFileCleanup(@src(), err, recovery.partial_path);
+            };
         }
 
         // Remove transaction log entry
         if (recovery.transaction_id) |tid| {
             const tx_path = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ self.transaction_log_path, tid });
             defer self.allocator.free(tx_path);
-            std.fs.cwd().deleteFile(tx_path) catch {};
+            std.fs.cwd().deleteFile(tx_path) catch |err| {
+                errors.logFileCleanup(@src(), err, tx_path);
+            };
         }
 
         return true;
@@ -621,7 +626,9 @@ pub const RecoveryEngine = struct {
 
         // Clean partial realization
         if (recovery.partial_path.len > 0) {
-            std.fs.cwd().deleteTree(recovery.partial_path) catch {};
+            std.fs.cwd().deleteTree(recovery.partial_path) catch |err| {
+                errors.logFileCleanup(@src(), err, recovery.partial_path);
+            };
         }
 
         return true;
@@ -928,7 +935,9 @@ pub const TransactionLog = struct {
         defer self.allocator.free(tx_path);
 
         // Ensure directory exists
-        std.fs.cwd().makePath(self.log_path) catch {};
+        std.fs.cwd().makePath(self.log_path) catch |err| {
+            errors.logMkdirBestEffort(@src(), err, self.log_path);
+        };
 
         const file = try std.fs.cwd().createFile(tx_path, .{});
         defer file.close();
@@ -944,7 +953,9 @@ pub const TransactionLog = struct {
         defer self.allocator.free(tx_path);
 
         // Remove transaction file (marks as complete)
-        std.fs.cwd().deleteFile(tx_path) catch {};
+        std.fs.cwd().deleteFile(tx_path) catch |err| {
+            errors.logFileCleanup(@src(), err, tx_path);
+        };
     }
 
     /// Rollback a transaction

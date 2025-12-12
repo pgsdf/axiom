@@ -6,6 +6,7 @@ const manifest = @import("manifest.zig");
 const import_pkg = @import("import.zig");
 const secure_tar = @import("secure_tar.zig");
 const config = @import("config.zig");
+const errors = @import("errors.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageStore = store.PackageStore;
@@ -157,9 +158,13 @@ pub const BootstrapManager = struct {
 
         // Create temporary extraction directory
         const tmp_dir = "/tmp/axiom-bootstrap-import";
-        std.fs.deleteTreeAbsolute(tmp_dir) catch {};
+        std.fs.deleteTreeAbsolute(tmp_dir) catch |err| {
+            errors.logFileCleanup(@src(), err, tmp_dir);
+        };
         try std.fs.makeDirAbsolute(tmp_dir);
-        defer std.fs.deleteTreeAbsolute(tmp_dir) catch {};
+        defer std.fs.deleteTreeAbsolute(tmp_dir) catch |err| {
+            errors.logFileCleanup(@src(), err, tmp_dir);
+        };
 
         // Extract the tarball
         std.debug.print("  Extracting tarball...\n", .{});
@@ -281,10 +286,14 @@ pub const BootstrapManager = struct {
 
         // Create staging directory
         const staging_dir = "/tmp/axiom-bootstrap-export";
-        std.fs.deleteTreeAbsolute(staging_dir) catch {};
+        std.fs.deleteTreeAbsolute(staging_dir) catch |err| {
+            errors.logFileCleanup(@src(), err, staging_dir);
+        };
         try std.fs.makeDirAbsolute(staging_dir);
         defer if (!options.keep_staging) {
-            std.fs.deleteTreeAbsolute(staging_dir) catch {};
+            std.fs.deleteTreeAbsolute(staging_dir) catch |err| {
+                errors.logFileCleanup(@src(), err, staging_dir);
+            };
         };
 
         // Create packages subdirectory

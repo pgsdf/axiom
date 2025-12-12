@@ -3,6 +3,7 @@ const zfs = @import("zfs.zig");
 const types = @import("types.zig");
 const manifest = @import("manifest.zig");
 const config = @import("config.zig");
+const errors = @import("errors.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageId = types.PackageId;
@@ -577,7 +578,9 @@ pub const PackageStore = struct {
         });
         errdefer {
             temp_file.close();
-            std.fs.cwd().deleteFile(temp_path) catch {};
+            std.fs.cwd().deleteFile(temp_path) catch |err| {
+                errors.logFileCleanup(@src(), err, temp_path);
+            };
         }
 
         try temp_file.writeAll(content);

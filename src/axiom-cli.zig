@@ -13,6 +13,7 @@ const cli = @import("cli.zig");
 const user = @import("user.zig");
 const config = @import("config.zig");
 const setup = @import("setup.zig");
+const errors = @import("errors.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -68,7 +69,9 @@ pub fn main() !void {
     // Initialize signature subsystems
     var trust_store = signature.TrustStore.init(allocator, config.DEFAULT_CONFIG_DIR ++ "/trust.toml");
     defer trust_store.deinit();
-    trust_store.load() catch {}; // Ignore error if file doesn't exist
+    trust_store.load() catch |err| {
+        errors.logConfigLoadOptional(@src(), err, config.DEFAULT_CONFIG_DIR ++ "/trust.toml");
+    }; // Ignore error if file doesn't exist
 
     // Load official PGSD signing keys (bundled with Axiom)
     trust_store.loadOfficialKeys() catch |err| {
@@ -80,7 +83,9 @@ pub fn main() !void {
     // Initialize cache subsystems
     var cache_config = cache.CacheConfig.init(allocator);
     defer cache_config.deinit();
-    cache_config.loadFromFile(config.DEFAULT_CONFIG_DIR ++ "/cache.yaml") catch {}; // Ignore if doesn't exist
+    cache_config.loadFromFile(config.DEFAULT_CONFIG_DIR ++ "/cache.yaml") catch |err| {
+        errors.logConfigLoadOptional(@src(), err, config.DEFAULT_CONFIG_DIR ++ "/cache.yaml");
+    }; // Ignore if doesn't exist
 
     var cache_client = cache.CacheClient.init(
         allocator,

@@ -9,6 +9,7 @@ const store = @import("store.zig");
 const closure = @import("closure.zig");
 const manifest = @import("manifest.zig");
 const launcher = @import("launcher.zig");
+const errors = @import("errors.zig");
 
 const PackageId = types.PackageId;
 const Version = types.Version;
@@ -362,7 +363,9 @@ pub const BundleBuilder = struct {
             }
         }
 
-        _ = send_child.wait() catch {};
+        _ = send_child.wait() catch |err| {
+            errors.logProcessCleanup(@src(), err, "zfs send for bundle");
+        };
 
         return .{
             .success = .{
@@ -517,7 +520,9 @@ pub const BundleBuilder = struct {
     }
 
     fn cleanupStagingDir(self: *BundleBuilder, path: []const u8) void {
-        std.fs.cwd().deleteTree(path) catch {};
+        std.fs.cwd().deleteTree(path) catch |err| {
+            errors.logFileCleanup(@src(), err, path);
+        };
         self.allocator.free(path);
     }
 
@@ -539,7 +544,9 @@ pub const BundleBuilder = struct {
         });
         defer self.allocator.free(pkg_dir);
 
-        std.fs.cwd().makePath(pkg_dir) catch {};
+        std.fs.cwd().makePath(pkg_dir) catch |err| {
+            errors.logMkdirBestEffort(@src(), err, pkg_dir);
+        };
 
         // Copy package root
         const src_root = try std.fs.path.join(self.allocator, &[_][]const u8{
@@ -686,7 +693,9 @@ pub const BundleBuilder = struct {
             }
         }
 
-        _ = tar_child.wait() catch {};
+        _ = tar_child.wait() catch |err| {
+            errors.logProcessCleanup(@src(), err, "tar for bundle");
+        };
     }
 
     fn getFileSize(self: *BundleBuilder, path: []const u8) !u64 {
@@ -903,7 +912,9 @@ pub const SecureBundleManifest = struct {
                 } else if (std.mem.startsWith(u8, trimmed, "payload_hash:")) {
                     const hex_str = std.mem.trim(u8, trimmed[13..], " \t");
                     if (hex_str.len >= 64) {
-                        _ = std.fmt.hexToBytes(&result.payload_hash, hex_str[0..64]) catch {};
+                        _ = std.fmt.hexToBytes(&result.payload_hash, hex_str[0..64]) catch |err| {
+                            errors.logParseError(@src(), err, "parse payload hash hex");
+                        };
                     }
                 } else if (std.mem.startsWith(u8, trimmed, "compression:")) {
                     const val = std.mem.trim(u8, trimmed[12..], " \t");
@@ -1299,7 +1310,9 @@ pub const SecureBundleLauncher = struct {
             &[_][]const u8{ "chmod", "700", extract_dir },
             self.allocator,
         );
-        _ = chmod_child.spawnAndWait() catch {};
+        _ = chmod_child.spawnAndWait() catch |err| {
+            errors.logNonCriticalWithCategory(@src(), err, .permission, "chmod extraction directory", extract_dir);
+        };
 
         // Seek to payload
         try file.seekTo(bundle_manifest.payload_offset);
@@ -1452,7 +1465,9 @@ pub const SecureBundleLauncher = struct {
     }
 
     pub fn cleanup(self: *SecureBundleLauncher, extract_dir: []const u8) void {
-        std.fs.cwd().deleteTree(extract_dir) catch {};
+        std.fs.cwd().deleteTree(extract_dir) catch |err| {
+            errors.logFileCleanup(@src(), err, extract_dir);
+        };
         self.allocator.free(extract_dir);
     }
 
