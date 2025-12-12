@@ -15,6 +15,18 @@ const posix = std.posix;
 //   AXIOM_CONFIG_DIR - Configuration directory (default: "/etc/axiom")
 //   AXIOM_CACHE_DIR  - Cache directory (default: "/var/cache/axiom")
 //
+// ## Thread Safety
+//
+// The global configuration is managed through ConfigManager which provides:
+// - Thread-safe lazy initialization via mutex
+// - Reference counting for lifecycle management
+// - Proper error propagation (no panics on init failure)
+//
+// Usage pattern:
+//   const cfg = try config.getGlobalConfig(allocator);
+//   defer config.releaseGlobalConfig();
+//   // use cfg...
+//
 // =============================================================================
 
 /// Default ZFS pool name
