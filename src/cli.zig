@@ -8328,7 +8328,7 @@ pub const CLI = struct {
         std.debug.print("Base path: /axiom/users/{s}\n\n", .{target_user});
 
         // In full implementation, would use AccessControl.initUserSpace()
-        var ac = AccessControl.init(self.allocator);
+        const ac = AccessControl.init(self.allocator);
         _ = ac;
 
         const dirs = [_][]const u8{
@@ -8382,7 +8382,6 @@ pub const CLI = struct {
         }
 
         const op = operation.?;
-        _ = target;
 
         std.debug.print("Access Check: {s}\n", .{op});
         std.debug.print("========================\n\n", .{});
@@ -8392,6 +8391,10 @@ pub const CLI = struct {
         const is_root = current_uid == 0;
 
         std.debug.print("Current user: uid={d} (root={s})\n\n", .{ current_uid, if (is_root) "yes" else "no" });
+
+        if (target) |t| {
+            std.debug.print("Target: {s}\n\n", .{t});
+        }
 
         // Check operation requirements
         const store_ops = [_][]const u8{ "read", "import", "gc", "profile-create", "profile-delete" };
