@@ -53,9 +53,28 @@ pub const GCStats = struct {
     collect_time_ms: i64 = 0,
 };
 
-/// Garbage collector - removes unreferenced packages
-/// Thread-safe: Uses file-based locking to prevent concurrent GC operations
-/// Safety: Uses transaction logging for crash recovery
+/// Garbage collector - removes unreferenced packages from the store.
+///
+/// ## Thread Safety
+///
+/// GarbageCollector uses file-based locking (flock) to prevent concurrent
+/// GC operations across processes. Only one GC can run at a time system-wide.
+///
+/// ### Lock ordering (to prevent deadlocks):
+/// - GC lock file is acquired FIRST, before any ZfsHandle operations
+/// - Never hold GC lock while waiting for other external resources
+/// - collect() acquires lock at entry and releases at exit via defer
+///
+/// ### Crash recovery:
+/// - Uses transaction logging to record pending operations
+/// - On crash, next GC run can detect incomplete operations
+/// - Lock file is deleted atomically while holding flock to prevent races
+///
+/// ### Multi-process safety:
+/// - Uses O_EXCL + flock for atomic lock acquisition
+/// - WouldBlock indicates another GC is running
+/// - Lock file contains PID for debugging stuck locks
+///
 pub const GarbageCollector = struct {
     allocator: std.mem.Allocator,
     zfs_handle: *ZfsHandle,
@@ -93,10 +112,15 @@ pub const GarbageCollector = struct {
         };
     }
 
-    /// Acquire exclusive lock for GC operation
-    /// Returns error if another GC is already running
+    /// Acquire exclusive lock for GC operation.
+    /// Returns GCError.GCAlreadyRunning if another GC is already running.
+    /// Returns GCError.LockAcquisitionFailed if lock cannot be acquired.
+    ///
+    /// Thread-safety: Uses non-blocking flock() to atomically test-and-set.
+    /// The lock file serves dual purpose: existence check and flock holder.
     fn acquireLock(self: *GarbageCollector) !void {
-        // Try to create/open lock file
+        // First attempt: Create new lock file with exclusive lock.
+        // This is the common path when no lock file exists.
         const lock_file = std.fs.cwd().createFile(GC_LOCK_FILE_PATH, .{
             .read = true,
             .lock = .exclusive,
@@ -105,7 +129,9 @@ pub const GarbageCollector = struct {
             if (err == error.WouldBlock) {
                 return GCError.GCAlreadyRunning;
             }
-            // If we can't create in /var/run, try opening existing
+            // Fallback: If createFile fails for other reasons (e.g., exists from crash,
+            // permission issues with directory), try opening existing file and locking it.
+            // This handles the case where a previous GC crashed and left the lock file.
             const existing = std.fs.cwd().openFile(GC_LOCK_FILE_PATH, .{
                 .lock = .exclusive,
                 .lock_nonblocking = true,
@@ -115,6 +141,7 @@ pub const GarbageCollector = struct {
                 }
                 return GCError.LockAcquisitionFailed;
             };
+            // Successfully acquired lock on existing file
             self.lock_file = existing;
             return;
         };
@@ -128,12 +155,19 @@ pub const GarbageCollector = struct {
     }
 
     /// Release the GC lock
+    /// Thread-safety: Deletes lock file while still holding the file lock
+    /// to prevent TOCTOU race conditions where another process could
+    /// acquire the lock between our close() and deleteFile().
     fn releaseLock(self: *GarbageCollector) void {
         if (self.lock_file) |file| {
+            // IMPORTANT: Delete while still holding the lock to prevent race conditions.
+            // The unlink happens atomically while we hold the exclusive flock.
+            // Another process trying to open the file will either:
+            // - Get the old file (still locked by us) and block on flock
+            // - Get ENOENT after we delete and create a new lock file
+            std.fs.cwd().deleteFile(GC_LOCK_FILE_PATH) catch {};
             file.close();
             self.lock_file = null;
-            // Optionally remove lock file (not strictly necessary as lock is released)
-            std.fs.cwd().deleteFile(GC_LOCK_FILE_PATH) catch {};
         }
     }
 

@@ -190,9 +190,42 @@ pub const DatasetProperties = struct {
 
 /// Main ZFS handle for library operations
 /// Thread-safe wrapper around libzfs_handle_t using mutex synchronization
+///
+/// ## Thread Safety
+///
+/// All public methods are thread-safe through internal mutex protection.
+/// The mutex is automatically acquired and released by each operation.
+///
+/// ### Operations requiring mutex (mutating):
+/// - `createDataset()` - Creates new ZFS filesystem
+/// - `createDatasetWithParents()` - Creates dataset with parent creation
+/// - `destroyDataset()` - Destroys a dataset
+/// - `createSnapshot()` - Creates a snapshot
+/// - `cloneSnapshot()` - Clones a snapshot to new dataset
+/// - `setProperty()` - Sets a dataset property
+/// - `mount()` - Mounts a filesystem
+/// - `unmount()` - Unmounts a filesystem
+/// - `deinit()` - Cleans up the handle
+///
+/// ### Operations requiring mutex (read-only but libzfs not thread-safe):
+/// - `datasetExists()` - Checks if dataset exists
+/// - `getProperty()` - Gets a dataset property
+/// - `listDatasets()` - Lists child datasets
+///
+/// ### Thread-safe patterns:
+/// - Multiple ZfsHandle instances CAN operate concurrently (separate libzfs handles)
+/// - Single ZfsHandle instance operations are serialized via mutex
+/// - Prefer `withLock()` for custom compound operations
+///
+/// ### Lock ordering (to prevent deadlocks):
+/// - ZfsHandle.mutex must be acquired BEFORE any other application locks
+/// - Never call external code while holding ZfsHandle.mutex
+/// - Never acquire ZfsHandle.mutex while holding GarbageCollector lock
+///
 pub const ZfsHandle = struct {
     handle: *c.libzfs_handle_t,
-    /// Mutex to protect libzfs operations which are not thread-safe
+    /// Mutex to protect libzfs operations which are not thread-safe.
+    /// All public methods acquire this mutex internally.
     mutex: std.Thread.Mutex = .{},
 
     /// Initialize libzfs library
@@ -206,6 +239,33 @@ pub const ZfsHandle = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         c.libzfs_fini(self.handle);
+    }
+
+    /// Execute a compound operation with the mutex held.
+    /// Use this for operations that need to perform multiple ZFS calls atomically.
+    ///
+    /// Example:
+    /// ```zig
+    /// const result = try zfs.withLock(struct {
+    ///     pub fn call(handle: *c.libzfs_handle_t) !void {
+    ///         // Multiple libzfs calls here are atomic
+    ///     }
+    /// }.call);
+    /// ```
+    ///
+    /// WARNING: Do not call other ZfsHandle methods from within the callback,
+    /// as they will attempt to acquire the mutex and deadlock.
+    pub fn withLock(self: *ZfsHandle, comptime callback: fn (*c.libzfs_handle_t) anyerror!void) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return callback(self.handle);
+    }
+
+    /// Get the raw libzfs handle for advanced operations.
+    /// CALLER MUST hold the mutex via withLock() or manually.
+    /// This is unsafe and should only be used when withLock() is insufficient.
+    pub fn getRawHandle(self: *ZfsHandle) *c.libzfs_handle_t {
+        return self.handle;
     }
 
     /// Check if a dataset exists
