@@ -745,6 +745,116 @@ Library entry point for programmatic use.
 
 ---
 
+### Code Quality & Safety (Phases 52-56)
+
+These modules implement systematic improvements to error handling, input validation, memory safety, concurrency, and module architecture.
+
+#### `src/errors.zig` - Unified Error Handling (Phase 52)
+Centralized error handling with logging and categorization.
+
+**Key Types:**
+- `ErrorInfo` - Structured error information with source location
+- `Severity` - Error severity levels (debug, info, warning, error, fatal)
+- `Category` - Error categories (file_cleanup, process, zfs, config, etc.)
+
+**Key Functions:**
+- `logNonCritical()` - Log non-fatal errors with context
+- `logFileCleanup()` - Log file cleanup failures
+- `logProcessCleanup()` - Log process cleanup failures
+- `logZfsCleanup()` - Log ZFS operation failures
+- `logConfigLoadOptional()` - Log optional config load failures
+- `checkCReturn()` - Check C function return values
+
+**Usage Pattern:**
+```zig
+const errors = @import("errors.zig");
+
+// Instead of silent: catch {}
+// Use categorized logging:
+file.close() catch |err| {
+    errors.logFileCleanup(err, path, @src());
+};
+```
+
+#### `src/validation.zig` - Input Validation Framework (Phase 53)
+Comprehensive input validation for security and robustness.
+
+**Key Types:**
+- `UrlValidator` - URL validation with security checks
+- `ValidationResult` - Validation result with error details
+
+**Key Functions:**
+- `UrlValidator.validate()` - Validate URLs, reject traversal/null bytes
+- `escapeJsonString()` - Safely escape strings for JSON output
+- `writeJsonEscaped()` - Write JSON-escaped string to buffer
+- `parseSize()` - Parse size strings (K/M/G/T suffixes) with bounds
+- `parseTimestamp()` - Parse Unix timestamps with bounds checking
+- `parseInt()` - Parse integers with configurable bounds
+- `validatePath()` - Validate filesystem paths
+- `yamlNeedsQuoting()` / `escapeYamlString()` - YAML safety utilities
+
+**Security Features:**
+- Rejects path traversal attempts (`..`, encoded variants)
+- Rejects null bytes and control characters
+- Enforces numeric bounds to prevent overflow
+- Validates URL schemes (http/https only)
+
+#### `src/interfaces.zig` - Module Contracts (Phase 56)
+Interface definitions enabling dependency injection and testability.
+
+**Key Types:**
+- `PackageStore` - Interface for package storage operations
+- `ProfileManager` - Interface for profile management
+- `Resolver` - Interface for dependency resolution
+- `Output` - Interface for CLI output (enables testing)
+- `CliContext` - Dependency injection container
+
+**Mock Implementations (for testing):**
+- `MockPackageStore` - In-memory package store
+- `BufferedOutput` - Captures output for assertions
+
+**Usage Pattern:**
+```zig
+const interfaces = @import("interfaces.zig");
+
+// Use interface instead of concrete type
+fn processPackages(store: interfaces.PackageStore) !void {
+    const pkgs = try store.listPackages(allocator);
+    // ...
+}
+
+// For testing:
+var mock = MockPackageStore.init(allocator);
+defer mock.deinit();
+try processPackages(mock.asInterface());
+```
+
+#### `src/config.zig` - Configuration with Lifecycle Management (Phase 54)
+Configuration management with proper memory lifecycle.
+
+**Key Types:**
+- `Config` - Runtime configuration with resolved paths
+- `ConfigManager` - Thread-safe lifecycle management with reference counting
+
+**Key Functions:**
+- `getGlobalConfig()` - Get/initialize global config (acquires reference)
+- `releaseGlobalConfig()` - Release reference to allow cleanup
+- `resetGlobalConfig()` - Force cleanup (for testing)
+
+**Thread Safety:**
+- Thread-safe lazy initialization via mutex
+- Reference counting for lifecycle management
+- Proper error propagation (no panics on init failure)
+
+**Usage Pattern:**
+```zig
+const cfg = try config.getGlobalConfig(allocator);
+defer config.releaseGlobalConfig();
+// use cfg...
+```
+
+---
+
 ### Test Files
 
 | File | Tests |
