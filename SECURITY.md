@@ -350,6 +350,48 @@ caches:
     trust: my-signing-key
 ```
 
+### Input Validation Framework (Phase 53)
+
+Axiom provides a centralized input validation module (`src/validation.zig`) for secure handling of external input:
+
+**URL Validation:**
+```zig
+const validation = @import("validation.zig");
+
+const result = validation.UrlValidator.validate(url);
+if (!result.valid) {
+    log.err("Invalid URL: {s}", .{result.error_message});
+    return error.InvalidUrl;
+}
+// Use validated components: result.host, result.path, result.port
+```
+
+**Security Checks:**
+- Rejects path traversal (`..`, `%2e%2e`)
+- Rejects null bytes and control characters
+- Enforces scheme allowlist (http/https only)
+- Validates port ranges
+
+**JSON/YAML Escaping:**
+```zig
+// Safe JSON output
+var buf: [1024]u8 = undefined;
+const escaped = validation.escapeJsonString(untrusted_input, &buf);
+
+// Check if YAML needs quoting
+if (validation.yamlNeedsQuoting(value)) {
+    const safe = validation.escapeYamlString(value, allocator);
+}
+```
+
+**Numeric Bounds Checking:**
+```zig
+// Parse with bounds to prevent overflow
+const size = try validation.parseSize(input, 100 * TB);  // max 100TB
+const timestamp = try validation.parseTimestamp(input, year_2100);
+const port = try validation.parseInt(u16, input, 1, 65535);
+```
+
 ---
 
 ## Resource Limits

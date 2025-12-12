@@ -1434,6 +1434,139 @@ sudo zfs receive -F zroot/axiom < /backup/axiom-backup.zfs
 
 ---
 
+## Developer Workflows
+
+This section covers development patterns and best practices for working with the Axiom codebase.
+
+### Error Handling Patterns
+
+Axiom uses the `errors.zig` module for consistent error handling. Never silently swallow errors.
+
+**Bad Pattern (avoid):**
+```zig
+file.close() catch {};  // Silent failure - loses error context
+```
+
+**Good Pattern:**
+```zig
+const errors = @import("errors.zig");
+
+file.close() catch |err| {
+    errors.logFileCleanup(err, path, @src());
+};
+```
+
+**Error Categories:**
+- `logFileCleanup()` - File operations during cleanup
+- `logProcessCleanup()` - Process cleanup failures
+- `logZfsCleanup()` - ZFS operation failures
+- `logConfigLoadOptional()` - Optional config loading
+- `logServiceOp()` - Service management operations
+- `logCollectionError()` - Collection iteration errors
+
+### Input Validation
+
+Always validate external input using `validation.zig`:
+
+```zig
+const validation = @import("validation.zig");
+
+// Validate URLs before use
+const result = validation.UrlValidator.validate(user_url);
+if (!result.valid) {
+    return error.InvalidUrl;
+}
+
+// Parse sizes with bounds checking
+const size = try validation.parseSize(size_str, 100 * 1024 * 1024 * 1024 * 1024); // 100TB max
+
+// Escape strings for JSON output
+var buf: [1024]u8 = undefined;
+const json_safe = validation.escapeJsonString(user_input, &buf);
+```
+
+### Memory Safety Patterns
+
+**ArrayList with errdefer:**
+```zig
+var list = std.ArrayList([]const u8).init(allocator);
+errdefer {
+    for (list.items) |item| {
+        allocator.free(item);
+    }
+    list.deinit();
+}
+
+// Safe to use try now - cleanup happens on error
+try list.append(try allocator.dupe(u8, str));
+```
+
+**Config lifecycle:**
+```zig
+const cfg = try config.getGlobalConfig(allocator);
+defer config.releaseGlobalConfig();
+// use cfg...
+```
+
+### Testing with Mock Implementations
+
+Use `interfaces.zig` for testable code:
+
+```zig
+const interfaces = @import("interfaces.zig");
+
+// Production code uses interface
+fn processPackages(store: interfaces.PackageStore) !void {
+    const pkgs = try store.listPackages(allocator);
+    // ...
+}
+
+// Test with mock
+test "processPackages handles empty store" {
+    var mock = interfaces.MockPackageStore.init(std.testing.allocator);
+    defer mock.deinit();
+
+    try processPackages(mock.asInterface());
+}
+```
+
+### Thread Safety Guidelines
+
+**Lock ordering (to prevent deadlocks):**
+1. GC lock file (acquired first)
+2. ZfsHandle.mutex
+3. ConfigManager.mutex
+4. Other application locks
+
+**ZfsHandle operations:**
+- All methods are internally mutex-protected
+- Use `withLock()` for compound operations
+- Never call ZfsHandle methods from within `withLock()` callback
+
+```zig
+// Compound operation with lock held
+try zfs.withLock(struct {
+    pub fn call(handle: *c.libzfs_handle_t) !void {
+        // Multiple libzfs calls here are atomic
+    }
+}.call);
+```
+
+### Running Tests
+
+```bash
+# Unit tests (no root required)
+zig build test
+
+# Integration tests (requires root for ZFS)
+sudo zig build test
+
+# Run specific test file
+zig build test --test-filter "config"
+```
+
+---
+
 ## Quick Reference
 
 ### Common Commands
