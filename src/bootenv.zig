@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const validation = @import("validation.zig");
 
 /// Boot environment information
 pub const BootEnvironment = struct {
@@ -630,34 +631,59 @@ fn isLeapYear(year: u16) bool {
 }
 
 /// Parse size string (e.g., "1.5G", "500M") to bytes
+/// Uses bounds checking to prevent overflow and unrealistic values
 fn parseSize(size_str: []const u8) u64 {
     if (size_str.len == 0) return 0;
 
-    const last_char = size_str[size_str.len - 1];
-    const multiplier: u64 = switch (last_char) {
-        'K', 'k' => 1024,
-        'M', 'm' => 1024 * 1024,
-        'G', 'g' => 1024 * 1024 * 1024,
-        'T', 't' => 1024 * 1024 * 1024 * 1024,
-        else => 1,
-    };
+    // Max: 100TB (reasonable upper bound for any boot environment)
+    const max_size: u64 = 100 * 1024 * 1024 * 1024 * 1024;
 
-    const num_str = if (last_char >= 'A' and last_char <= 'z')
-        size_str[0 .. size_str.len - 1]
-    else
-        size_str;
+    // Try validation module first (handles integer sizes with suffixes)
+    if (validation.parseSize(size_str, .{ .max = max_size })) |size| {
+        return size;
+    } else |_| {
+        // Fall back to float parsing for values like "1.5G"
+        const last_char = size_str[size_str.len - 1];
+        const multiplier: u64 = switch (last_char) {
+            'K', 'k' => 1024,
+            'M', 'm' => 1024 * 1024,
+            'G', 'g' => 1024 * 1024 * 1024,
+            'T', 't' => 1024 * 1024 * 1024 * 1024,
+            else => 1,
+        };
 
-    // Parse float and multiply
-    const value = std.fmt.parseFloat(f64, num_str) catch return 0;
-    return @intFromFloat(value * @as(f64, @floatFromInt(multiplier)));
+        const num_str = if (last_char >= 'A' and last_char <= 'z')
+            size_str[0 .. size_str.len - 1]
+        else
+            size_str;
+
+        // Parse float and multiply with bounds check
+        const value = std.fmt.parseFloat(f64, num_str) catch return 0;
+        const result = value * @as(f64, @floatFromInt(multiplier));
+
+        // Bounds check
+        if (result < 0 or result > @as(f64, @floatFromInt(max_size))) {
+            return 0;
+        }
+
+        return @intFromFloat(result);
+    }
 }
 
 /// Parse timestamp string to epoch
+/// Uses validation module for bounds checking
 fn parseTimestamp(ts_str: []const u8) i64 {
-    // bectl outputs timestamps in various formats
-    // This is a simplified parser
-    _ = ts_str;
-    return std.time.timestamp();
+    if (ts_str.len == 0) return std.time.timestamp();
+
+    // Try to parse as a Unix timestamp with bounds checking
+    // Min: 0 (Unix epoch), Max: year 2100
+    if (validation.parseTimestamp(ts_str, .{ .min = 0, .max = 4102444800 })) |ts| {
+        return ts;
+    } else |_| {
+        // bectl outputs timestamps in various formats - fall back to current time
+        // Future: could add date string parsing here
+        return std.time.timestamp();
+    }
 }
 
 /// Simple glob pattern matching

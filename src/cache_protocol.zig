@@ -4,6 +4,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const signature = @import("signature.zig");
+const validation = @import("validation.zig");
 
 /// Cache protocol version
 pub const PROTOCOL_VERSION = "1.0";
@@ -38,15 +39,22 @@ pub const CacheInfo = struct {
         var buffer = std.ArrayList(u8).init(allocator);
         errdefer buffer.deinit();
 
-        try buffer.appendSlice("{");
-        try std.fmt.format(buffer.writer(), "\"name\":\"{s}\",", .{self.name});
-        try std.fmt.format(buffer.writer(), "\"version\":\"{s}\",", .{self.version});
-        try std.fmt.format(buffer.writer(), "\"protocol_version\":\"{s}\",", .{self.protocol_version});
-        try std.fmt.format(buffer.writer(), "\"package_count\":{d},", .{self.package_count});
-        try std.fmt.format(buffer.writer(), "\"total_size\":{d},", .{self.total_size});
+        const writer = buffer.writer();
+
+        try buffer.appendSlice("{\"name\":\"");
+        try validation.writeJsonEscaped(writer, self.name);
+        try buffer.appendSlice("\",\"version\":\"");
+        try validation.writeJsonEscaped(writer, self.version);
+        try buffer.appendSlice("\",\"protocol_version\":\"");
+        try validation.writeJsonEscaped(writer, self.protocol_version);
+        try buffer.appendSlice("\",");
+        try std.fmt.format(writer, "\"package_count\":{d},", .{self.package_count});
+        try std.fmt.format(writer, "\"total_size\":{d},", .{self.total_size});
 
         if (self.public_key) |key| {
-            try std.fmt.format(buffer.writer(), "\"public_key\":\"{s}\",", .{key});
+            try buffer.appendSlice("\"public_key\":\"");
+            try validation.writeJsonEscaped(writer, key);
+            try buffer.appendSlice("\",");
         } else {
             try buffer.appendSlice("\"public_key\":null,");
         }
@@ -54,7 +62,9 @@ pub const CacheInfo = struct {
         try buffer.appendSlice("\"features\":[");
         for (self.features, 0..) |feature, i| {
             if (i > 0) try buffer.append(',');
-            try std.fmt.format(buffer.writer(), "\"{s}\"", .{feature});
+            try buffer.append('"');
+            try validation.writeJsonEscaped(writer, feature);
+            try buffer.append('"');
         }
         try buffer.appendSlice("]}");
 
@@ -118,23 +128,32 @@ pub const PackageMeta = struct {
         var buffer = std.ArrayList(u8).init(allocator);
         errdefer buffer.deinit();
 
-        try buffer.appendSlice("{");
-        try std.fmt.format(buffer.writer(), "\"name\":\"{s}\",", .{self.name});
-        try std.fmt.format(buffer.writer(), "\"version\":\"{s}\",", .{self.version});
-        try std.fmt.format(buffer.writer(), "\"hash\":\"{s}\",", .{self.hash});
-        try std.fmt.format(buffer.writer(), "\"size\":{d},", .{self.size});
-        try std.fmt.format(buffer.writer(), "\"compressed_size\":{d},", .{self.compressed_size});
-        try std.fmt.format(buffer.writer(), "\"compression\":\"{s}\",", .{@tagName(self.compression)});
+        const writer = buffer.writer();
+
+        try buffer.appendSlice("{\"name\":\"");
+        try validation.writeJsonEscaped(writer, self.name);
+        try buffer.appendSlice("\",\"version\":\"");
+        try validation.writeJsonEscaped(writer, self.version);
+        try buffer.appendSlice("\",\"hash\":\"");
+        try validation.writeJsonEscaped(writer, self.hash);
+        try buffer.appendSlice("\",");
+        try std.fmt.format(writer, "\"size\":{d},", .{self.size});
+        try std.fmt.format(writer, "\"compressed_size\":{d},", .{self.compressed_size});
+        try std.fmt.format(writer, "\"compression\":\"{s}\",", .{@tagName(self.compression)});
 
         try buffer.appendSlice("\"dependencies\":[");
         for (self.dependencies, 0..) |dep, i| {
             if (i > 0) try buffer.append(',');
-            try std.fmt.format(buffer.writer(), "\"{s}\"", .{dep});
+            try buffer.append('"');
+            try validation.writeJsonEscaped(writer, dep);
+            try buffer.append('"');
         }
         try buffer.appendSlice("],");
 
         if (self.description) |desc| {
-            try std.fmt.format(buffer.writer(), "\"description\":\"{s}\",", .{desc});
+            try buffer.appendSlice("\"description\":\"");
+            try validation.writeJsonEscaped(writer, desc);
+            try buffer.appendSlice("\",");
         } else {
             try buffer.appendSlice("\"description\":null,");
         }
@@ -142,7 +161,9 @@ pub const PackageMeta = struct {
         try buffer.appendSlice("\"signatures\":[");
         for (self.signatures, 0..) |sig, i| {
             if (i > 0) try buffer.append(',');
-            try std.fmt.format(buffer.writer(), "\"{s}\"", .{sig});
+            try buffer.append('"');
+            try validation.writeJsonEscaped(writer, sig);
+            try buffer.append('"');
         }
         try buffer.appendSlice("]}");
 
@@ -780,22 +801,23 @@ pub const CacheClient = struct {
 
     /// HTTP GET request (simplified - would use proper HTTP client)
     fn httpGet(self: *Self, url: []const u8) !?[]const u8 {
-        // Parse URL to extract host and path
-        const host_start = if (std.mem.indexOf(u8, url, "://")) |idx| idx + 3 else 0;
-        const path_start = std.mem.indexOfPos(u8, url, host_start, "/") orelse url.len;
-        const host = url[host_start..path_start];
-        const path = if (path_start < url.len) url[path_start..] else "/";
+        // Validate URL before parsing
+        const url_result = validation.UrlValidator.validate(url);
+        if (!url_result.valid) {
+            std.log.warn("Invalid URL: {s} - {s}", .{ url, url_result.error_message orelse "unknown error" });
+            return null;
+        }
 
-        // Extract port if present
-        var actual_host: []const u8 = host;
-        var port: u16 = 80;
-        if (std.mem.indexOf(u8, host, ":")) |port_idx| {
-            actual_host = host[0..port_idx];
-            port = std.fmt.parseInt(u16, host[port_idx + 1 ..], 10) catch 80;
-        }
-        if (std.mem.startsWith(u8, url, "https://")) {
-            port = 443;
-        }
+        // Use validated components
+        const actual_host = url_result.host orelse return null;
+        const path = url_result.path orelse "/";
+
+        // Determine port - use validated port or default based on scheme
+        var port: u16 = url_result.port orelse switch (url_result.scheme) {
+            .https => 443,
+            .http => 80,
+            else => 80,
+        };
 
         // Connect
         const stream = std.net.tcpConnectToHost(self.allocator, actual_host, port) catch {
@@ -805,7 +827,7 @@ pub const CacheClient = struct {
 
         // Send request
         var request_buf: [4096]u8 = undefined;
-        const request = std.fmt.bufPrint(&request_buf, "GET {s} HTTP/1.1\r\nHost: {s}\r\nConnection: close\r\n\r\n", .{ path, host }) catch {
+        const request = std.fmt.bufPrint(&request_buf, "GET {s} HTTP/1.1\r\nHost: {s}\r\nConnection: close\r\n\r\n", .{ path, actual_host }) catch {
             return null;
         };
         stream.writeAll(request) catch {
