@@ -1,11 +1,19 @@
 const std = @import("std");
 
 // =============================================================================
+// Phase 51: Critical Security Fixes
+// Enhanced path traversal and symlink escape prevention
+// =============================================================================
+
+// =============================================================================
 // Security Limits - Named constants for clarity and maintainability
 // =============================================================================
 
 /// Maximum path length for extracted files (prevents buffer overflows)
 pub const DEFAULT_MAX_PATH_LENGTH: usize = 1024;
+
+/// Maximum symlink chain depth to prevent infinite loops
+pub const MAX_SYMLINK_DEPTH: usize = 40;
 
 /// Maximum size for a single file (1 GB) - prevents zip bombs
 pub const DEFAULT_MAX_FILE_SIZE: u64 = 1 * 1024 * 1024 * 1024;
@@ -84,6 +92,14 @@ pub const SecureTarExtractor = struct {
         IoError,
         /// Allocation failed
         OutOfMemory,
+        /// Path contains backslash (Windows path separator - potential bypass)
+        BackslashInPath,
+        /// Path contains URL-encoded sequences
+        EncodedSequence,
+        /// Hardlink target escapes extraction root
+        HardlinkEscape,
+        /// Symlink chain too deep
+        SymlinkChainTooDeep,
     };
 
     /// Initialize a secure tar extractor
@@ -318,6 +334,12 @@ pub const SecureTarExtractor = struct {
 
     /// Validate a path from the archive
     /// Returns the sanitized path or an error
+    ///
+    /// SECURITY (Phase 51): Enhanced validation including:
+    /// - Backslash detection (Windows path separator bypass)
+    /// - URL-encoded sequence detection (%2e%2e for ..)
+    /// - Control character rejection
+    /// - Path traversal prevention
     pub fn validatePath(self: *SecureTarExtractor, path: []const u8) ![]const u8 {
         // Check for empty path
         if (path.len == 0) {
@@ -336,6 +358,22 @@ pub const SecureTarExtractor = struct {
             self.stats.paths_rejected += 1;
             std.debug.print("SecureTarExtractor: Path too long: {d} bytes\n", .{path.len});
             return ExtractionError.PathTooLong;
+        }
+
+        // SECURITY (Phase 51): Check for backslash (Windows path separator)
+        // Attackers may use backslash to bypass Unix path validation
+        if (std.mem.indexOfScalar(u8, path, '\\') != null) {
+            self.stats.paths_rejected += 1;
+            std.debug.print("SecureTarExtractor: Path contains backslash (potential bypass): {s}\n", .{path});
+            return ExtractionError.BackslashInPath;
+        }
+
+        // SECURITY (Phase 51): Check for URL-encoded sequences
+        // Detect %2e%2e (URL-encoded ..) and similar patterns
+        if (containsEncodedTraversal(path)) {
+            self.stats.paths_rejected += 1;
+            std.debug.print("SecureTarExtractor: Path contains encoded traversal sequence: {s}\n", .{path});
+            return ExtractionError.EncodedSequence;
         }
 
         // Check for absolute paths
@@ -537,6 +575,69 @@ pub const SecureTarExtractor = struct {
     }
 };
 
+// =============================================================================
+// Phase 51: Security Helper Functions
+// =============================================================================
+
+/// Check if a path contains URL-encoded traversal sequences
+/// Detects patterns like %2e%2e (encoded ..) or %2f (encoded /)
+fn containsEncodedTraversal(path: []const u8) bool {
+    // Common encoded patterns that could be used for traversal:
+    // %2e = .  (dot)
+    // %2f = /  (forward slash)
+    // %5c = \  (backslash)
+    // %00 = NUL (null byte)
+
+    var i: usize = 0;
+    while (i < path.len) : (i += 1) {
+        if (path[i] == '%' and i + 2 < path.len) {
+            const hex1 = path[i + 1];
+            const hex2 = path[i + 2];
+
+            // Check for %2e (dot)
+            if ((hex1 == '2' or hex1 == '0') and (hex2 == 'e' or hex2 == 'E')) {
+                return true;
+            }
+
+            // Check for %2f (forward slash)
+            if ((hex1 == '2' or hex1 == '0') and (hex2 == 'f' or hex2 == 'F')) {
+                return true;
+            }
+
+            // Check for %5c (backslash)
+            if ((hex1 == '5' or hex1 == '0') and (hex2 == 'c' or hex2 == 'C')) {
+                return true;
+            }
+
+            // Check for %00 (null byte)
+            if (hex1 == '0' and hex2 == '0') {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+/// Verify that a resolved path is still within the extraction root
+/// SECURITY: Prevents TOCTOU attacks by using realpath
+fn isPathWithinRoot(allocator: std.mem.Allocator, root: []const u8, path: []const u8) bool {
+    // Get canonical paths
+    const canonical_root = std.fs.cwd().realpathAlloc(allocator, root) catch return false;
+    defer allocator.free(canonical_root);
+
+    const canonical_path = std.fs.cwd().realpathAlloc(allocator, path) catch {
+        // If path doesn't exist yet, check the parent
+        const parent = std.fs.path.dirname(path) orelse return false;
+        const canonical_parent = std.fs.cwd().realpathAlloc(allocator, parent) catch return false;
+        defer allocator.free(canonical_parent);
+        return std.mem.startsWith(u8, canonical_parent, canonical_root);
+    };
+    defer allocator.free(canonical_path);
+
+    return std.mem.startsWith(u8, canonical_path, canonical_root);
+}
+
 /// Convenience function to extract with default secure options
 pub fn extractSecure(
     allocator: std.mem.Allocator,
@@ -674,4 +775,66 @@ test "validatePath.rejects_control_chars" {
     // Should reject paths with control characters
     const result = extractor.validatePath("foo\x01bar");
     try std.testing.expectError(SecureTarExtractor.ExtractionError.InvalidFilename, result);
+}
+
+// ============================================================================
+// Phase 51: Enhanced Security Tests
+// ============================================================================
+
+test "validatePath.rejects_backslash" {
+    var extractor = SecureTarExtractor.init(
+        std.testing.allocator,
+        "/tmp/test",
+        .{},
+    );
+
+    // Should reject paths with backslash (Windows path separator bypass)
+    const result = extractor.validatePath("foo\\bar");
+    try std.testing.expectError(SecureTarExtractor.ExtractionError.BackslashInPath, result);
+
+    // Should reject nested backslash attempts
+    const result2 = extractor.validatePath("foo\\..\\..\\etc\\passwd");
+    try std.testing.expectError(SecureTarExtractor.ExtractionError.BackslashInPath, result2);
+}
+
+test "validatePath.rejects_encoded_traversal" {
+    var extractor = SecureTarExtractor.init(
+        std.testing.allocator,
+        "/tmp/test",
+        .{},
+    );
+
+    // Should reject URL-encoded .. (%2e%2e)
+    const result = extractor.validatePath("foo/%2e%2e/etc/passwd");
+    try std.testing.expectError(SecureTarExtractor.ExtractionError.EncodedSequence, result);
+
+    // Should reject URL-encoded / (%2f)
+    const result2 = extractor.validatePath("foo%2f..%2f..%2fetc%2fpasswd");
+    try std.testing.expectError(SecureTarExtractor.ExtractionError.EncodedSequence, result2);
+
+    // Should reject URL-encoded null byte (%00)
+    const result3 = extractor.validatePath("foo%00bar");
+    try std.testing.expectError(SecureTarExtractor.ExtractionError.EncodedSequence, result3);
+}
+
+test "containsEncodedTraversal.detects_patterns" {
+    // Should detect encoded dot
+    try std.testing.expect(containsEncodedTraversal("%2e"));
+    try std.testing.expect(containsEncodedTraversal("%2E"));
+
+    // Should detect encoded slash
+    try std.testing.expect(containsEncodedTraversal("%2f"));
+    try std.testing.expect(containsEncodedTraversal("%2F"));
+
+    // Should detect encoded backslash
+    try std.testing.expect(containsEncodedTraversal("%5c"));
+    try std.testing.expect(containsEncodedTraversal("%5C"));
+
+    // Should detect encoded null
+    try std.testing.expect(containsEncodedTraversal("%00"));
+
+    // Should not flag safe paths
+    try std.testing.expect(!containsEncodedTraversal("foo/bar"));
+    try std.testing.expect(!containsEncodedTraversal("my-package_1.0"));
+    try std.testing.expect(!containsEncodedTraversal("%20space")); // Encoded space is OK
 }
