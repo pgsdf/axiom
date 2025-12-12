@@ -30,6 +30,7 @@ const cache_index = @import("cache_index.zig");
 const be_integration = @import("be_integration.zig");
 const multi_user_security = @import("multi_user_security.zig");
 const error_recovery = @import("error_recovery.zig");
+const testing_framework = @import("testing_framework.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageStore = store.PackageStore;
@@ -88,6 +89,8 @@ const RecoveryEngine = error_recovery.RecoveryEngine;
 const RecoveryMode = error_recovery.RecoveryMode;
 const ErrorReporter = error_recovery.ErrorReporter;
 const VerificationStatus = error_recovery.VerificationStatus;
+const TestRunner = testing_framework.TestRunner;
+const TestConfig = testing_framework.TestConfig;
 
 /// CLI command enumeration
 pub const Command = enum {
@@ -278,6 +281,14 @@ pub const Command = enum {
     import_recover,
     env_recover,
     error_suggest,
+
+    // Testing & validation operations (Phase 50)
+    test_run,
+    test_unit,
+    test_golden,
+    test_integration,
+    test_regression,
+    test_fuzz,
 
     unknown,
 };
@@ -490,6 +501,14 @@ pub fn parseCommand(cmd: []const u8) Command {
     if (std.mem.eql(u8, cmd, "import-recover")) return .import_recover;
     if (std.mem.eql(u8, cmd, "env-recover")) return .env_recover;
     if (std.mem.eql(u8, cmd, "error-suggest")) return .error_suggest;
+
+    // Testing & validation commands (Phase 50)
+    if (std.mem.eql(u8, cmd, "test")) return .test_run;
+    if (std.mem.eql(u8, cmd, "test-unit")) return .test_unit;
+    if (std.mem.eql(u8, cmd, "test-golden")) return .test_golden;
+    if (std.mem.eql(u8, cmd, "test-integration")) return .test_integration;
+    if (std.mem.eql(u8, cmd, "test-regression")) return .test_regression;
+    if (std.mem.eql(u8, cmd, "test-fuzz")) return .test_fuzz;
 
     return .unknown;
 }
@@ -759,6 +778,14 @@ pub const CLI = struct {
             .import_recover => try self.importRecover(args[1..]),
             .env_recover => try self.envRecover(args[1..]),
             .error_suggest => try self.errorSuggest(args[1..]),
+
+            // Testing & validation commands (Phase 50)
+            .test_run => try self.testRun(args[1..]),
+            .test_unit => try self.testUnit(args[1..]),
+            .test_golden => try self.testGolden(args[1..]),
+            .test_integration => try self.testIntegration(args[1..]),
+            .test_regression => try self.testRegression(args[1..]),
+            .test_fuzz => try self.testFuzz(args[1..]),
 
             .unknown => {
                 std.debug.print("Unknown command: {s}\n", .{args[0]});
@@ -9032,6 +9059,337 @@ pub const CLI = struct {
         }
 
         _ = self;
+    }
+
+    // ============================================================
+    // Phase 50: Testing & Validation Framework Commands
+    // ============================================================
+
+    /// Run all tests
+    fn testRun(self: *CLI, args: []const []const u8) !void {
+        var verbose = false;
+        var filter: ?[]const u8 = null;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            const arg = args[i];
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom test [options]\n", .{});
+                std.debug.print("\nRun all test suites.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --verbose, -v     Show detailed output\n", .{});
+                std.debug.print("  --filter <pat>    Only run tests matching pattern\n", .{});
+                std.debug.print("\nTest suites:\n", .{});
+                std.debug.print("  - Unit tests\n", .{});
+                std.debug.print("  - Golden file tests\n", .{});
+                std.debug.print("  - Integration tests\n", .{});
+                std.debug.print("  - Regression tests\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom test\n", .{});
+                std.debug.print("  axiom test --verbose\n", .{});
+                std.debug.print("  axiom test --filter resolver\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--verbose") or std.mem.eql(u8, arg, "-v")) {
+                verbose = true;
+            } else if (std.mem.eql(u8, arg, "--filter") and i + 1 < args.len) {
+                i += 1;
+                filter = args[i];
+            }
+        }
+
+        std.debug.print("Running All Tests\n", .{});
+        std.debug.print("=================\n\n", .{});
+
+        var runner = TestRunner.init(self.allocator);
+        var config = TestConfig.default();
+        config.verbose = verbose;
+        config.filter = filter;
+        runner.setConfig(config);
+
+        var summary = runner.runAll() catch |err| {
+            std.debug.print("Test run failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer summary.deinit();
+
+        // Print results
+        std.debug.print("Unit Tests:        {d} passed, {d} failed\n", .{ summary.unit.passed, summary.unit.failed });
+        std.debug.print("Golden Tests:      {d} passed, {d} failed\n", .{ summary.golden.passed, summary.golden.failed });
+        std.debug.print("Integration Tests: {d} passed, {d} failed\n", .{ summary.integration.passed, summary.integration.failed });
+        std.debug.print("Regression Tests:  {d} passed, {d} failed\n", .{ summary.regression.passed, summary.regression.failed });
+
+        std.debug.print("\n", .{});
+        std.debug.print("Total: {d} tests, {d} passed, {d} failed\n", .{
+            summary.totalTests(),
+            summary.totalPassed(),
+            summary.totalFailed(),
+        });
+
+        if (summary.allPassed()) {
+            std.debug.print("\n✓ All tests passed.\n", .{});
+        } else {
+            std.debug.print("\n✗ Some tests failed.\n", .{});
+        }
+    }
+
+    /// Run unit tests
+    fn testUnit(self: *CLI, args: []const []const u8) !void {
+        var verbose = false;
+        var filter: ?[]const u8 = null;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            const arg = args[i];
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom test-unit [options]\n", .{});
+                std.debug.print("\nRun unit tests.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --verbose, -v     Show detailed output\n", .{});
+                std.debug.print("  --filter <pat>    Only run tests matching pattern\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom test-unit\n", .{});
+                std.debug.print("  axiom test-unit --filter resolver\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--verbose") or std.mem.eql(u8, arg, "-v")) {
+                verbose = true;
+            } else if (std.mem.eql(u8, arg, "--filter") and i + 1 < args.len) {
+                i += 1;
+                filter = args[i];
+            }
+        }
+
+        std.debug.print("Running Unit Tests\n", .{});
+        std.debug.print("==================\n\n", .{});
+
+        var runner = TestRunner.init(self.allocator);
+        var config = TestConfig.default();
+        config.verbose = verbose;
+        config.filter = filter;
+        runner.setConfig(config);
+
+        var results = runner.runUnit() catch |err| {
+            std.debug.print("Test run failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer results.deinit();
+
+        for (results.cases.items) |case| {
+            std.debug.print("  {s} {s}\n", .{ case.status.symbol(), case.name });
+        }
+
+        std.debug.print("\n{d} passed, {d} failed, {d} skipped\n", .{
+            results.passed,
+            results.failed,
+            results.skipped,
+        });
+
+        if (results.allPassed()) {
+            std.debug.print("\n✓ All unit tests passed.\n", .{});
+        }
+    }
+
+    /// Run golden file tests
+    fn testGolden(self: *CLI, args: []const []const u8) !void {
+        var verbose = false;
+
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom test-golden [options]\n", .{});
+                std.debug.print("\nRun golden file tests.\n", .{});
+                std.debug.print("\nGolden file tests compare actual output against expected files.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --verbose, -v     Show detailed output\n", .{});
+                std.debug.print("  --update          Update golden files with actual output\n", .{});
+                std.debug.print("\nCategories:\n", .{});
+                std.debug.print("  manifests/valid   - Valid manifest parsing\n", .{});
+                std.debug.print("  manifests/invalid - Invalid manifest rejection\n", .{});
+                std.debug.print("  profiles          - Profile serialization\n", .{});
+                std.debug.print("  resolutions       - Resolution output\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom test-golden\n", .{});
+                std.debug.print("  axiom test-golden --update\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--verbose") or std.mem.eql(u8, arg, "-v")) {
+                verbose = true;
+            }
+        }
+
+        std.debug.print("Running Golden File Tests\n", .{});
+        std.debug.print("=========================\n\n", .{});
+
+        var runner = TestRunner.init(self.allocator);
+        var config = TestConfig.default();
+        config.verbose = verbose;
+        runner.setConfig(config);
+
+        var results = runner.runGolden() catch |err| {
+            std.debug.print("Test run failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer results.deinit();
+
+        for (results.cases.items) |case| {
+            std.debug.print("  {s} {s}\n", .{ case.status.symbol(), case.name });
+        }
+
+        std.debug.print("\n{d} passed, {d} failed\n", .{ results.passed, results.failed });
+    }
+
+    /// Run integration tests
+    fn testIntegration(self: *CLI, args: []const []const u8) !void {
+        var verbose = false;
+
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom test-integration [options]\n", .{});
+                std.debug.print("\nRun integration tests.\n", .{});
+                std.debug.print("\nIntegration tests exercise full workflows including ZFS operations.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --verbose, -v     Show detailed output\n", .{});
+                std.debug.print("  --pool <name>     Use specific test pool\n", .{});
+                std.debug.print("\nTests:\n", .{});
+                std.debug.print("  full_workflow     - Complete import/profile/realize cycle\n", .{});
+                std.debug.print("  import_export     - Package import and export\n", .{});
+                std.debug.print("  profile_management - Profile CRUD operations\n", .{});
+                std.debug.print("  cache_operations  - Binary cache fetch/push\n", .{});
+                std.debug.print("  be_operations     - Boot environment management\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom test-integration\n", .{});
+                std.debug.print("  axiom test-integration --pool testpool\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--verbose") or std.mem.eql(u8, arg, "-v")) {
+                verbose = true;
+            }
+        }
+
+        std.debug.print("Running Integration Tests\n", .{});
+        std.debug.print("=========================\n\n", .{});
+
+        var runner = TestRunner.init(self.allocator);
+        var config = TestConfig.default();
+        config.verbose = verbose;
+        runner.setConfig(config);
+
+        var results = runner.runIntegration() catch |err| {
+            std.debug.print("Test run failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer results.deinit();
+
+        for (results.cases.items) |case| {
+            const msg = case.message orelse "";
+            std.debug.print("  {s} {s} {s}\n", .{ case.status.symbol(), case.name, msg });
+        }
+
+        std.debug.print("\n{d} passed, {d} failed, {d} skipped\n", .{
+            results.passed,
+            results.failed,
+            results.skipped,
+        });
+    }
+
+    /// Run regression tests
+    fn testRegression(self: *CLI, args: []const []const u8) !void {
+        var verbose = false;
+
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom test-regression [options]\n", .{});
+                std.debug.print("\nRun regression tests.\n", .{});
+                std.debug.print("\nRegression tests verify fixes for previously identified bugs.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --verbose, -v     Show detailed output\n", .{});
+                std.debug.print("\nTest cases:\n", .{});
+                std.debug.print("  cyclic-deps       - Cyclic dependency detection\n", .{});
+                std.debug.print("  partial-import    - Interrupted import recovery\n", .{});
+                std.debug.print("  symlink-escape    - Symlink path traversal prevention\n", .{});
+                std.debug.print("  unicode-paths     - Unicode path handling\n", .{});
+                std.debug.print("  large-manifest    - Large manifest parsing\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom test-regression\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--verbose") or std.mem.eql(u8, arg, "-v")) {
+                verbose = true;
+            }
+        }
+
+        std.debug.print("Running Regression Tests\n", .{});
+        std.debug.print("========================\n\n", .{});
+
+        var runner = TestRunner.init(self.allocator);
+        var config = TestConfig.default();
+        config.verbose = verbose;
+        runner.setConfig(config);
+
+        var results = runner.runRegression() catch |err| {
+            std.debug.print("Test run failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer results.deinit();
+
+        for (results.cases.items) |case| {
+            std.debug.print("  {s} {s}\n", .{ case.status.symbol(), case.name });
+        }
+
+        std.debug.print("\n{d} passed, {d} failed\n", .{ results.passed, results.failed });
+
+        if (results.allPassed()) {
+            std.debug.print("\n✓ No regressions detected.\n", .{});
+        }
+    }
+
+    /// Run fuzz tests
+    fn testFuzz(self: *CLI, args: []const []const u8) !void {
+        var duration: u32 = 60;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            const arg = args[i];
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom test-fuzz [options]\n", .{});
+                std.debug.print("\nRun fuzz tests.\n", .{});
+                std.debug.print("\nFuzz testing generates random inputs to find crashes and bugs.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --duration <sec>  Fuzzing duration in seconds (default: 60)\n", .{});
+                std.debug.print("  --target <name>   Specific fuzz target to run\n", .{});
+                std.debug.print("\nTargets:\n", .{});
+                std.debug.print("  manifest          - Manifest parser fuzzing\n", .{});
+                std.debug.print("  profile           - Profile parser fuzzing\n", .{});
+                std.debug.print("  path              - Path validation fuzzing\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom test-fuzz\n", .{});
+                std.debug.print("  axiom test-fuzz --duration 300\n", .{});
+                std.debug.print("  axiom test-fuzz --target manifest\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--duration") and i + 1 < args.len) {
+                i += 1;
+                duration = std.fmt.parseInt(u32, args[i], 10) catch 60;
+            }
+        }
+
+        std.debug.print("Running Fuzz Tests\n", .{});
+        std.debug.print("==================\n\n", .{});
+
+        std.debug.print("Duration: {d} seconds\n\n", .{duration});
+
+        var runner = TestRunner.init(self.allocator);
+
+        const results = runner.runFuzz(duration) catch |err| {
+            std.debug.print("Fuzz run failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+
+        std.debug.print("Results:\n", .{});
+        std.debug.print("  Iterations:    {d}\n", .{results.iterations});
+        std.debug.print("  Unique paths:  {d}\n", .{results.unique_paths});
+        std.debug.print("  Coverage:      {d:.1}%\n", .{results.coverage_percent});
+        std.debug.print("  Crashes:       {d}\n", .{results.crashes});
+
+        if (results.crashes == 0) {
+            std.debug.print("\n✓ No crashes found.\n", .{});
+        } else {
+            std.debug.print("\n✗ {d} crash(es) found! Check fuzz output for details.\n", .{results.crashes});
+        }
     }
 };
 
