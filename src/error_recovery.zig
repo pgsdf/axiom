@@ -794,6 +794,12 @@ pub const RecoveryEngine = struct {
     }
 };
 
+/// Error suggestion entry
+pub const ErrorSuggestion = struct {
+    error_name: []const u8,
+    suggestion: []const u8,
+};
+
 /// Error Reporter for consistent error output and suggestions
 pub const ErrorReporter = struct {
     allocator: Allocator,
@@ -862,8 +868,8 @@ pub const ErrorReporter = struct {
     }
 
     /// Get all suggestions for errors
-    pub fn getSuggestionTable() []const struct { error_name: []const u8, suggestion: []const u8 } {
-        return &[_]struct { error_name: []const u8, suggestion: []const u8 }{
+    pub fn getSuggestionTable() []const ErrorSuggestion {
+        return &[_]ErrorSuggestion{
             .{ .error_name = "StoreCorrupted", .suggestion = "axiom store-repair" },
             .{ .error_name = "PackageNotFound", .suggestion = "axiom search <name>" },
             .{ .error_name = "ImportInterrupted", .suggestion = "axiom import-recover" },
