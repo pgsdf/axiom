@@ -813,7 +813,7 @@ pub const CacheClient = struct {
         const path = url_result.path orelse "/";
 
         // Determine port - use validated port or default based on scheme
-        var port: u16 = url_result.port orelse switch (url_result.scheme) {
+        const port: u16 = url_result.port orelse switch (url_result.scheme) {
             .https => 443,
             .http => 80,
             else => 80,
