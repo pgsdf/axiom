@@ -1518,6 +1518,216 @@ For detailed help on a specific error:
 
 ---
 
+### Testing & Validation Operations (Phase 50)
+
+Commands for running tests and validating system correctness.
+
+#### `axiom test [options]`
+
+Run all test suites.
+
+```bash
+axiom test
+axiom test --verbose
+```
+
+**Options:**
+- `--verbose` - Show detailed test output
+
+**Example output:**
+```
+Axiom Test Runner
+=================
+
+Running all test suites...
+
+Unit Tests:         47/47 passed
+Golden File Tests:  23/23 passed
+Integration Tests:  12/12 passed
+Regression Tests:   8/8 passed
+
+=====================================
+Overall: PASSED (90 tests)
+=====================================
+```
+
+#### `axiom test-unit [options]`
+
+Run unit tests only.
+
+```bash
+axiom test-unit
+axiom test-unit --verbose
+```
+
+**Options:**
+- `--verbose` - Show individual test results
+
+**Example output:**
+```
+Unit Tests
+==========
+
+Running unit tests...
+
+  ✓ resolver_basic
+  ✓ resolver_virtual_providers
+  ✓ manifest_parsing
+  ✓ profile_validation
+  ...
+
+Passed: 47/47
+Failed: 0
+Skipped: 0
+
+✓ All unit tests passed!
+```
+
+#### `axiom test-golden [options]`
+
+Run golden file tests (manifest/profile/resolution validation).
+
+```bash
+axiom test-golden
+axiom test-golden --verbose
+```
+
+**Options:**
+- `--verbose` - Show individual test file results
+
+**Example output:**
+```
+Golden File Tests
+=================
+
+Running golden file tests...
+
+Manifest tests:
+  ✓ valid/basic.yaml
+  ✓ valid/with-deps.yaml
+  ✓ invalid/missing-name.yaml (expected failure)
+
+Profile tests:
+  ✓ valid/development.yaml
+  ✓ valid/server.yaml
+
+Resolution tests:
+  ✓ simple.input.yaml -> simple.expected.yaml
+
+Passed: 23/23
+Failed: 0
+
+✓ All golden file tests passed!
+```
+
+#### `axiom test-integration [options]`
+
+Run integration tests (full workflow tests).
+
+```bash
+axiom test-integration
+axiom test-integration --verbose
+```
+
+**Options:**
+- `--verbose` - Show detailed workflow output
+
+**Example output:**
+```
+Integration Tests
+=================
+
+Running integration tests...
+
+  ✓ full_workflow
+  ✓ profile_lifecycle
+  ✓ environment_creation
+  ✓ garbage_collection
+  ...
+
+Passed: 12/12
+Failed: 0
+
+✓ All integration tests passed!
+```
+
+#### `axiom test-regression [options]`
+
+Run regression tests for known issues.
+
+```bash
+axiom test-regression
+axiom test-regression --verbose
+```
+
+**Options:**
+- `--verbose` - Show test case details
+
+**Example output:**
+```
+Regression Tests
+================
+
+Running regression tests...
+
+  ✓ issue-42-cyclic-deps
+  ✓ issue-57-partial-import
+  ✓ issue-89-version-constraint
+  ...
+
+Passed: 8/8
+Failed: 0
+
+✓ All regression tests passed!
+```
+
+#### `axiom test-fuzz [options]`
+
+Run fuzz tests on parsers.
+
+```bash
+axiom test-fuzz
+axiom test-fuzz --duration 60
+axiom test-fuzz --verbose
+```
+
+**Options:**
+- `--duration <seconds>` - How long to run fuzz tests (default: 10)
+- `--verbose` - Show fuzz iteration progress
+
+**Example output:**
+```
+Fuzz Tests
+==========
+
+Running fuzz tests for 10 seconds...
+
+Target: manifest_parser
+  Iterations: 15234
+  Crashes: 0
+  Unique paths: 847
+
+Target: profile_parser
+  Iterations: 12456
+  Crashes: 0
+  Unique paths: 623
+
+Target: version_parser
+  Iterations: 18901
+  Crashes: 0
+  Unique paths: 234
+
+=====================================
+Total iterations: 46591
+Total crashes: 0
+Duration: 10.0s
+=====================================
+
+✓ Fuzz testing completed with no crashes!
+```
+
+---
+
 ### Shell Completions
 
 Generate shell completion scripts for command-line autocompletion.
