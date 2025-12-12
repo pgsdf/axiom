@@ -503,7 +503,7 @@ pub const RecoveryEngine = struct {
     fn scanInterruptedRealizations(self: *Self, plan: *RecoveryPlan) !void {
         // Check for .partial directories in environments
         const env_path = "/axiom/env";
-        const env_dir = std.fs.cwd().openDir(env_path, .{ .iterate = true }) catch {
+        var env_dir = std.fs.cwd().openDir(env_path, .{ .iterate = true }) catch {
             return; // No environments directory
         };
         defer env_dir.close();
@@ -951,7 +951,7 @@ pub const TransactionLog = struct {
     pub fn getIncomplete(self: *Self) !std.ArrayList(TransactionEntry) {
         var entries = std.ArrayList(TransactionEntry).init(self.allocator);
 
-        const dir = std.fs.cwd().openDir(self.log_path, .{ .iterate = true }) catch {
+        var dir = std.fs.cwd().openDir(self.log_path, .{ .iterate = true }) catch {
             return entries;
         };
         defer dir.close();
