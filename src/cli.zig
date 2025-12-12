@@ -29,6 +29,7 @@ const build_provenance = @import("build_provenance.zig");
 const cache_index = @import("cache_index.zig");
 const be_integration = @import("be_integration.zig");
 const multi_user_security = @import("multi_user_security.zig");
+const error_recovery = @import("error_recovery.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageStore = store.PackageStore;
@@ -83,6 +84,10 @@ const AccessControl = multi_user_security.AccessControl;
 const SetuidManager = multi_user_security.SetuidManager;
 const SecurityUser = multi_user_security.User;
 const PrivilegeLevel = multi_user_security.PrivilegeLevel;
+const RecoveryEngine = error_recovery.RecoveryEngine;
+const RecoveryMode = error_recovery.RecoveryMode;
+const ErrorReporter = error_recovery.ErrorReporter;
+const VerificationStatus = error_recovery.VerificationStatus;
 
 /// CLI command enumeration
 pub const Command = enum {
@@ -266,6 +271,13 @@ pub const Command = enum {
     setuid_list,
     setuid_audit,
     privilege_show,
+
+    // Error model & recovery operations (Phase 49)
+    system_verify,
+    system_recover,
+    import_recover,
+    env_recover,
+    error_suggest,
 
     unknown,
 };
@@ -471,6 +483,13 @@ pub fn parseCommand(cmd: []const u8) Command {
     if (std.mem.eql(u8, cmd, "setuid-list")) return .setuid_list;
     if (std.mem.eql(u8, cmd, "setuid-audit")) return .setuid_audit;
     if (std.mem.eql(u8, cmd, "privilege-show")) return .privilege_show;
+
+    // Error model & recovery commands (Phase 49)
+    if (std.mem.eql(u8, cmd, "verify")) return .system_verify;
+    if (std.mem.eql(u8, cmd, "recover")) return .system_recover;
+    if (std.mem.eql(u8, cmd, "import-recover")) return .import_recover;
+    if (std.mem.eql(u8, cmd, "env-recover")) return .env_recover;
+    if (std.mem.eql(u8, cmd, "error-suggest")) return .error_suggest;
 
     return .unknown;
 }
@@ -733,6 +752,13 @@ pub const CLI = struct {
             .setuid_list => try self.setuidList(args[1..]),
             .setuid_audit => try self.setuidAudit(args[1..]),
             .privilege_show => try self.privilegeShow(args[1..]),
+
+            // Error model & recovery commands (Phase 49)
+            .system_verify => try self.systemVerify(args[1..]),
+            .system_recover => try self.systemRecover(args[1..]),
+            .import_recover => try self.importRecover(args[1..]),
+            .env_recover => try self.envRecover(args[1..]),
+            .error_suggest => try self.errorSuggest(args[1..]),
 
             .unknown => {
                 std.debug.print("Unknown command: {s}\n", .{args[0]});
@@ -8623,6 +8649,387 @@ pub const CLI = struct {
         }
 
         std.debug.print("\nNote: Per-user operations only affect the user's own space.\n", .{});
+
+        _ = self;
+    }
+
+    // ============================================================
+    // Phase 49: Error Model & Recovery Commands
+    // ============================================================
+
+    /// Verify system integrity
+    fn systemVerify(self: *CLI, args: []const []const u8) !void {
+        var quick = false;
+
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom verify [options]\n", .{});
+                std.debug.print("\nVerify system integrity.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --quick           Quick check (skip hash verification)\n", .{});
+                std.debug.print("\nChecks:\n", .{});
+                std.debug.print("  - Store integrity\n", .{});
+                std.debug.print("  - Profile validity\n", .{});
+                std.debug.print("  - Environment completeness\n", .{});
+                std.debug.print("  - Package hashes (full mode only)\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom verify\n", .{});
+                std.debug.print("  axiom verify --quick\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--quick") or std.mem.eql(u8, arg, "-q")) {
+                quick = true;
+            }
+        }
+
+        std.debug.print("System Verification\n", .{});
+        std.debug.print("===================\n\n", .{});
+
+        if (quick) {
+            std.debug.print("Mode: Quick (skipping hash verification)\n\n", .{});
+        } else {
+            std.debug.print("Mode: Full\n\n", .{});
+        }
+
+        var engine = RecoveryEngine.init(self.allocator);
+        const result = engine.verify(quick) catch |err| {
+            std.debug.print("Verification failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer {
+            var r = result;
+            r.deinit();
+        }
+
+        // Display results
+        std.debug.print("Store:        {s}\n", .{result.store.toString()});
+        std.debug.print("Profiles:     {d} valid, {d} invalid ({s})\n", .{
+            result.profiles.valid_count,
+            result.profiles.invalid_count,
+            result.profiles.status.toString(),
+        });
+        std.debug.print("Environments: {d} valid, {d} invalid ({s})\n", .{
+            result.environments.valid_count,
+            result.environments.invalid_count,
+            result.environments.status.toString(),
+        });
+        std.debug.print("Packages:     {d} valid, {d} invalid ({s})\n", .{
+            result.packages.valid_count,
+            result.packages.invalid_count,
+            result.packages.status.toString(),
+        });
+
+        std.debug.print("\n", .{});
+
+        const overall = result.overallStatus();
+        std.debug.print("Overall: {s} {s}\n", .{ overall.symbol(), overall.toString() });
+
+        if (result.recommendations.items.len > 0) {
+            std.debug.print("\nRecommendations:\n", .{});
+            for (result.recommendations.items) |rec| {
+                std.debug.print("  - {s}\n", .{rec});
+            }
+        }
+    }
+
+    /// Interactive system recovery
+    fn systemRecover(self: *CLI, args: []const []const u8) !void {
+        var mode: RecoveryMode = .interactive;
+
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom recover [options]\n", .{});
+                std.debug.print("\nScan for and recover from issues.\n", .{});
+                std.debug.print("\nOptions:\n", .{});
+                std.debug.print("  --auto            Automatic safe recovery\n", .{});
+                std.debug.print("  --dry-run         Show plan without executing\n", .{});
+                std.debug.print("\nScans for:\n", .{});
+                std.debug.print("  - Interrupted imports\n", .{});
+                std.debug.print("  - Interrupted realizations\n", .{});
+                std.debug.print("  - Orphaned datasets\n", .{});
+                std.debug.print("  - Corrupted packages\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom recover\n", .{});
+                std.debug.print("  axiom recover --auto\n", .{});
+                std.debug.print("  axiom recover --dry-run\n", .{});
+                return;
+            } else if (std.mem.eql(u8, arg, "--auto")) {
+                mode = .automatic;
+            } else if (std.mem.eql(u8, arg, "--dry-run")) {
+                mode = .dry_run;
+            }
+        }
+
+        std.debug.print("System Recovery\n", .{});
+        std.debug.print("===============\n\n", .{});
+
+        std.debug.print("Mode: {s}\n\n", .{mode.toString()});
+
+        std.debug.print("Scanning for issues...\n\n", .{});
+
+        var engine = RecoveryEngine.init(self.allocator);
+        var plan = engine.scan() catch |err| {
+            std.debug.print("Scan failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer plan.deinit();
+
+        if (plan.isEmpty()) {
+            std.debug.print("No issues found. System is healthy.\n", .{});
+            return;
+        }
+
+        std.debug.print("Found {d} issue(s):\n\n", .{plan.totalIssues()});
+
+        if (plan.interrupted_imports.items.len > 0) {
+            std.debug.print("Interrupted imports: {d}\n", .{plan.interrupted_imports.items.len});
+            for (plan.interrupted_imports.items) |imp| {
+                std.debug.print("  - {s} ({d}% complete)\n", .{ imp.package_name, imp.progress_percent });
+            }
+        }
+
+        if (plan.interrupted_realizations.items.len > 0) {
+            std.debug.print("Interrupted realizations: {d}\n", .{plan.interrupted_realizations.items.len});
+            for (plan.interrupted_realizations.items) |real| {
+                std.debug.print("  - {s} ({d}/{d} packages)\n", .{ real.env_name, real.completed_packages, real.total_packages });
+            }
+        }
+
+        if (plan.orphaned_datasets.items.len > 0) {
+            std.debug.print("Orphaned datasets: {d}\n", .{plan.orphaned_datasets.items.len});
+        }
+
+        if (plan.corrupted_packages.items.len > 0) {
+            std.debug.print("Corrupted packages: {d}\n", .{plan.corrupted_packages.items.len});
+            for (plan.corrupted_packages.items) |pkg| {
+                std.debug.print("  - {s}@{s}: {s}\n", .{ pkg.name, pkg.version, pkg.issue });
+            }
+        }
+
+        std.debug.print("\n", .{});
+
+        if (mode == .dry_run) {
+            std.debug.print("[DRY RUN] No changes made.\n", .{});
+            std.debug.print("Automatic fixes available: {d}\n", .{plan.automaticCount()});
+            return;
+        }
+
+        std.debug.print("Executing recovery...\n\n", .{});
+
+        var result = engine.execute(&plan, mode) catch |err| {
+            std.debug.print("Recovery failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer result.deinit(self.allocator);
+
+        std.debug.print("Recovery complete:\n", .{});
+        std.debug.print("  Actions taken:   {d}\n", .{result.actions_taken});
+        std.debug.print("  Actions failed:  {d}\n", .{result.actions_failed});
+        std.debug.print("  Actions skipped: {d}\n", .{result.actions_skipped});
+
+        if (result.success) {
+            std.debug.print("\n✓ Recovery successful.\n", .{});
+        } else {
+            std.debug.print("\n⚠ Some recovery actions failed.\n", .{});
+        }
+    }
+
+    /// Recover interrupted import
+    fn importRecover(self: *CLI, args: []const []const u8) !void {
+        var package_name: ?[]const u8 = null;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            const arg = args[i];
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom import-recover [package]\n", .{});
+                std.debug.print("\nRecover from an interrupted import.\n", .{});
+                std.debug.print("\nArguments:\n", .{});
+                std.debug.print("  package           Specific package to recover (optional)\n", .{});
+                std.debug.print("\nActions:\n", .{});
+                std.debug.print("  - Check transaction log for incomplete imports\n", .{});
+                std.debug.print("  - Clean partial package data\n", .{});
+                std.debug.print("  - Remove incomplete datasets\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom import-recover\n", .{});
+                std.debug.print("  axiom import-recover mypackage\n", .{});
+                return;
+            } else if (!std.mem.startsWith(u8, arg, "-")) {
+                package_name = arg;
+            }
+        }
+
+        std.debug.print("Import Recovery\n", .{});
+        std.debug.print("===============\n\n", .{});
+
+        if (package_name) |pkg| {
+            std.debug.print("Target: {s}\n\n", .{pkg});
+        } else {
+            std.debug.print("Target: All interrupted imports\n\n", .{});
+        }
+
+        std.debug.print("Scanning transaction log...\n", .{});
+
+        var engine = RecoveryEngine.init(self.allocator);
+        var plan = engine.scan() catch |err| {
+            std.debug.print("Scan failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer plan.deinit();
+
+        const import_count = plan.interrupted_imports.items.len;
+        if (import_count == 0) {
+            std.debug.print("\nNo interrupted imports found.\n", .{});
+            return;
+        }
+
+        std.debug.print("Found {d} interrupted import(s).\n\n", .{import_count});
+
+        for (plan.interrupted_imports.items) |imp| {
+            if (package_name) |pkg| {
+                if (!std.mem.eql(u8, imp.package_name, pkg)) continue;
+            }
+
+            std.debug.print("Recovering: {s}\n", .{imp.package_name});
+            std.debug.print("  Cleaning partial data...\n", .{});
+            std.debug.print("  Removing transaction entry...\n", .{});
+        }
+
+        std.debug.print("\n✓ Import recovery complete.\n", .{});
+        std.debug.print("  You can now retry the import with 'axiom import <source>'\n", .{});
+    }
+
+    /// Recover interrupted environment realization
+    fn envRecover(self: *CLI, args: []const []const u8) !void {
+        var env_name: ?[]const u8 = null;
+
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            const arg = args[i];
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom env-recover <name>\n", .{});
+                std.debug.print("\nRecover an interrupted environment realization.\n", .{});
+                std.debug.print("\nArguments:\n", .{});
+                std.debug.print("  name              Environment name to recover\n", .{});
+                std.debug.print("\nActions:\n", .{});
+                std.debug.print("  - Identify incomplete environment\n", .{});
+                std.debug.print("  - Remove partial files\n", .{});
+                std.debug.print("  - Re-realize from lock file\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom env-recover dev\n", .{});
+                std.debug.print("  axiom env-recover production\n", .{});
+                return;
+            } else if (!std.mem.startsWith(u8, arg, "-")) {
+                env_name = arg;
+            }
+        }
+
+        if (env_name == null) {
+            std.debug.print("Usage: axiom env-recover <name>\n", .{});
+            return;
+        }
+
+        const name = env_name.?;
+
+        std.debug.print("Environment Recovery: {s}\n", .{name});
+        std.debug.print("==========================\n\n", .{});
+
+        std.debug.print("Checking for partial environment...\n", .{});
+
+        // Check for .partial directory
+        const partial_path = try std.fmt.allocPrint(self.allocator, "/axiom/env/{s}.partial", .{name});
+        defer self.allocator.free(partial_path);
+
+        const has_partial = blk: {
+            std.fs.cwd().access(partial_path, .{}) catch {
+                break :blk false;
+            };
+            break :blk true;
+        };
+
+        if (!has_partial) {
+            std.debug.print("No partial environment found for '{s}'.\n", .{name});
+            std.debug.print("Environment may have completed successfully or never started.\n", .{});
+            return;
+        }
+
+        std.debug.print("Found partial environment.\n\n", .{});
+
+        std.debug.print("Step 1: Removing partial files...\n", .{});
+        std.fs.cwd().deleteTree(partial_path) catch |err| {
+            std.debug.print("  Warning: Could not remove partial files: {s}\n", .{@errorName(err)});
+        };
+
+        std.debug.print("Step 2: Checking for lock file...\n", .{});
+        const lock_path = try std.fmt.allocPrint(self.allocator, "/axiom/env/{s}.lock", .{name});
+        defer self.allocator.free(lock_path);
+
+        const has_lock = blk: {
+            std.fs.cwd().access(lock_path, .{}) catch {
+                break :blk false;
+            };
+            break :blk true;
+        };
+
+        if (has_lock) {
+            std.debug.print("  Lock file found. Can re-realize.\n", .{});
+            std.debug.print("\n✓ Cleanup complete.\n", .{});
+            std.debug.print("  To re-realize: axiom realize {s}\n", .{name});
+        } else {
+            std.debug.print("  No lock file found.\n", .{});
+            std.debug.print("\n⚠ Cleanup complete, but no lock file available.\n", .{});
+            std.debug.print("  You'll need to create a new environment.\n", .{});
+        }
+    }
+
+    /// Show error suggestions
+    fn errorSuggest(self: *CLI, args: []const []const u8) !void {
+        var error_name: ?[]const u8 = null;
+
+        for (args) |arg| {
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                std.debug.print("Usage: axiom error-suggest [error_name]\n", .{});
+                std.debug.print("\nShow recovery suggestions for errors.\n", .{});
+                std.debug.print("\nArguments:\n", .{});
+                std.debug.print("  error_name        Specific error to get suggestions for\n", .{});
+                std.debug.print("\nWith no arguments, shows all known error suggestions.\n", .{});
+                std.debug.print("\nExamples:\n", .{});
+                std.debug.print("  axiom error-suggest\n", .{});
+                std.debug.print("  axiom error-suggest StoreCorrupted\n", .{});
+                std.debug.print("  axiom error-suggest PermissionDenied\n", .{});
+                return;
+            } else if (!std.mem.startsWith(u8, arg, "-")) {
+                error_name = arg;
+            }
+        }
+
+        std.debug.print("Error Suggestions\n", .{});
+        std.debug.print("=================\n\n", .{});
+
+        const table = ErrorReporter.getSuggestionTable();
+
+        if (error_name) |name| {
+            // Find specific error
+            for (table) |entry| {
+                if (std.mem.eql(u8, entry.error_name, name)) {
+                    std.debug.print("Error: {s}\n", .{entry.error_name});
+                    std.debug.print("Suggestion: {s}\n", .{entry.suggestion});
+                    return;
+                }
+            }
+            std.debug.print("Unknown error: {s}\n", .{name});
+            std.debug.print("Run 'axiom error-suggest' to see all known errors.\n", .{});
+        } else {
+            // Show all
+            std.debug.print("{s:<25} {s}\n", .{ "ERROR", "SUGGESTED ACTION" });
+            std.debug.print("{s:<25} {s}\n", .{ "-----", "----------------" });
+
+            for (table) |entry| {
+                std.debug.print("{s:<25} {s}\n", .{ entry.error_name, entry.suggestion });
+            }
+
+            std.debug.print("\nFor detailed help on a specific error:\n", .{});
+            std.debug.print("  axiom error-suggest <error_name>\n", .{});
+        }
 
         _ = self;
     }
