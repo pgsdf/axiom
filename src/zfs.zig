@@ -46,8 +46,8 @@ pub const ZfsError = error{
 pub fn isValidDatasetName(name: []const u8) bool {
     if (name.len == 0) return false;
 
-    for (name) |c| {
-        const valid = switch (c) {
+    for (name) |ch| {
+        const valid = switch (ch) {
             'a'...'z', 'A'...'Z', '0'...'9' => true,
             '_', '-', '/', ':', '.', '@', '#' => true,
             else => false,
@@ -78,8 +78,8 @@ pub fn isValidDatasetName(name: []const u8) bool {
 pub fn isValidPropertyName(name: []const u8) bool {
     if (name.len == 0) return false;
 
-    for (name) |c| {
-        const valid = switch (c) {
+    for (name) |ch| {
+        const valid = switch (ch) {
             'a'...'z', 'A'...'Z', '0'...'9' => true,
             '_', ':', '.' => true,
             else => false,
