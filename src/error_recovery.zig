@@ -476,7 +476,7 @@ pub const RecoveryEngine = struct {
 
     fn scanInterruptedImports(self: *Self, plan: *RecoveryPlan) !void {
         // Check transaction log for incomplete imports
-        const tx_dir = std.fs.cwd().openDir(self.transaction_log_path, .{ .iterate = true }) catch {
+        var tx_dir = std.fs.cwd().openDir(self.transaction_log_path, .{ .iterate = true }) catch {
             return; // No transaction log directory
         };
         defer tx_dir.close();
