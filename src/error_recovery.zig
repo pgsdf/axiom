@@ -683,7 +683,7 @@ pub const RecoveryEngine = struct {
         var invalid: usize = 0;
 
         const profiles_path = "/axiom/profiles";
-        const dir = std.fs.cwd().openDir(profiles_path, .{ .iterate = true }) catch {
+        var dir = std.fs.cwd().openDir(profiles_path, .{ .iterate = true }) catch {
             return .{
                 .name = try self.allocator.dupe(u8, "Profiles"),
                 .status = .missing,
@@ -727,7 +727,7 @@ pub const RecoveryEngine = struct {
         var invalid: usize = 0;
 
         const env_path = "/axiom/env";
-        const dir = std.fs.cwd().openDir(env_path, .{ .iterate = true }) catch {
+        var dir = std.fs.cwd().openDir(env_path, .{ .iterate = true }) catch {
             return .{
                 .name = try self.allocator.dupe(u8, "Environments"),
                 .status = .ok,
@@ -760,10 +760,10 @@ pub const RecoveryEngine = struct {
 
     fn verifyPackages(self: *Self) !ComponentVerification {
         var valid: usize = 0;
-        var invalid: usize = 0;
+        const invalid: usize = 0;
 
         const pkg_path = "/axiom/store/pkg";
-        const dir = std.fs.cwd().openDir(pkg_path, .{ .iterate = true }) catch {
+        var dir = std.fs.cwd().openDir(pkg_path, .{ .iterate = true }) catch {
             return .{
                 .name = try self.allocator.dupe(u8, "Packages"),
                 .status = .ok,
@@ -808,8 +808,6 @@ pub const ErrorReporter = struct {
 
     /// Report an error with context
     pub fn report(self: *Self, err: anyerror, context: ErrorContext) void {
-        _ = self;
-
         std.debug.print("\n{s} [{s}]: {s}\n", .{
             context.severity.toString(),
             context.category.toString(),
