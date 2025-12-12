@@ -185,29 +185,120 @@ fn getEnvOrDefault(name: []const u8, default: []const u8) []const u8 {
     return posix.getenv(name) orelse default;
 }
 
-/// Global configuration instance (lazily initialized)
-var global_config: ?Config = null;
-var global_config_mutex: std.Thread.Mutex = .{};
+/// ConfigManager provides proper lifecycle management for global configuration
+/// with reference counting to prevent memory leaks and use-after-free.
+pub const ConfigManager = struct {
+    config: ?Config = null,
+    allocator: std.mem.Allocator,
+    ref_count: u32 = 0,
+    mutex: std.Thread.Mutex = .{},
 
-/// Get or initialize the global configuration
-pub fn getGlobalConfig(allocator: std.mem.Allocator) !*Config {
-    global_config_mutex.lock();
-    defer global_config_mutex.unlock();
+    /// Acquire a reference to the configuration.
+    /// Call release() when done to allow cleanup.
+    pub fn acquire(self: *ConfigManager) !*Config {
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
-    if (global_config == null) {
-        global_config = try Config.init(allocator);
+        self.ref_count += 1;
+
+        if (self.config) |*cfg| {
+            return cfg;
+        }
+
+        self.config = try Config.init(self.allocator);
+        return &self.config.?;
     }
-    return &global_config.?;
+
+    /// Release a reference to the configuration.
+    /// When ref_count reaches 0, the configuration can be freed.
+    pub fn release(self: *ConfigManager) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.ref_count > 0) {
+            self.ref_count -= 1;
+        }
+    }
+
+    /// Force cleanup of the configuration (for shutdown/testing).
+    /// Only safe when ref_count is 0.
+    pub fn deinit(self: *ConfigManager) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.ref_count > 0) {
+            std.log.warn("ConfigManager.deinit called with {d} active references", .{self.ref_count});
+        }
+
+        if (self.config) |*cfg| {
+            cfg.deinit();
+            self.config = null;
+        }
+    }
+
+    /// Check if config is currently loaded
+    pub fn isLoaded(self: *ConfigManager) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.config != null;
+    }
+
+    /// Get current reference count (for debugging)
+    pub fn getRefCount(self: *ConfigManager) u32 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.ref_count;
+    }
+};
+
+/// Global configuration manager instance
+var global_config_manager: ?ConfigManager = null;
+var global_manager_mutex: std.Thread.Mutex = .{};
+
+/// Get or initialize the global configuration manager
+fn getConfigManager(allocator: std.mem.Allocator) *ConfigManager {
+    global_manager_mutex.lock();
+    defer global_manager_mutex.unlock();
+
+    if (global_config_manager == null) {
+        global_config_manager = ConfigManager{
+            .allocator = allocator,
+        };
+    }
+    return &global_config_manager.?;
+}
+
+/// Get or initialize the global configuration (legacy API - acquires reference)
+/// IMPORTANT: Callers should call releaseGlobalConfig() when done to enable cleanup.
+pub fn getGlobalConfig(allocator: std.mem.Allocator) !*Config {
+    const manager = getConfigManager(allocator);
+    return manager.acquire();
+}
+
+/// Release a reference to the global configuration
+pub fn releaseGlobalConfig() void {
+    global_manager_mutex.lock();
+    defer global_manager_mutex.unlock();
+
+    if (global_config_manager) |*mgr| {
+        // Release without holding outer mutex to avoid deadlock
+        global_manager_mutex.unlock();
+        mgr.release();
+        global_manager_mutex.lock();
+    }
 }
 
 /// Reset global configuration (for testing)
 pub fn resetGlobalConfig() void {
-    global_config_mutex.lock();
-    defer global_config_mutex.unlock();
+    global_manager_mutex.lock();
+    defer global_manager_mutex.unlock();
 
-    if (global_config) |*cfg| {
-        cfg.deinit();
-        global_config = null;
+    if (global_config_manager) |*mgr| {
+        // Deinit without holding outer mutex to avoid deadlock
+        global_manager_mutex.unlock();
+        mgr.deinit();
+        global_manager_mutex.lock();
+        global_config_manager = null;
     }
 }
 
@@ -257,4 +348,39 @@ test "Config.getPackagePath" {
     defer allocator.free(path);
 
     try std.testing.expectEqualStrings("/axiom/store/pkg/bash", path);
+}
+
+test "ConfigManager lifecycle" {
+    const allocator = std.testing.allocator;
+    var manager = ConfigManager{
+        .allocator = allocator,
+    };
+
+    // Initially no config loaded
+    try std.testing.expect(!manager.isLoaded());
+    try std.testing.expectEqual(@as(u32, 0), manager.getRefCount());
+
+    // Acquire a reference
+    const cfg1 = try manager.acquire();
+    try std.testing.expect(manager.isLoaded());
+    try std.testing.expectEqual(@as(u32, 1), manager.getRefCount());
+    try std.testing.expectEqualStrings("zroot/axiom", cfg1.base_dataset);
+
+    // Acquire another reference (same config)
+    const cfg2 = try manager.acquire();
+    try std.testing.expectEqual(@as(u32, 2), manager.getRefCount());
+    try std.testing.expectEqual(cfg1, cfg2);
+
+    // Release both references
+    manager.release();
+    try std.testing.expectEqual(@as(u32, 1), manager.getRefCount());
+    manager.release();
+    try std.testing.expectEqual(@as(u32, 0), manager.getRefCount());
+
+    // Config still loaded (cleanup is explicit)
+    try std.testing.expect(manager.isLoaded());
+
+    // Explicit cleanup
+    manager.deinit();
+    try std.testing.expect(!manager.isLoaded());
 }

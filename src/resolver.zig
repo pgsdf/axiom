@@ -1503,8 +1503,14 @@ pub const Resolver = struct {
                     // Make a mutable copy so we can call deinit
                     var pkg_meta = pkg_meta_const;
 
-                    // Copy dependencies
+                    // Copy dependencies with proper cleanup on error
                     var deps = std.ArrayList(Dependency).init(self.allocator);
+                    errdefer {
+                        for (deps.items) |dep| {
+                            self.allocator.free(dep.name);
+                        }
+                        deps.deinit();
+                    }
                     for (pkg_meta.dependencies) |dep| {
                         try deps.append(.{
                             .name = try self.allocator.dupe(u8, dep.name),
@@ -1513,15 +1519,27 @@ pub const Resolver = struct {
                     }
                     dependencies = try deps.toOwnedSlice();
 
-                    // Copy provides (provides is [][]const u8)
+                    // Copy provides (provides is [][]const u8) with proper cleanup
                     var prov = std.ArrayList([]const u8).init(self.allocator);
+                    errdefer {
+                        for (prov.items) |p| {
+                            self.allocator.free(p);
+                        }
+                        prov.deinit();
+                    }
                     for (pkg_meta.manifest.provides) |p| {
                         try prov.append(try self.allocator.dupe(u8, p));
                     }
                     provides = try prov.toOwnedSlice();
 
-                    // Copy conflicts
+                    // Copy conflicts with proper cleanup
                     var conf = std.ArrayList(VirtualPackage).init(self.allocator);
+                    errdefer {
+                        for (conf.items) |c| {
+                            self.allocator.free(c.name);
+                        }
+                        conf.deinit();
+                    }
                     for (pkg_meta.manifest.conflicts) |c| {
                         try conf.append(.{
                             .name = try self.allocator.dupe(u8, c.name),
@@ -1530,8 +1548,14 @@ pub const Resolver = struct {
                     }
                     conflicts = try conf.toOwnedSlice();
 
-                    // Copy replaces
+                    // Copy replaces with proper cleanup
                     var repl = std.ArrayList(VirtualPackage).init(self.allocator);
+                    errdefer {
+                        for (repl.items) |r| {
+                            self.allocator.free(r.name);
+                        }
+                        repl.deinit();
+                    }
                     for (pkg_meta.manifest.replaces) |r| {
                         try repl.append(.{
                             .name = try self.allocator.dupe(u8, r.name),

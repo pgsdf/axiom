@@ -8,6 +8,34 @@ const std = @import("std");
 const types = @import("types.zig");
 const errors = @import("errors.zig");
 
+// ============================================================================
+// Memory Safety Helpers
+// ============================================================================
+
+/// Safely convert ArrayList to owned slice, cleaning up on failure.
+/// For ArrayLists containing allocated strings, this frees all items on failure.
+fn toOwnedSliceOrCleanupStrings(
+    allocator: std.mem.Allocator,
+    list: *std.ArrayList([]const u8),
+) ![]const []const u8 {
+    return list.toOwnedSlice() catch |err| {
+        // Free all duped strings in the list
+        for (list.items) |item| {
+            allocator.free(item);
+        }
+        list.deinit();
+        return err;
+    };
+}
+
+/// Safely convert ArrayList(u16) to owned slice, cleaning up on failure.
+fn toOwnedSliceOrCleanupU16(list: *std.ArrayList(u16)) ![]const u16 {
+    return list.toOwnedSlice() catch |err| {
+        list.deinit();
+        return err;
+    };
+}
+
 /// Service-related errors
 pub const ServiceError = error{
     ServiceNotFound,
@@ -592,9 +620,10 @@ pub fn parseServiceDeclarations(allocator: std.mem.Allocator, yaml_content: []co
         if (std.mem.startsWith(u8, trimmed, "- name:")) {
             // Save previous service
             if (current_service) |*svc| {
-                svc.dependencies = deps_list.toOwnedSlice() catch &[_][]const u8{};
-                svc.conflicts = conflicts_list.toOwnedSlice() catch &[_][]const u8{};
-                svc.ports = ports_list.toOwnedSlice() catch &[_]u16{};
+                // Use safe conversion with proper cleanup on failure
+                svc.dependencies = try toOwnedSliceOrCleanupStrings(allocator, &deps_list);
+                svc.conflicts = try toOwnedSliceOrCleanupStrings(allocator, &conflicts_list);
+                svc.ports = try toOwnedSliceOrCleanupU16(&ports_list);
                 try services.append(svc.*);
                 deps_list = std.ArrayList([]const u8).init(allocator);
                 conflicts_list = std.ArrayList([]const u8).init(allocator);
@@ -693,9 +722,10 @@ pub fn parseServiceDeclarations(allocator: std.mem.Allocator, yaml_content: []co
 
     // Save last service
     if (current_service) |*svc| {
-        svc.dependencies = deps_list.toOwnedSlice() catch &[_][]const u8{};
-        svc.conflicts = conflicts_list.toOwnedSlice() catch &[_][]const u8{};
-        svc.ports = ports_list.toOwnedSlice() catch &[_]u16{};
+        // Use safe conversion with proper cleanup on failure
+        svc.dependencies = try toOwnedSliceOrCleanupStrings(allocator, &deps_list);
+        svc.conflicts = try toOwnedSliceOrCleanupStrings(allocator, &conflicts_list);
+        svc.ports = try toOwnedSliceOrCleanupU16(&ports_list);
         try services.append(svc.*);
     }
 
