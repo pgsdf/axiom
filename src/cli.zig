@@ -1,4 +1,47 @@
+// =============================================================================
+// Axiom CLI - Command Line Interface
+// =============================================================================
+//
+// This module implements the command-line interface for Axiom package manager.
+//
+// ## Module Dependencies (Phase 56: Module Decoupling)
+//
+// Current architecture: CLI directly imports 33 modules. The long-term goal
+// is to reduce coupling through the interfaces.zig abstraction layer.
+//
+// ### Module Categories:
+//
+// **Foundation Layer** (low-level, stable):
+//   - zfs.zig, types.zig, errors.zig, validation.zig
+//
+// **Core Services** (business logic):
+//   - store.zig, profile.zig, resolver.zig, realization.zig
+//   - gc.zig, import.zig, signature.zig, cache.zig
+//
+// **Feature Modules** (specific features):
+//   - build.zig, bundle.zig, ports.zig, service.zig, bootenv.zig
+//   - launcher.zig, user.zig, bootstrap.zig, hsm.zig
+//
+// **Integration Modules** (external systems):
+//   - cache_protocol.zig, be_integration.zig, multi_user_security.zig
+//
+// **Support Modules** (utilities):
+//   - completions.zig, conflict.zig, closure.zig, format_version.zig
+//   - store_integrity.zig, error_recovery.zig, testing_framework.zig
+//
+// ### Decoupling Strategy:
+//
+// Use interfaces.zig for core services to enable:
+// - Unit testing with mock implementations
+// - Swappable implementations (e.g., different resolvers)
+// - Clearer module boundaries
+//
+// See interfaces.zig for the abstraction layer and CliContext.
+//
+// =============================================================================
+
 const std = @import("std");
+const interfaces = @import("interfaces.zig");
 const zfs = @import("zfs.zig");
 const types = @import("types.zig");
 const store = @import("store.zig");
