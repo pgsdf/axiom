@@ -1326,6 +1326,198 @@ Note: Per-user operations only affect the user's own space.
 
 ---
 
+### Error Model & Recovery Operations (Phase 49)
+
+Commands for verifying system integrity and recovering from errors.
+
+#### `axiom verify [options]`
+
+Verify system integrity.
+
+```bash
+axiom verify
+axiom verify --quick
+```
+
+**Options:**
+- `--quick` - Quick check (skip hash verification)
+
+**Checks:**
+- Store integrity
+- Profile validity
+- Environment completeness
+- Package hashes (full mode only)
+
+**Example output:**
+```
+System Verification
+===================
+
+Mode: Full
+
+Store:        OK
+Profiles:     3 valid, 0 invalid (OK)
+Environments: 2 valid, 1 invalid (WARNING)
+Packages:     150 valid, 0 invalid (OK)
+
+Overall: ⚠ WARNING
+
+Recommendations:
+  - Run 'axiom recover' to fix environment issues
+```
+
+#### `axiom recover [options]`
+
+Scan for and recover from issues.
+
+```bash
+axiom recover
+axiom recover --auto
+axiom recover --dry-run
+```
+
+**Options:**
+- `--auto` - Automatic safe recovery
+- `--dry-run` - Show plan without executing
+
+**Scans for:**
+- Interrupted imports
+- Interrupted realizations
+- Orphaned datasets
+- Corrupted packages
+
+**Example output:**
+```
+System Recovery
+===============
+
+Mode: automatic
+
+Scanning for issues...
+
+Found 2 issue(s):
+
+Interrupted imports: 1
+  - mypackage (45% complete)
+
+Interrupted realizations: 1
+  - dev-env (15/20 packages)
+
+Executing recovery...
+
+Recovery complete:
+  Actions taken:   2
+  Actions failed:  0
+  Actions skipped: 0
+
+✓ Recovery successful.
+```
+
+#### `axiom import-recover [package]`
+
+Recover from an interrupted import.
+
+```bash
+axiom import-recover
+axiom import-recover mypackage
+```
+
+**Arguments:**
+- `package` - Specific package to recover (optional)
+
+**Actions:**
+- Check transaction log for incomplete imports
+- Clean partial package data
+- Remove incomplete datasets
+
+**Example output:**
+```
+Import Recovery
+===============
+
+Target: All interrupted imports
+
+Scanning transaction log...
+Found 1 interrupted import(s).
+
+Recovering: mypackage
+  Cleaning partial data...
+  Removing transaction entry...
+
+✓ Import recovery complete.
+  You can now retry the import with 'axiom import <source>'
+```
+
+#### `axiom env-recover <name>`
+
+Recover an interrupted environment realization.
+
+```bash
+axiom env-recover dev
+axiom env-recover production
+```
+
+**Arguments:**
+- `name` - Environment name to recover
+
+**Actions:**
+- Identify incomplete environment
+- Remove partial files
+- Re-realize from lock file
+
+**Example output:**
+```
+Environment Recovery: dev
+==========================
+
+Checking for partial environment...
+Found partial environment.
+
+Step 1: Removing partial files...
+Step 2: Checking for lock file...
+  Lock file found. Can re-realize.
+
+✓ Cleanup complete.
+  To re-realize: axiom realize dev
+```
+
+#### `axiom error-suggest [error_name]`
+
+Show recovery suggestions for errors.
+
+```bash
+axiom error-suggest
+axiom error-suggest StoreCorrupted
+axiom error-suggest PermissionDenied
+```
+
+**Arguments:**
+- `error_name` - Specific error to get suggestions for
+
+With no arguments, shows all known error suggestions.
+
+**Example output:**
+```
+Error Suggestions
+=================
+
+ERROR                     SUGGESTED ACTION
+-----                     ----------------
+StoreCorrupted            axiom store-repair
+PackageNotFound           axiom search <name>
+ImportInterrupted         axiom import-recover
+RealizationInterrupted    axiom env-recover <name>
+DependencyConflict        axiom deps-analyze <pkg>
+CacheUnreachable          Check network connectivity
+PermissionDenied          Run with sudo
+PoolNotAvailable          zpool import <pool>
+
+For detailed help on a specific error:
+  axiom error-suggest <error_name>
+```
+
+---
+
 ### Shell Completions
 
 Generate shell completion scripts for command-line autocompletion.
