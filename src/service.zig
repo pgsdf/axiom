@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const types = @import("types.zig");
+const errors = @import("errors.zig");
 
 /// Service-related errors
 pub const ServiceError = error{
@@ -423,7 +424,9 @@ pub const ServiceManager = struct {
     /// Write service configuration to rc.conf.d
     fn writeServiceConfig(self: *ServiceManager, service_name: []const u8, enabled: bool) !void {
         // Ensure rc.conf.d directory exists
-        std.fs.cwd().makePath(self.rc_conf_d_path) catch {};
+        std.fs.cwd().makePath(self.rc_conf_d_path) catch |err| {
+            errors.logMkdirBestEffort(@src(), err, self.rc_conf_d_path);
+        };
 
         const conf_path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.rc_conf_d_path, service_name });
         defer self.allocator.free(conf_path);
@@ -459,11 +462,15 @@ pub const ServiceManager = struct {
         // Read stdout and stderr
         if (child.stdout) |stdout_pipe| {
             var reader = stdout_pipe.reader();
-            reader.readAllArrayList(&stdout, 64 * 1024) catch {};
+            reader.readAllArrayList(&stdout, 64 * 1024) catch |err| {
+                errors.logCollectionError(@src(), err, "read service stdout");
+            };
         }
         if (child.stderr) |stderr_pipe| {
             var reader = stderr_pipe.reader();
-            reader.readAllArrayList(&stderr, 64 * 1024) catch {};
+            reader.readAllArrayList(&stderr, 64 * 1024) catch |err| {
+                errors.logCollectionError(@src(), err, "read service stderr");
+            };
         }
 
         const term = try child.wait();
@@ -506,7 +513,9 @@ pub const ServiceManager = struct {
         };
 
         // Create symlink
-        std.fs.cwd().deleteFile(dest) catch {}; // Remove existing
+        std.fs.cwd().deleteFile(dest) catch |err| {
+            errors.logFileCleanup(@src(), err, dest);
+        }; // Remove existing
         try std.posix.symlink(source, dest);
 
         std.debug.print("Linked service script: {s} -> {s}\n", .{ dest, source });
@@ -520,20 +529,28 @@ pub const ServiceManager = struct {
     /// Unlink a service's rc.d script
     pub fn unlinkServiceScript(self: *ServiceManager, service_name: []const u8) !void {
         // Stop and disable the service first
-        self.stopService(service_name) catch {};
-        self.disableService(service_name) catch {};
+        self.stopService(service_name) catch |err| {
+            errors.logServiceOp(@src(), err, "stop service", service_name);
+        };
+        self.disableService(service_name) catch |err| {
+            errors.logServiceOp(@src(), err, "disable service", service_name);
+        };
 
         // Remove the symlink
         const script_path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.rc_d_path, service_name });
         defer self.allocator.free(script_path);
 
-        std.fs.cwd().deleteFile(script_path) catch {};
+        std.fs.cwd().deleteFile(script_path) catch |err| {
+            errors.logFileCleanup(@src(), err, script_path);
+        };
 
         // Remove rc.conf.d entry
         const conf_path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.rc_conf_d_path, service_name });
         defer self.allocator.free(conf_path);
 
-        std.fs.cwd().deleteFile(conf_path) catch {};
+        std.fs.cwd().deleteFile(conf_path) catch |err| {
+            errors.logFileCleanup(@src(), err, conf_path);
+        };
 
         std.debug.print("Unlinked service: {s}\n", .{service_name});
     }

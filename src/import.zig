@@ -5,6 +5,7 @@ const store = @import("store.zig");
 const manifest = @import("manifest.zig");
 const secure_tar = @import("secure_tar.zig");
 const signature = @import("signature.zig");
+const errors = @import("errors.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageId = types.PackageId;
@@ -154,7 +155,9 @@ pub const Importer = struct {
         defer {
             if (cleanup_extract) {
                 if (extract_dir) |dir| {
-                    std.fs.cwd().deleteTree(dir) catch {};
+                    std.fs.cwd().deleteTree(dir) catch |err| {
+                        errors.logFileCleanup(@src(), err, dir);
+                    };
                     self.allocator.free(dir);
                 }
             }

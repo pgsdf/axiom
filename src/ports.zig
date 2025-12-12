@@ -28,6 +28,7 @@ const manifest_pkg = @import("manifest.zig");
 const types = @import("types.zig");
 const store_pkg = @import("store.zig");
 const build_pkg = @import("build.zig");
+const errors = @import("errors.zig");
 
 /// Progress indicator for long-running operations
 /// Prints dots periodically to show activity
@@ -315,7 +316,9 @@ pub const PortsMigrator = struct {
         // Try to load existing local key
         if (self.loadSigningKey(LOCAL_SECRET_KEY_PATH)) |key| {
             // Ensure existing key is in trust store
-            self.ensureKeyInTrustStore(key) catch {};
+            self.ensureKeyInTrustStore(key) catch |err| {
+                errors.logTrustStoreOp(@src(), err, "ensure key in trust store");
+            };
             return key;
         } else |_| {
             // Key doesn't exist - generate a new one
@@ -366,7 +369,9 @@ pub const PortsMigrator = struct {
                 defer trust_store.deinit();
 
                 // Try to load existing trust store (ignore errors for new store)
-                trust_store.load() catch {};
+                trust_store.load() catch |err| {
+                    errors.logConfigLoadOptional(@src(), err, TRUST_STORE_PATH);
+                };
 
                 // Create owner string for the key
                 const owner = try std.fmt.allocPrint(self.allocator, "Local Build ({s})", .{hostname});
@@ -453,7 +458,9 @@ pub const PortsMigrator = struct {
         defer trust_store.deinit();
 
         // Try to load existing trust store
-        trust_store.load() catch {};
+        trust_store.load() catch |err| {
+            errors.logConfigLoadOptional(@src(), err, TRUST_STORE_PATH);
+        };
 
         // Check if key is already trusted
         if (trust_store.isKeyTrusted(key_id)) {
@@ -461,8 +468,12 @@ pub const PortsMigrator = struct {
             const current_level = trust_store.getKeyTrustLevel(key_id);
             if (current_level == .unknown) {
                 // Upgrade trust level for existing key (from pre-trust_level trust store)
-                trust_store.setKeyTrustLevel(key_id, .third_party) catch {};
-                trust_store.save() catch {};
+                trust_store.setKeyTrustLevel(key_id, .third_party) catch |err| {
+                    errors.logTrustStoreOp(@src(), err, "set key trust level");
+                };
+                trust_store.save() catch |err| {
+                    errors.logTrustStoreOp(@src(), err, "save trust store");
+                };
             }
             return;
         }
@@ -908,8 +919,12 @@ pub const PortsMigrator = struct {
 
         // Create parent directories
         const parent = std.fs.path.dirname(out_path) orelse ".";
-        std.fs.cwd().makePath(parent) catch {};
-        std.fs.cwd().makePath(out_path) catch {};
+        std.fs.cwd().makePath(parent) catch |err| {
+            errors.logMkdirBestEffort(@src(), err, parent);
+        };
+        std.fs.cwd().makePath(out_path) catch |err| {
+            errors.logMkdirBestEffort(@src(), err, out_path);
+        };
 
         // Write manifest.yaml
         const manifest_path = try std.fs.path.join(self.allocator, &[_][]const u8{
@@ -1093,7 +1108,9 @@ pub const PortsMigrator = struct {
                     result.status = .failed;
                     // Clean up build output before returning
                     if (!self.options.keep_sandbox) {
-                        std.fs.cwd().deleteTree(build_result.output_dir) catch {};
+                        std.fs.cwd().deleteTree(build_result.output_dir) catch |err| {
+                            errors.logFileCleanup(@src(), err, build_result.output_dir);
+                        };
                     }
                     self.allocator.free(build_result.output_dir);
                     return result;
@@ -1114,7 +1131,9 @@ pub const PortsMigrator = struct {
 
             // Clean up build output if we're not keeping the sandbox
             if (!self.options.keep_sandbox) {
-                std.fs.cwd().deleteTree(build_result.output_dir) catch {};
+                std.fs.cwd().deleteTree(build_result.output_dir) catch |err| {
+                    errors.logFileCleanup(@src(), err, build_result.output_dir);
+                };
             }
             self.allocator.free(build_result.output_dir);
         }
@@ -1158,7 +1177,9 @@ pub const PortsMigrator = struct {
                 // Get parent of sysroot (the temp directory)
                 if (std.fs.path.dirname(self.sysroot)) |sysroot_parent| {
                     if (std.fs.path.dirname(sysroot_parent)) |temp_dir| {
-                        std.fs.cwd().deleteTree(temp_dir) catch {};
+                        std.fs.cwd().deleteTree(temp_dir) catch |err| {
+                            errors.logFileCleanup(@src(), err, temp_dir);
+                        };
                     }
                 }
             }
@@ -1293,12 +1314,16 @@ pub const PortsMigrator = struct {
 
             switch (entry.kind) {
                 .directory => {
-                    std.fs.cwd().makePath(dst_path) catch {};
+                    std.fs.cwd().makePath(dst_path) catch |err| {
+                        errors.logMkdirBestEffort(@src(), err, dst_path);
+                    };
                 },
                 .file => {
                     // Ensure parent directory exists
                     if (std.fs.path.dirname(dst_path)) |parent| {
-                        std.fs.cwd().makePath(parent) catch {};
+                        std.fs.cwd().makePath(parent) catch |err| {
+                            errors.logMkdirBestEffort(@src(), err, parent);
+                        };
                     }
 
                     // Check if destination already exists
@@ -1329,7 +1354,9 @@ pub const PortsMigrator = struct {
                     std.fs.cwd().access(dst_path, .{}) catch {
                         var target_buf: [std.fs.max_path_bytes]u8 = undefined;
                         const target = std.fs.cwd().readLink(src_path, &target_buf) catch continue;
-                        std.fs.cwd().symLink(target, dst_path, .{}) catch {};
+                        std.fs.cwd().symLink(target, dst_path, .{}) catch |err| {
+                            errors.logNonCriticalWithCategory(@src(), err, .io, "create symlink", dst_path);
+                        };
                         file_count += 1;
                     };
                 },
@@ -1708,7 +1735,9 @@ pub const PortsMigrator = struct {
         defer source_dir.close();
 
         // Ensure destination directory exists
-        std.fs.cwd().makePath(dest_dir_path) catch {};
+        std.fs.cwd().makePath(dest_dir_path) catch |err| {
+            errors.logMkdirBestEffort(@src(), err, dest_dir_path);
+        };
 
         var iter = source_dir.iterate();
         while (try iter.next()) |entry| {
@@ -3875,7 +3904,9 @@ pub const PortsMigrator = struct {
             }
         }
 
-        _ = child.wait() catch {};
+        _ = child.wait() catch |err| {
+            errors.logProcessCleanup(@src(), err, "ports make target");
+        };
 
         if (total_read == 0) return null;
 
