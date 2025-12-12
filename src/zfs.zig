@@ -30,7 +30,65 @@ pub const ZfsError = error{
     Unknown,
     /// Internal error (e.g., subprocess failed)
     InternalError,
+    /// Invalid dataset name (contains shell metacharacters or invalid characters)
+    InvalidDatasetName,
+    /// Invalid property name
+    InvalidPropertyName,
 };
+
+// ============================================================================
+// Phase 51: Shell Command Injection Prevention
+// ============================================================================
+
+/// Validate that a string is safe to use as a ZFS dataset name
+/// Prevents shell command injection by rejecting shell metacharacters
+/// Only allows: alphanumeric, underscore, hyphen, slash, colon, period, @, #
+pub fn isValidDatasetName(name: []const u8) bool {
+    if (name.len == 0) return false;
+
+    for (name) |c| {
+        const valid = switch (c) {
+            'a'...'z', 'A'...'Z', '0'...'9' => true,
+            '_', '-', '/', ':', '.', '@', '#' => true,
+            else => false,
+        };
+        if (!valid) return false;
+    }
+
+    // Additional checks for dangerous patterns
+    // Reject if contains shell metacharacters that could escape validation
+    if (std.mem.indexOf(u8, name, "$(") != null) return false;
+    if (std.mem.indexOf(u8, name, "`") != null) return false;
+    if (std.mem.indexOf(u8, name, ";") != null) return false;
+    if (std.mem.indexOf(u8, name, "&") != null) return false;
+    if (std.mem.indexOf(u8, name, "|") != null) return false;
+    if (std.mem.indexOf(u8, name, ">") != null) return false;
+    if (std.mem.indexOf(u8, name, "<") != null) return false;
+    if (std.mem.indexOf(u8, name, "\n") != null) return false;
+    if (std.mem.indexOf(u8, name, "\r") != null) return false;
+    if (std.mem.indexOf(u8, name, "'") != null) return false;
+    if (std.mem.indexOf(u8, name, "\"") != null) return false;
+    if (std.mem.indexOfScalar(u8, name, 0) != null) return false; // NUL byte
+
+    return true;
+}
+
+/// Validate that a string is safe to use as a ZFS property name
+/// More restrictive than dataset names - only alphanumeric, underscore, colon
+pub fn isValidPropertyName(name: []const u8) bool {
+    if (name.len == 0) return false;
+
+    for (name) |c| {
+        const valid = switch (c) {
+            'a'...'z', 'A'...'Z', '0'...'9' => true,
+            '_', ':', '.' => true,
+            else => false,
+        };
+        if (!valid) return false;
+    }
+
+    return true;
+}
 
 /// Convert libzfs errno to ZfsError
 fn libzfsErrorToZig(errno_val: c_int) ZfsError {
@@ -194,38 +252,50 @@ pub const ZfsHandle = struct {
     }
 
     /// Create a new filesystem dataset with parent creation (like zfs create -p)
+    /// SECURITY: Uses direct execve instead of shell to prevent command injection
     pub fn createDatasetWithParents(
         self: *ZfsHandle,
         allocator: std.mem.Allocator,
         path: []const u8,
         props: ?DatasetProperties,
     ) !void {
-        _ = self; // Accessed via shell command
+        _ = self; // Accessed via subprocess
 
-        // Build zfs create -p command with properties
-        var cmd_parts = std.ArrayList(u8).init(allocator);
-        defer cmd_parts.deinit();
+        // SECURITY: Validate dataset name to prevent command injection
+        if (!isValidDatasetName(path)) {
+            return ZfsError.InvalidDatasetName;
+        }
 
-        try cmd_parts.appendSlice("zfs create -p");
+        // Build argument list for direct execve (no shell)
+        var args = std.ArrayList([]const u8).init(allocator);
+        defer args.deinit();
 
-        // Add properties if provided
+        try args.append("zfs");
+        try args.append("create");
+        try args.append("-p");
+
+        // Add properties if provided (validated)
         if (props) |p| {
             if (p.compression) |comp| {
-                try cmd_parts.appendSlice(" -o compression=");
-                try cmd_parts.appendSlice(comp);
+                // Validate property value
+                if (!isValidPropertyName(comp)) {
+                    return ZfsError.InvalidPropertyName;
+                }
+                const comp_opt = try std.fmt.allocPrint(allocator, "compression={s}", .{comp});
+                defer allocator.free(comp_opt);
+                try args.append("-o");
+                try args.append(try allocator.dupe(u8, comp_opt));
             }
             if (p.atime != null and !p.atime.?) {
-                try cmd_parts.appendSlice(" -o atime=off");
+                try args.append("-o");
+                try args.append("atime=off");
             }
         }
 
-        try cmd_parts.appendSlice(" ");
-        try cmd_parts.appendSlice(path);
+        try args.append(path);
 
-        const cmd = try cmd_parts.toOwnedSlice();
-        defer allocator.free(cmd);
-
-        var child = std.process.Child.init(&[_][]const u8{ "sh", "-c", cmd }, allocator);
+        // Use direct execve - no shell involved
+        var child = std.process.Child.init(args.items, allocator);
         child.stderr_behavior = .Pipe;
         child.stdout_behavior = .Ignore;
         try child.spawn();
@@ -246,19 +316,26 @@ pub const ZfsHandle = struct {
     }
 
     /// Destroy a dataset (and optionally its children)
+    /// SECURITY: Uses direct execve instead of shell to prevent command injection
     pub fn destroyDataset(
         self: *ZfsHandle,
         allocator: std.mem.Allocator,
         path: []const u8,
         recursive: bool,
     ) !void {
-        // For recursive destruction (including snapshots), shell out to zfs command
+        // SECURITY: Validate dataset name to prevent command injection
+        if (!isValidDatasetName(path)) {
+            return ZfsError.InvalidDatasetName;
+        }
+
+        // For recursive destruction (including snapshots), use direct execve
         // as the libzfs API doesn't reliably handle all cases
         if (recursive) {
-            const cmd = try std.fmt.allocPrint(allocator, "zfs destroy -r {s}", .{path});
-            defer allocator.free(cmd);
-
-            var child = std.process.Child.init(&[_][]const u8{ "sh", "-c", cmd }, allocator);
+            // Use direct execve - no shell involved
+            var child = std.process.Child.init(
+                &[_][]const u8{ "zfs", "destroy", "-r", path },
+                allocator,
+            );
             child.stderr_behavior = .Ignore;
             child.stdout_behavior = .Ignore;
             try child.spawn();
@@ -423,37 +500,40 @@ pub const ZfsHandle = struct {
             }
         }
 
-        // Fallback: use shell command for standard ZFS properties
-        // This is more reliable than trying to navigate libzfs's property APIs
-        const cmd = try std.fmt.allocPrint(
+        // SECURITY: Validate inputs to prevent command injection
+        if (!isValidDatasetName(path)) {
+            return ZfsError.InvalidDatasetName;
+        }
+        if (!isValidPropertyName(property)) {
+            return ZfsError.InvalidPropertyName;
+        }
+
+        // Fallback: use direct execve for standard ZFS properties (no shell)
+        var child = std.process.Child.init(
+            &[_][]const u8{ "zfs", "get", "-H", "-o", "value", property, path },
             allocator,
-            "zfs get -H -o value {s} {s}",
-            .{ property, path },
         );
-        defer allocator.free(cmd);
-        
-        var child = std.process.Child.init(&[_][]const u8{ "sh", "-c", cmd }, allocator);
         child.stdout_behavior = .Pipe;
         child.stderr_behavior = .Ignore;
-        
+
         try child.spawn();
-        
+
         const stdout = try child.stdout.?.readToEndAlloc(allocator, 1024);
         errdefer allocator.free(stdout);
-        
+
         const term = try child.wait();
         if (term.Exited != 0) {
             allocator.free(stdout);
             return ZfsError.PropertyError;
         }
-        
+
         // Trim newline
         const trimmed = std.mem.trimRight(u8, stdout, "\n\r");
         if (trimmed.len == 0) {
             allocator.free(stdout);
             return ZfsError.PropertyError;
         }
-        
+
         // Return trimmed copy
         const result_copy = try allocator.dupe(u8, trimmed);
         allocator.free(stdout);
@@ -654,6 +734,7 @@ pub const ZfsHandle = struct {
     }
 
     /// List child datasets of a parent dataset
+    /// SECURITY: Uses direct execve instead of shell to prevent command injection
     pub fn listChildDatasets(
         self: *ZfsHandle,
         allocator: std.mem.Allocator,
@@ -661,15 +742,16 @@ pub const ZfsHandle = struct {
     ) ![][]const u8 {
         _ = self;
 
-        // Use zfs list command to get child datasets
-        const cmd = try std.fmt.allocPrint(
-            allocator,
-            "zfs list -H -o name -r -d 1 {s} | tail -n +2",
-            .{parent},
-        );
-        defer allocator.free(cmd);
+        // SECURITY: Validate dataset name to prevent command injection
+        if (!isValidDatasetName(parent)) {
+            return ZfsError.InvalidDatasetName;
+        }
 
-        var child = std.process.Child.init(&[_][]const u8{ "sh", "-c", cmd }, allocator);
+        // Use direct execve (no shell) for zfs list
+        var child = std.process.Child.init(
+            &[_][]const u8{ "zfs", "list", "-H", "-o", "name", "-r", "-d", "1", parent },
+            allocator,
+        );
         child.stdout_behavior = .Pipe;
         child.stderr_behavior = .Ignore;
 
@@ -684,6 +766,7 @@ pub const ZfsHandle = struct {
         }
 
         // Parse output - each line is a dataset name
+        // Skip the first line (parent dataset) - equivalent to tail -n +2
         var datasets = std.ArrayList([]const u8).init(allocator);
         errdefer {
             for (datasets.items) |item| {
@@ -693,7 +776,14 @@ pub const ZfsHandle = struct {
         }
 
         var lines = std.mem.splitScalar(u8, stdout, '\n');
+        var first_line = true;
         while (lines.next()) |line| {
+            // Skip the first line (parent dataset itself)
+            if (first_line) {
+                first_line = false;
+                continue;
+            }
+
             const trimmed = std.mem.trim(u8, line, " \t\r");
             if (trimmed.len == 0) continue;
 
@@ -1096,6 +1186,64 @@ test "dataset operations" {
 
     // Clean up
     try zfs.destroyDataset(allocator, test_dataset, false);
+}
+
+// ============================================================================
+// Phase 51: Shell Command Injection Prevention Tests
+// ============================================================================
+
+test "isValidDatasetName accepts valid names" {
+    // Valid dataset names
+    try std.testing.expect(isValidDatasetName("zroot"));
+    try std.testing.expect(isValidDatasetName("zroot/axiom"));
+    try std.testing.expect(isValidDatasetName("zroot/axiom/store/pkg"));
+    try std.testing.expect(isValidDatasetName("tank/data-set_1.0"));
+    try std.testing.expect(isValidDatasetName("pool:special"));
+    try std.testing.expect(isValidDatasetName("dataset@snapshot"));
+    try std.testing.expect(isValidDatasetName("dataset#bookmark"));
+}
+
+test "isValidDatasetName rejects shell metacharacters" {
+    // Reject shell command injection attempts
+    try std.testing.expect(!isValidDatasetName("zroot; rm -rf /"));
+    try std.testing.expect(!isValidDatasetName("zroot$(whoami)"));
+    try std.testing.expect(!isValidDatasetName("zroot`whoami`"));
+    try std.testing.expect(!isValidDatasetName("zroot|cat /etc/passwd"));
+    try std.testing.expect(!isValidDatasetName("zroot&background"));
+    try std.testing.expect(!isValidDatasetName("zroot>output"));
+    try std.testing.expect(!isValidDatasetName("zroot<input"));
+    try std.testing.expect(!isValidDatasetName("zroot\necho pwned"));
+    try std.testing.expect(!isValidDatasetName("zroot'quoted'"));
+    try std.testing.expect(!isValidDatasetName("zroot\"double\""));
+}
+
+test "isValidDatasetName rejects special cases" {
+    // Reject empty name
+    try std.testing.expect(!isValidDatasetName(""));
+
+    // Reject NUL byte
+    try std.testing.expect(!isValidDatasetName("zroot\x00evil"));
+
+    // Reject spaces (not valid in ZFS dataset names)
+    try std.testing.expect(!isValidDatasetName("zroot name"));
+}
+
+test "isValidPropertyName accepts valid names" {
+    // Valid property names
+    try std.testing.expect(isValidPropertyName("compression"));
+    try std.testing.expect(isValidPropertyName("mountpoint"));
+    try std.testing.expect(isValidPropertyName("user:custom"));
+    try std.testing.expect(isValidPropertyName("com.company.prop"));
+    try std.testing.expect(isValidPropertyName("atime"));
+}
+
+test "isValidPropertyName rejects invalid names" {
+    // Reject shell injection attempts
+    try std.testing.expect(!isValidPropertyName("compression; rm -rf /"));
+    try std.testing.expect(!isValidPropertyName("$(whoami)"));
+    try std.testing.expect(!isValidPropertyName(""));
+    try std.testing.expect(!isValidPropertyName("prop name"));
+    try std.testing.expect(!isValidPropertyName("prop/path"));
 }
 
 test "ZfsPathValidator validates components" {
