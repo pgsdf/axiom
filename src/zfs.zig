@@ -484,7 +484,14 @@ pub const ZfsHandle = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const result = c.zfs_clone(self.handle, c_snap.ptr, c_target.ptr, nvlist);
+        // Open the snapshot to get a dataset handle
+        const snap_handle = c.zfs_open(self.handle, c_snap.ptr, c.ZFS_TYPE_SNAPSHOT) orelse {
+            const errno_val = c.libzfs_errno(self.handle);
+            return libzfsErrorToZig(errno_val);
+        };
+        defer c.zfs_close(snap_handle);
+
+        const result = c.zfs_clone(snap_handle, c_target.ptr, nvlist);
 
         if (result != 0) {
             const errno_val = c.libzfs_errno(self.handle);

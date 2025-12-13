@@ -1771,9 +1771,9 @@ test "ResolutionContext.conflict_detection" {
     try ctx.resolved_candidates.put("bash", Candidate{
         .id = bash_id,
         .dependencies = &[_]Dependency{},
-        .conflicts = &[_]VirtualPackage{
+        .conflicts = @constCast(&[_]VirtualPackage{
             .{ .name = "csh", .constraint = null },
-        },
+        }),
     });
 
     // Try to add a package that conflicts with bash
@@ -1817,9 +1817,9 @@ test "ResolutionContext.replaces_detection" {
             .build_id = "new456",
         },
         .dependencies = &[_]Dependency{},
-        .replaces = &[_]VirtualPackage{
+        .replaces = @constCast(&[_]VirtualPackage{
             .{ .name = "sh", .constraint = null },
-        },
+        }),
     };
 
     // Check if bash replaces anything
