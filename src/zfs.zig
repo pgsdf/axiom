@@ -1414,8 +1414,8 @@ test "ZfsPathValidator builds package paths" {
     // Invalid: version with snapshot reference
     try std.testing.expectError(PathValidationError.SnapshotInPath, validator.buildPackagePath("bash", "5.2.0@evil", 1, "abc123"));
 
-    // Invalid: build_id with path traversal attempt
-    try std.testing.expectError(PathValidationError.PathTraversal, validator.buildPackagePath("bash", "5.2.0", 1, ".."));
+    // Invalid: build_id with reserved name (..)
+    try std.testing.expectError(PathValidationError.ReservedName, validator.buildPackagePath("bash", "5.2.0", 1, ".."));
 }
 
 test "ZfsPathValidator sanitizes components" {
