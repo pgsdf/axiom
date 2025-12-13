@@ -612,6 +612,22 @@ pub const DependencyManifest = struct {
                     }
                 }
                 current_dep = .{};
+
+                // Parse the key-value pair on the same line as "- " (e.g., "- name: readline")
+                const after_dash = std.mem.trim(u8, trimmed[2..], " \t");
+                if (after_dash.len == 0) continue;
+
+                var inline_parts = std.mem.splitScalar(u8, after_dash, ':');
+                const inline_key = std.mem.trim(u8, inline_parts.next() orelse continue, " \t");
+                const inline_value = std.mem.trim(u8, inline_parts.rest(), " \t\"");
+
+                if (std.mem.eql(u8, inline_key, "name")) {
+                    current_dep.?.name = inline_value;
+                } else if (std.mem.eql(u8, inline_key, "version")) {
+                    current_dep.?.version = inline_value;
+                } else if (std.mem.eql(u8, inline_key, "constraint")) {
+                    current_dep.?.constraint_type = inline_value;
+                }
                 continue;
             }
 
