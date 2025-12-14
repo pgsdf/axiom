@@ -394,7 +394,7 @@ pub const ZfsHandle = struct {
         if (recursive) {
             // Use direct execve - no shell involved
             var child = std.process.Child.init(
-                &[_][]const u8{ "zfs", "destroy", "-r", path },
+                &[_][]const u8{ "zfs", "destroy", "-rf", path },
                 allocator,
             );
             child.stderr_behavior = .Pipe;
