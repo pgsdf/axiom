@@ -397,11 +397,16 @@ pub const ZfsHandle = struct {
                 &[_][]const u8{ "zfs", "destroy", "-r", path },
                 allocator,
             );
-            child.stderr_behavior = .Ignore;
+            child.stderr_behavior = .Pipe;
             child.stdout_behavior = .Ignore;
             try child.spawn();
+            const stderr_output = child.stderr.?.reader().readAllAlloc(allocator, 4096) catch "";
+            defer if (stderr_output.len > 0) allocator.free(stderr_output);
             const term = child.wait() catch return ZfsError.InternalError;
             if (term.Exited != 0) {
+                if (stderr_output.len > 0) {
+                    std.debug.print("    ZFS error: {s}", .{stderr_output});
+                }
                 return ZfsError.Unknown;
             }
             return;
