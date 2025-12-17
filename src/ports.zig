@@ -2204,6 +2204,19 @@ pub const PortsMigrator = struct {
             // Skip the package itself
             if (std.mem.eql(u8, dep_origin, origin)) continue;
 
+            // Skip ports that axiom replaces (e.g., ports-mgmt/pkg)
+            var is_skipped = false;
+            for (SKIP_PORTS) |skip_origin| {
+                if (std.mem.eql(u8, dep_origin, skip_origin)) {
+                    is_skipped = true;
+                    break;
+                }
+            }
+            if (is_skipped) {
+                std.debug.print("    [DEBUG] Skipping {s} (replaced by axiom)\n", .{dep_origin});
+                continue;
+            }
+
             // Skip wheel packages for bootstrap builds - we bootstrap wheel 0.37.1 ourselves
             // to avoid version parsing issues in wheel 0.40+ when building setuptools
             if (is_python_bootstrap and std.mem.startsWith(u8, dep_origin, "devel/py-wheel")) {
