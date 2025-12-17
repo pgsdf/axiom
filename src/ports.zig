@@ -2485,12 +2485,12 @@ pub const PortsMigrator = struct {
                 .filename = "installer-0.7.0-py3-none-any.whl",
             },
             .{
-                // Using wheel 0.37.1 to avoid version parsing issue
-                // Newer versions (0.40+) have code that tries to parse setuptools.__version__
-                // which returns 'unknown' when building setuptools from source
+                // Using wheel 0.42.0 instead of 0.44.0 to avoid version parsing issue
+                // wheel 0.44.0 has code that tries to parse setuptools.__version__ which
+                // returns 'unknown' when building setuptools from source
                 .name = "wheel",
-                .url = "https://files.pythonhosted.org/packages/py2.py3/w/wheel/wheel-0.37.1-py2.py3-none-any.whl",
-                .filename = "wheel-0.37.1-py2.py3-none-any.whl",
+                .url = "https://files.pythonhosted.org/packages/py3/w/wheel/wheel-0.42.0-py3-none-any.whl",
+                .filename = "wheel-0.42.0-py3-none-any.whl",
             },
         };
 
