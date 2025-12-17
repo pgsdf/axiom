@@ -331,6 +331,13 @@ pub const ZfsHandle = struct {
         var args = std.ArrayList([]const u8).init(allocator);
         defer args.deinit();
 
+        // Track allocated strings that need to be freed after execution
+        var allocated_args = std.ArrayList([]const u8).init(allocator);
+        defer {
+            for (allocated_args.items) |s| allocator.free(s);
+            allocated_args.deinit();
+        }
+
         try args.append("zfs");
         try args.append("create");
         try args.append("-p");
@@ -343,9 +350,9 @@ pub const ZfsHandle = struct {
                     return ZfsError.InvalidPropertyName;
                 }
                 const comp_opt = try std.fmt.allocPrint(allocator, "compression={s}", .{comp});
-                defer allocator.free(comp_opt);
+                try allocated_args.append(comp_opt);
                 try args.append("-o");
-                try args.append(try allocator.dupe(u8, comp_opt));
+                try args.append(comp_opt);
             }
             if (p.atime != null and !p.atime.?) {
                 try args.append("-o");
