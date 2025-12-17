@@ -2316,6 +2316,7 @@ pub const PortsMigrator = struct {
                         .{ bootstrap_path, pythonpath },
                     );
                     self.allocator.free(pythonpath);
+                    self.allocator.free(bootstrap_path);
                     pythonpath = new_pythonpath;
                 } else {
                     pythonpath = bootstrap_path;
@@ -2484,9 +2485,12 @@ pub const PortsMigrator = struct {
                 .filename = "installer-0.7.0-py3-none-any.whl",
             },
             .{
+                // Using wheel 0.37.1 to avoid version parsing issue
+                // Newer versions (0.40+) have code that tries to parse setuptools.__version__
+                // which returns 'unknown' when building setuptools from source
                 .name = "wheel",
-                .url = "https://files.pythonhosted.org/packages/py3/w/wheel/wheel-0.44.0-py3-none-any.whl",
-                .filename = "wheel-0.44.0-py3-none-any.whl",
+                .url = "https://files.pythonhosted.org/packages/py2.py3/w/wheel/wheel-0.37.1-py2.py3-none-any.whl",
+                .filename = "wheel-0.37.1-py2.py3-none-any.whl",
             },
         };
 
