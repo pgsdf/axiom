@@ -305,6 +305,12 @@ pub const PortsMigrator = struct {
         "ports-mgmt/pkg", // Axiom replaces pkg
     };
 
+    /// Infrastructure ports that should always be included in the sysroot
+    /// These provide tools that the ports framework itself needs (not just build dependencies)
+    const INFRA_PORTS = [_][]const u8{
+        "sysutils/coreutils", // Provides md5sum, sha256sum, etc. needed by ports framework
+    };
+
     /// Get or create a local signing key for this machine
     /// Returns a KeyPair for signing packages built locally
     fn getOrCreateLocalSigningKey(self: *PortsMigrator) !KeyPair {
@@ -2252,6 +2258,35 @@ pub const PortsMigrator = struct {
             // Add all roots (transfer ownership to all_roots)
             for (roots.items) |root| {
                 // Dupe to transfer ownership since roots will be cleaned up
+                const root_copy = self.allocator.dupe(u8, root) catch continue;
+                all_roots.append(root_copy) catch {
+                    self.allocator.free(root_copy);
+                    continue;
+                };
+            }
+        }
+
+        // Always add infrastructure packages to sysroot (tools the ports framework needs)
+        for (INFRA_PORTS) |infra_origin| {
+            const pkg_name = try self.mapPortNameAlloc(infra_origin);
+            defer self.allocator.free(pkg_name);
+
+            std.debug.print("    [DEBUG] Adding infrastructure package: {s} → {s}\n", .{ infra_origin, pkg_name });
+
+            var roots = self.findAllPackageRootsInStore(pkg_name) catch continue;
+            defer {
+                for (roots.items) |r| self.allocator.free(r);
+                roots.deinit();
+            }
+
+            if (roots.items.len == 0) {
+                std.debug.print("    [DEBUG] Infrastructure package {s} NOT found in store (build it first)\n", .{pkg_name});
+                continue;
+            }
+
+            std.debug.print("    [DEBUG] Found {d} version(s) of infrastructure package {s}\n", .{ roots.items.len, pkg_name });
+
+            for (roots.items) |root| {
                 const root_copy = self.allocator.dupe(u8, root) catch continue;
                 all_roots.append(root_copy) catch {
                     self.allocator.free(root_copy);
