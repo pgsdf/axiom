@@ -1169,6 +1169,9 @@ pub const PortsMigrator = struct {
         /// Path to gmake binary in sysroot (for GMAKE override)
         /// FreeBSD ports use GMAKE variable which defaults to /usr/local/bin/gmake
         gmake_path: []const u8,
+        /// Path to cmake binary in sysroot (for CMAKE override)
+        /// FreeBSD ports use CMAKE variable which defaults to /usr/local/bin/cmake
+        cmake_path: []const u8,
         allocator: std.mem.Allocator,
 
         pub fn deinit(self: *BuildEnvironment) void {
@@ -1191,6 +1194,7 @@ pub const PortsMigrator = struct {
             if (self.pythonpath.len > 0) self.allocator.free(self.pythonpath);
             if (self.perl5lib.len > 0) self.allocator.free(self.perl5lib);
             if (self.gmake_path.len > 0) self.allocator.free(self.gmake_path);
+            if (self.cmake_path.len > 0) self.allocator.free(self.cmake_path);
         }
     };
 
@@ -2149,6 +2153,7 @@ pub const PortsMigrator = struct {
                 .pythonpath = "",
                 .perl5lib = "",
                 .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
+                .cmake_path = try self.allocator.dupe(u8, "/usr/local/bin/cmake"),
                 .allocator = self.allocator,
             };
         }
@@ -2174,6 +2179,7 @@ pub const PortsMigrator = struct {
                 .pythonpath = "",
                 .perl5lib = "",
                 .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
+                .cmake_path = try self.allocator.dupe(u8, "/usr/local/bin/cmake"),
                 .allocator = self.allocator,
             };
         };
@@ -2197,6 +2203,19 @@ pub const PortsMigrator = struct {
         for (deps.items) |dep_origin| {
             // Skip the package itself
             if (std.mem.eql(u8, dep_origin, origin)) continue;
+
+            // Skip ports that axiom replaces (e.g., ports-mgmt/pkg)
+            var is_skipped = false;
+            for (SKIP_PORTS) |skip_origin| {
+                if (std.mem.eql(u8, dep_origin, skip_origin)) {
+                    is_skipped = true;
+                    break;
+                }
+            }
+            if (is_skipped) {
+                std.debug.print("    [DEBUG] Skipping {s} (replaced by axiom)\n", .{dep_origin});
+                continue;
+            }
 
             // Skip wheel packages for bootstrap builds - we bootstrap wheel 0.37.1 ourselves
             // to avoid version parsing issues in wheel 0.40+ when building setuptools
@@ -2253,6 +2272,7 @@ pub const PortsMigrator = struct {
                 .pythonpath = "",
                 .perl5lib = "",
                 .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
+                .cmake_path = try self.allocator.dupe(u8, "/usr/local/bin/cmake"),
                 .allocator = self.allocator,
             };
         }
@@ -2355,10 +2375,28 @@ pub const PortsMigrator = struct {
             break :blk gmake_in_sysroot;
         };
 
+        // CMAKE: Check if cmake exists in sysroot, otherwise fall back to system path
+        // FreeBSD ports framework uses CMAKE variable (defaults to /usr/local/bin/cmake)
+        // We override this to point to sysroot cmake when available
+        const cmake_in_sysroot = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot_bin, "cmake" });
+        errdefer self.allocator.free(cmake_in_sysroot);
+
+        const cmake_path = blk: {
+            // Check if cmake exists in sysroot
+            std.fs.cwd().access(cmake_in_sysroot, .{}) catch {
+                // cmake not in sysroot, fall back to system path
+                self.allocator.free(cmake_in_sysroot);
+                break :blk try self.allocator.dupe(u8, "/usr/local/bin/cmake");
+            };
+            // cmake found in sysroot
+            break :blk cmake_in_sysroot;
+        };
+
         std.debug.print("    [DEBUG] Sysroot created: {s}\n", .{sysroot});
         std.debug.print("    [DEBUG] Final PATH: {s}\n", .{path});
         std.debug.print("    [DEBUG] Final LDFLAGS: {s}\n", .{ldflags});
         std.debug.print("    [DEBUG] Final GMAKE: {s}\n", .{gmake_path});
+        std.debug.print("    [DEBUG] Final CMAKE: {s}\n", .{cmake_path});
         if (pythonpath.len > 0) {
             std.debug.print("    [DEBUG] Final PYTHONPATH: {s}\n", .{pythonpath});
         }
@@ -2375,6 +2413,7 @@ pub const PortsMigrator = struct {
             .pythonpath = pythonpath,
             .perl5lib = perl5lib,
             .gmake_path = gmake_path,
+            .cmake_path = cmake_path,
             .allocator = self.allocator,
         };
     }
@@ -3122,6 +3161,10 @@ pub const PortsMigrator = struct {
         defer if (gmake_arg) |f| self.allocator.free(f);
         defer if (configure_ld_library_path_arg) |f| self.allocator.free(f);
 
+        // CMAKE: Override path to cmake for ports that use CMAKE variable
+        var cmake_arg: ?[]const u8 = null;
+        defer if (cmake_arg) |f| self.allocator.free(f);
+
         // CMAKE_PREFIX_PATH for cmake-based builds
         var cmake_prefix_arg: ?[]const u8 = null;
         defer if (cmake_prefix_arg) |f| self.allocator.free(f);
@@ -3310,6 +3353,18 @@ pub const PortsMigrator = struct {
                 try args.append(gmake_arg.?);
             }
 
+            // CMAKE: Override the path to cmake
+            // FreeBSD ports framework uses CMAKE variable which defaults to /usr/local/bin/cmake
+            // We override this to point to the sysroot cmake when available
+            if (env.cmake_path.len > 0) {
+                cmake_arg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "CMAKE={s}",
+                    .{env.cmake_path},
+                );
+                try args.append(cmake_arg.?);
+            }
+
             // CMAKE_PREFIX_PATH for cmake-based builds (like cmake-core itself)
             // cmake's find_library/find_path doesn't use LDFLAGS/CPPFLAGS,
             // it needs CMAKE_PREFIX_PATH to find packages in the sysroot
@@ -3349,6 +3404,9 @@ pub const PortsMigrator = struct {
             }
             if (env.gmake_path.len > 0) {
                 std.debug.print("    [DEBUG]   GMAKE={s}\n", .{env.gmake_path});
+            }
+            if (env.cmake_path.len > 0) {
+                std.debug.print("    [DEBUG]   CMAKE={s}\n", .{env.cmake_path});
             }
             std.debug.print("    [DEBUG]   CMAKE_PREFIX_PATH={s}\n", .{env.sysroot});
         }
