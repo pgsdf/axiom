@@ -2341,7 +2341,7 @@ pub const PortsMigrator = struct {
     }
 
     /// Build PYTHONPATH by scanning lib directories for python*/site-packages
-    /// Scans sysroot first, then system /usr/local/lib as fallback
+    /// Scans sysroot first, then system paths as fallback
     /// This allows bootstrap Python packages (like py-installer) to use system modules
     fn buildPythonPath(self: *PortsMigrator, lib_dir: []const u8) ![]const u8 {
         var paths = std.ArrayList([]const u8).init(self.allocator);
@@ -2350,13 +2350,20 @@ pub const PortsMigrator = struct {
             paths.deinit();
         }
 
-        // Directories to scan: sysroot first, then system fallback
-        const lib_dirs = [_][]const u8{ lib_dir, "/usr/local/lib" };
+        // Directories to scan: sysroot first, then system fallbacks
+        // Include /root/.local/lib for user-installed packages (when running as root)
+        // Include /usr/lib for system Python packages
+        const lib_dirs = [_][]const u8{ lib_dir, "/usr/local/lib", "/usr/lib", "/root/.local/lib" };
+
+        // Package directory names: site-packages (FreeBSD), dist-packages (Debian/Ubuntu)
+        const pkg_dirs = [_][]const u8{ "site-packages", "dist-packages" };
+
 
         for (lib_dirs) |search_dir| {
             // Open lib directory and scan for python* subdirectories
             var dir = std.fs.cwd().openDir(search_dir, .{ .iterate = true }) catch |err| {
                 if (err == error.FileNotFound) continue;
+                if (err == error.AccessDenied) continue;
                 return err;
             };
             defer dir.close();
@@ -2367,33 +2374,35 @@ pub const PortsMigrator = struct {
                 if (entry.kind != .directory) continue;
                 if (!std.mem.startsWith(u8, entry.name, "python")) continue;
 
-                // Check for site-packages subdirectory
-                const site_packages = try std.fs.path.join(self.allocator, &[_][]const u8{
-                    search_dir,
-                    entry.name,
-                    "site-packages",
-                });
+                // Check for both site-packages and dist-packages
+                for (pkg_dirs) |pkg_dir| {
+                    const packages_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+                        search_dir,
+                        entry.name,
+                        pkg_dir,
+                    });
 
-                // Verify it exists
-                std.fs.cwd().access(site_packages, .{}) catch {
-                    self.allocator.free(site_packages);
-                    continue;
-                };
+                    // Verify it exists
+                    std.fs.cwd().access(packages_path, .{}) catch {
+                        self.allocator.free(packages_path);
+                        continue;
+                    };
 
-                // Check if this path is already in the list (avoid duplicates)
-                var already_added = false;
-                for (paths.items) |existing| {
-                    if (std.mem.eql(u8, existing, site_packages)) {
-                        already_added = true;
-                        break;
+                    // Check if this path is already in the list (avoid duplicates)
+                    var already_added = false;
+                    for (paths.items) |existing| {
+                        if (std.mem.eql(u8, existing, packages_path)) {
+                            already_added = true;
+                            break;
+                        }
                     }
-                }
-                if (already_added) {
-                    self.allocator.free(site_packages);
-                    continue;
-                }
+                    if (already_added) {
+                        self.allocator.free(packages_path);
+                        continue;
+                    }
 
-                try paths.append(site_packages);
+                    try paths.append(packages_path);
+                }
             }
         }
 
