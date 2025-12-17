@@ -3353,13 +3353,13 @@ pub const PortsMigrator = struct {
                 try args.append(gmake_arg.?);
             }
 
-            // CMAKE: Override the path to cmake
-            // FreeBSD ports framework uses CMAKE variable which defaults to /usr/local/bin/cmake
+            // CMAKE_BIN: Override the path to cmake binary
+            // FreeBSD ports framework uses CMAKE_BIN variable which defaults to ${LOCALBASE}/bin/cmake
             // We override this to point to the sysroot cmake when available
             if (env.cmake_path.len > 0) {
                 cmake_arg = try std.fmt.allocPrint(
                     self.allocator,
-                    "CMAKE={s}",
+                    "CMAKE_BIN={s}",
                     .{env.cmake_path},
                 );
                 try args.append(cmake_arg.?);
@@ -3406,7 +3406,7 @@ pub const PortsMigrator = struct {
                 std.debug.print("    [DEBUG]   GMAKE={s}\n", .{env.gmake_path});
             }
             if (env.cmake_path.len > 0) {
-                std.debug.print("    [DEBUG]   CMAKE={s}\n", .{env.cmake_path});
+                std.debug.print("    [DEBUG]   CMAKE_BIN={s}\n", .{env.cmake_path});
             }
             std.debug.print("    [DEBUG]   CMAKE_PREFIX_PATH={s}\n", .{env.sysroot});
         }
