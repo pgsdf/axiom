@@ -2495,20 +2495,19 @@ pub const PortsMigrator = struct {
         };
 
         for (modules) |mod| {
-            // Check if already bootstrapped
+            // Always download fresh - remove any existing module directory
+            // This ensures we get the correct version even if something else created the dir
             const mod_check = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_dir, mod.name });
             defer self.allocator.free(mod_check);
 
-            if (std.fs.cwd().access(mod_check, .{})) |_| {
-                std.debug.print("    [BOOTSTRAP] {s} module already bootstrapped\n", .{mod.name});
-                continue;
-            } else |_| {}
+            // Remove existing directory to ensure we use the correct version
+            std.fs.cwd().deleteTree(mod_check) catch {};
 
             // Download wheel from PyPI
             const wheel_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_dir, mod.filename });
             defer self.allocator.free(wheel_path);
 
-            std.debug.print("    [BOOTSTRAP] Downloading {s} wheel from PyPI...\n", .{mod.name});
+            std.debug.print("    [BOOTSTRAP] Downloading {s} from {s}...\n", .{ mod.name, mod.url });
 
             // Use fetch (FreeBSD) or curl to download
             const download_ok = blk: {
