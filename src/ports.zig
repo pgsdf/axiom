@@ -2358,6 +2358,7 @@ pub const PortsMigrator = struct {
         // Package directory names: site-packages (FreeBSD), dist-packages (Debian/Ubuntu)
         const pkg_dirs = [_][]const u8{ "site-packages", "dist-packages" };
 
+
         for (lib_dirs) |search_dir| {
             // Open lib directory and scan for python* subdirectories
             var dir = std.fs.cwd().openDir(search_dir, .{ .iterate = true }) catch |err| {
