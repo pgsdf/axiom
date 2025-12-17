@@ -2293,7 +2293,27 @@ pub const PortsMigrator = struct {
 
         // PYTHONPATH: scan sysroot/lib for python*/site-packages directories
         // Python packages (py-flit-core, py-setuptools, etc.) install to lib/pythonX.Y/site-packages
-        const pythonpath = try self.buildPythonPath(sysroot_lib);
+        var pythonpath = try self.buildPythonPath(sysroot_lib);
+
+        // Bootstrap Python installer module if building py-installer
+        // This is a chicken-and-egg problem: py-installer needs 'installer' to install itself
+        if (std.mem.startsWith(u8, origin, "devel/py-installer")) {
+            std.debug.print("    [BOOTSTRAP] Detected py-installer build, bootstrapping installer module\n", .{});
+            if (try self.bootstrapPythonInstaller(sysroot_lib)) |bootstrap_path| {
+                // Prepend bootstrap path to PYTHONPATH
+                if (pythonpath.len > 0) {
+                    const new_pythonpath = try std.fmt.allocPrint(
+                        self.allocator,
+                        "{s}:{s}",
+                        .{ bootstrap_path, pythonpath },
+                    );
+                    self.allocator.free(pythonpath);
+                    pythonpath = new_pythonpath;
+                } else {
+                    pythonpath = bootstrap_path;
+                }
+            }
+        }
 
         // PERL5LIB: scan sysroot/lib for perl5/site_perl directories
         // Perl modules (p5-Locale-gettext, etc.) install to lib/perl5/site_perl/X.YZ
@@ -2431,6 +2451,106 @@ pub const PortsMigrator = struct {
         }
 
         return result;
+    }
+
+    /// Bootstrap the Python 'installer' module by downloading and extracting the wheel
+    /// This solves the chicken-and-egg problem where py-installer needs installer to install itself
+    /// Returns the path to add to PYTHONPATH, or null if bootstrap fails
+    fn bootstrapPythonInstaller(self: *PortsMigrator, lib_dir: []const u8) !?[]const u8 {
+        // Create bootstrap directory under lib_dir
+        const bootstrap_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ lib_dir, "python-bootstrap" });
+        defer self.allocator.free(bootstrap_dir);
+
+        // Check if already bootstrapped
+        const installer_check = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_dir, "installer" });
+        defer self.allocator.free(installer_check);
+
+        if (std.fs.cwd().access(installer_check, .{})) |_| {
+            std.debug.print("    [BOOTSTRAP] installer module already bootstrapped\n", .{});
+            return try self.allocator.dupe(u8, bootstrap_dir);
+        } else |_| {}
+
+        // Create bootstrap directory
+        std.fs.cwd().makePath(bootstrap_dir) catch |err| {
+            std.debug.print("    [BOOTSTRAP] Failed to create bootstrap dir: {}\n", .{err});
+            return null;
+        };
+
+        // Download installer wheel from PyPI
+        // Using a specific version for reproducibility
+        const wheel_url = "https://files.pythonhosted.org/packages/py3/i/installer/installer-0.7.0-py3-none-any.whl";
+        const wheel_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_dir, "installer-0.7.0-py3-none-any.whl" });
+        defer self.allocator.free(wheel_path);
+
+        std.debug.print("    [BOOTSTRAP] Downloading installer wheel from PyPI...\n", .{});
+
+        // Use fetch (FreeBSD) or curl to download
+        const fetch_result = std.process.Child.run(.{
+            .allocator = self.allocator,
+            .argv = &[_][]const u8{ "fetch", "-o", wheel_path, wheel_url },
+        }) catch |err| {
+            std.debug.print("    [BOOTSTRAP] fetch failed: {}, trying curl...\n", .{err});
+            // Try curl as fallback
+            const curl_result = std.process.Child.run(.{
+                .allocator = self.allocator,
+                .argv = &[_][]const u8{ "curl", "-sL", "-o", wheel_path, wheel_url },
+            }) catch |curl_err| {
+                std.debug.print("    [BOOTSTRAP] curl also failed: {}\n", .{curl_err});
+                return null;
+            };
+            defer self.allocator.free(curl_result.stdout);
+            defer self.allocator.free(curl_result.stderr);
+            if (curl_result.term.Exited != 0) {
+                std.debug.print("    [BOOTSTRAP] curl exited with code {}\n", .{curl_result.term.Exited});
+                return null;
+            }
+            std.debug.print("    [BOOTSTRAP] Downloaded wheel via curl\n", .{});
+            // Continue to extraction below
+            return self.extractInstallerWheel(wheel_path, bootstrap_dir);
+        };
+        defer self.allocator.free(fetch_result.stdout);
+        defer self.allocator.free(fetch_result.stderr);
+
+        if (fetch_result.term.Exited != 0) {
+            std.debug.print("    [BOOTSTRAP] fetch exited with code {}\n", .{fetch_result.term.Exited});
+            return null;
+        }
+
+        std.debug.print("    [BOOTSTRAP] Downloaded wheel via fetch\n", .{});
+        return self.extractInstallerWheel(wheel_path, bootstrap_dir);
+    }
+
+    /// Extract the installer wheel (which is just a zip file) to the bootstrap directory
+    fn extractInstallerWheel(self: *PortsMigrator, wheel_path: []const u8, bootstrap_dir: []const u8) !?[]const u8 {
+        std.debug.print("    [BOOTSTRAP] Extracting wheel...\n", .{});
+
+        // Wheels are zip files, use unzip to extract
+        const unzip_result = std.process.Child.run(.{
+            .allocator = self.allocator,
+            .argv = &[_][]const u8{ "unzip", "-o", "-q", wheel_path, "-d", bootstrap_dir },
+        }) catch |err| {
+            std.debug.print("    [BOOTSTRAP] unzip failed: {}\n", .{err});
+            return null;
+        };
+        defer self.allocator.free(unzip_result.stdout);
+        defer self.allocator.free(unzip_result.stderr);
+
+        if (unzip_result.term.Exited != 0) {
+            std.debug.print("    [BOOTSTRAP] unzip exited with code {}: {s}\n", .{ unzip_result.term.Exited, unzip_result.stderr });
+            return null;
+        }
+
+        // Verify installer module exists
+        const installer_check = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_dir, "installer" });
+        defer self.allocator.free(installer_check);
+
+        std.fs.cwd().access(installer_check, .{}) catch {
+            std.debug.print("    [BOOTSTRAP] installer module not found after extraction\n", .{});
+            return null;
+        };
+
+        std.debug.print("    [BOOTSTRAP] Successfully bootstrapped installer module\n", .{});
+        return try self.allocator.dupe(u8, bootstrap_dir);
     }
 
     /// Build PERL5LIB by scanning lib directory for perl5/site_perl directories
