@@ -2340,7 +2340,9 @@ pub const PortsMigrator = struct {
         };
     }
 
-    /// Build PYTHONPATH by scanning lib directory for python*/site-packages
+    /// Build PYTHONPATH by scanning lib directories for python*/site-packages
+    /// Scans sysroot first, then system /usr/local/lib as fallback
+    /// This allows bootstrap Python packages (like py-installer) to use system modules
     fn buildPythonPath(self: *PortsMigrator, lib_dir: []const u8) ![]const u8 {
         var paths = std.ArrayList([]const u8).init(self.allocator);
         defer {
@@ -2348,33 +2350,51 @@ pub const PortsMigrator = struct {
             paths.deinit();
         }
 
-        // Open lib directory and scan for python* subdirectories
-        var dir = std.fs.cwd().openDir(lib_dir, .{ .iterate = true }) catch |err| {
-            if (err == error.FileNotFound) return "";
-            return err;
-        };
-        defer dir.close();
+        // Directories to scan: sysroot first, then system fallback
+        const lib_dirs = [_][]const u8{ lib_dir, "/usr/local/lib" };
 
-        var iter = dir.iterate();
-        while (try iter.next()) |entry| {
-            // Look for directories starting with "python"
-            if (entry.kind != .directory) continue;
-            if (!std.mem.startsWith(u8, entry.name, "python")) continue;
-
-            // Check for site-packages subdirectory
-            const site_packages = try std.fs.path.join(self.allocator, &[_][]const u8{
-                lib_dir,
-                entry.name,
-                "site-packages",
-            });
-
-            // Verify it exists
-            std.fs.cwd().access(site_packages, .{}) catch {
-                self.allocator.free(site_packages);
-                continue;
+        for (lib_dirs) |search_dir| {
+            // Open lib directory and scan for python* subdirectories
+            var dir = std.fs.cwd().openDir(search_dir, .{ .iterate = true }) catch |err| {
+                if (err == error.FileNotFound) continue;
+                return err;
             };
+            defer dir.close();
 
-            try paths.append(site_packages);
+            var iter = dir.iterate();
+            while (try iter.next()) |entry| {
+                // Look for directories starting with "python"
+                if (entry.kind != .directory) continue;
+                if (!std.mem.startsWith(u8, entry.name, "python")) continue;
+
+                // Check for site-packages subdirectory
+                const site_packages = try std.fs.path.join(self.allocator, &[_][]const u8{
+                    search_dir,
+                    entry.name,
+                    "site-packages",
+                });
+
+                // Verify it exists
+                std.fs.cwd().access(site_packages, .{}) catch {
+                    self.allocator.free(site_packages);
+                    continue;
+                };
+
+                // Check if this path is already in the list (avoid duplicates)
+                var already_added = false;
+                for (paths.items) |existing| {
+                    if (std.mem.eql(u8, existing, site_packages)) {
+                        already_added = true;
+                        break;
+                    }
+                }
+                if (already_added) {
+                    self.allocator.free(site_packages);
+                    continue;
+                }
+
+                try paths.append(site_packages);
+            }
         }
 
         if (paths.items.len == 0) return "";
