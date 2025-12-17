@@ -2361,13 +2361,9 @@ pub const PortsMigrator = struct {
 
         for (lib_dirs) |search_dir| {
             // Open lib directory and scan for python* subdirectories
-            if (self.debug) {
-                std.debug.print("[DEBUG] buildPythonPath: scanning {s}\n", .{search_dir});
-            }
+            std.debug.print("    [DEBUG] buildPythonPath: scanning {s}\n", .{search_dir});
             var dir = std.fs.cwd().openDir(search_dir, .{ .iterate = true }) catch |err| {
-                if (self.debug) {
-                    std.debug.print("[DEBUG] buildPythonPath: {s} error: {}\n", .{ search_dir, err });
-                }
+                std.debug.print("    [DEBUG] buildPythonPath: {s} error: {}\n", .{ search_dir, err });
                 if (err == error.FileNotFound) continue;
                 if (err == error.AccessDenied) continue;
                 return err;
@@ -2394,9 +2390,7 @@ pub const PortsMigrator = struct {
                         continue;
                     };
 
-                    if (self.debug) {
-                        std.debug.print("[DEBUG] buildPythonPath: found {s}\n", .{packages_path});
-                    }
+                    std.debug.print("    [DEBUG] buildPythonPath: found {s}\n", .{packages_path});
 
                     // Check if this path is already in the list (avoid duplicates)
                     var already_added = false;
