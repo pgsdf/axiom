@@ -2184,10 +2184,26 @@ pub const PortsMigrator = struct {
 
         std.debug.print("    [DEBUG] Processing {d} transitive dependencies for sysroot\n", .{deps.items.len});
 
+        // Detect if this is a Python bootstrap package BEFORE collecting dependencies
+        // Bootstrap packages have chicken-and-egg problems and we bootstrap wheel ourselves
+        const is_python_bootstrap = std.mem.startsWith(u8, origin, "devel/py-installer") or
+            std.mem.startsWith(u8, origin, "devel/py-setuptools") or
+            std.mem.startsWith(u8, origin, "devel/py-wheel") or
+            std.mem.startsWith(u8, origin, "devel/py-flit") or
+            std.mem.startsWith(u8, origin, "devel/py-build") or
+            std.mem.startsWith(u8, origin, "devel/py-packaging");
+
         // For each dependency, collect ALL package roots from the Axiom store
         for (deps.items) |dep_origin| {
             // Skip the package itself
             if (std.mem.eql(u8, dep_origin, origin)) continue;
+
+            // Skip wheel packages for bootstrap builds - we bootstrap wheel 0.37.1 ourselves
+            // to avoid version parsing issues in wheel 0.40+ when building setuptools
+            if (is_python_bootstrap and std.mem.startsWith(u8, dep_origin, "devel/py-wheel")) {
+                std.debug.print("    [DEBUG] Skipping {s} for bootstrap build (using bootstrapped wheel instead)\n", .{dep_origin});
+                continue;
+            }
 
             // Map port origin to Axiom package name
             // For Python packages: py-flit-core@py311 → py311-flit-core
@@ -2298,13 +2314,7 @@ pub const PortsMigrator = struct {
         // Bootstrap Python modules for Python bootstrap packages
         // These packages have chicken-and-egg problems where they need certain modules to build themselves
         // We bootstrap: installer (needed by py-installer), wheel (needed by py-setuptools, py-wheel)
-        const is_python_bootstrap = std.mem.startsWith(u8, origin, "devel/py-installer") or
-            std.mem.startsWith(u8, origin, "devel/py-setuptools") or
-            std.mem.startsWith(u8, origin, "devel/py-wheel") or
-            std.mem.startsWith(u8, origin, "devel/py-flit") or
-            std.mem.startsWith(u8, origin, "devel/py-build") or
-            std.mem.startsWith(u8, origin, "devel/py-packaging");
-
+        // Note: is_python_bootstrap was already detected above to skip wheel packages from sysroot
         if (is_python_bootstrap) {
             std.debug.print("    [BOOTSTRAP] Detected Python bootstrap package: {s}\n", .{origin});
             if (try self.bootstrapPythonModules(sysroot_lib)) |bootstrap_path| {
