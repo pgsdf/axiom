@@ -1832,6 +1832,57 @@ pub const PortsMigrator = struct {
             .{ "lang/gawk", BinaryAlias{ .alias = "awk", .target = "gawk" } },
         });
 
+        // Coreutils aliases: the package installs g-prefixed binaries, we create unprefixed aliases
+        // These are needed because the ports framework looks for unprefixed names
+        const coreutils_aliases = [_]BinaryAlias{
+            .{ .alias = "md5sum", .target = "gmd5sum" },
+            .{ .alias = "sha256sum", .target = "gsha256sum" },
+            .{ .alias = "sha512sum", .target = "gsha512sum" },
+            .{ .alias = "sha1sum", .target = "gsha1sum" },
+            .{ .alias = "sha224sum", .target = "gsha224sum" },
+            .{ .alias = "sha384sum", .target = "gsha384sum" },
+            .{ .alias = "readlink", .target = "greadlink" },
+            .{ .alias = "realpath", .target = "grealpath" },
+            .{ .alias = "stat", .target = "gstat" },
+            .{ .alias = "date", .target = "gdate" },
+            .{ .alias = "install", .target = "ginstall" },
+            .{ .alias = "mktemp", .target = "gmktemp" },
+            .{ .alias = "sort", .target = "gsort" },
+            .{ .alias = "head", .target = "ghead" },
+            .{ .alias = "tail", .target = "gtail" },
+            .{ .alias = "wc", .target = "gwc" },
+            .{ .alias = "cp", .target = "gcp" },
+            .{ .alias = "mv", .target = "gmv" },
+            .{ .alias = "rm", .target = "grm" },
+            .{ .alias = "ln", .target = "gln" },
+            .{ .alias = "ls", .target = "gls" },
+            .{ .alias = "cat", .target = "gcat" },
+            .{ .alias = "touch", .target = "gtouch" },
+            .{ .alias = "mkdir", .target = "gmkdir" },
+            .{ .alias = "rmdir", .target = "grmdir" },
+            .{ .alias = "chmod", .target = "gchmod" },
+            .{ .alias = "chown", .target = "gchown" },
+            .{ .alias = "tr", .target = "gtr" },
+            .{ .alias = "cut", .target = "gcut" },
+            .{ .alias = "paste", .target = "gpaste" },
+            .{ .alias = "join", .target = "gjoin" },
+            .{ .alias = "uniq", .target = "guniq" },
+            .{ .alias = "comm", .target = "gcomm" },
+            .{ .alias = "od", .target = "god" },
+            .{ .alias = "tee", .target = "gtee" },
+            .{ .alias = "xargs", .target = "gxargs" },
+            .{ .alias = "env", .target = "genv" },
+            .{ .alias = "basename", .target = "gbasename" },
+            .{ .alias = "dirname", .target = "gdirname" },
+            .{ .alias = "expr", .target = "gexpr" },
+            .{ .alias = "printf", .target = "gprintf" },
+            .{ .alias = "seq", .target = "gseq" },
+            .{ .alias = "yes", .target = "gyes" },
+            .{ .alias = "true", .target = "gtrue" },
+            .{ .alias = "false", .target = "gfalse" },
+            .{ .alias = "nproc", .target = "gnproc" },
+        };
+
         const bin_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "bin" });
         defer self.allocator.free(bin_dir);
 
@@ -1867,6 +1918,32 @@ pub const PortsMigrator = struct {
                     std.debug.print("    [SYSROOT] Created alias: {s} -> {s}\n", .{ alias_info.alias, alias_info.target });
                 };
             }
+        }
+
+        // Always create coreutils aliases if coreutils is in the sysroot (it's an INFRA_PORT)
+        // The ports framework expects unprefixed names like 'md5sum' but coreutils installs 'gmd5sum'
+        for (coreutils_aliases) |alias_info| {
+            const target_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bin_dir, alias_info.target });
+            defer self.allocator.free(target_path);
+
+            const alias_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bin_dir, alias_info.alias });
+            defer self.allocator.free(alias_path);
+
+            // Check if target binary exists (coreutils might not be installed yet)
+            std.fs.cwd().access(target_path, .{}) catch {
+                // Target doesn't exist, skip silently
+                continue;
+            };
+
+            // Check if alias already exists
+            std.fs.cwd().access(alias_path, .{}) catch {
+                // Alias doesn't exist, create symlink
+                std.fs.cwd().symLink(alias_info.target, alias_path, .{}) catch |err| {
+                    std.debug.print("    [SYSROOT] Warning: could not create coreutils alias {s} -> {s}: {}\n", .{ alias_info.alias, alias_info.target, err });
+                    continue;
+                };
+                std.debug.print("    [SYSROOT] Created coreutils alias: {s} -> {s}\n", .{ alias_info.alias, alias_info.target });
+            };
         }
     }
 
