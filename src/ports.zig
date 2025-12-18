@@ -2726,10 +2726,30 @@ pub const PortsMigrator = struct {
 
                     std.debug.print("    [BOOTSTRAP] Created bootstrap package: {s} (with content from sysroot)\n", .{bootstrap_path});
                 } else {
-                    // No real package available - create stub with empty pkgconfig dir
-                    // This allows glib20's post-extract to succeed (it copies the dir)
+                    // No real package available - create stub with placeholder pkgconfig file
+                    // This allows glib20's post-extract to succeed (it copies the dir with wildcard)
                     // but introspection will be disabled
-                    std.debug.print("    [BOOTSTRAP] Created STUB bootstrap package: {s} (empty - introspection disabled)\n", .{bootstrap_path});
+                    const placeholder_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_libdata_pkgconfig, ".placeholder-stub.pc" });
+                    defer self.allocator.free(placeholder_path);
+
+                    // Create a minimal placeholder .pc file
+                    const placeholder_file = std.fs.cwd().createFile(placeholder_path, .{}) catch |err| {
+                        std.debug.print("    [BOOTSTRAP] Warning: could not create placeholder: {}\n", .{err});
+                        self.allocator.free(bootstrap_path);
+                        continue;
+                    };
+                    defer placeholder_file.close();
+
+                    placeholder_file.writeAll(
+                        \\# Axiom stub placeholder for bootstrap package
+                        \\# This file exists to allow wildcard cp commands to succeed
+                        \\Name: axiom-bootstrap-stub
+                        \\Description: Placeholder for circular dependency bootstrap
+                        \\Version: 0.0.0
+                        \\
+                    ) catch {};
+
+                    std.debug.print("    [BOOTSTRAP] Created STUB bootstrap package: {s} (placeholder - introspection disabled)\n", .{bootstrap_path});
                     std.debug.print("    [BOOTSTRAP]   Build gobject-introspection first for full support\n", .{});
                 }
 
