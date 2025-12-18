@@ -3006,7 +3006,7 @@ pub const PortsMigrator = struct {
 
         // Step 2: Check and display required dependencies
         // (User must build these first via separate ports-import calls)
-        try self.displayDependencies(port_path);
+        try self.displayDependencies(origin);
 
         // Step 3: Set up build environment with Axiom store paths
         // This allows built dependencies to be found by configure scripts and compilers
@@ -3721,14 +3721,41 @@ pub const PortsMigrator = struct {
     }
 
     /// Display build dependencies (user must build these first via separate ports-import calls)
-    fn displayDependencies(self: *PortsMigrator, port_path: []const u8) !void {
+    fn displayDependencies(self: *PortsMigrator, origin: []const u8) !void {
+        // Parse origin to extract optional flavor (e.g., "devel/py-setuptools@py311")
+        const parsed = ParsedOrigin.parse(origin);
+
+        const port_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+            self.options.ports_tree,
+            parsed.path, // Use path without @flavor suffix
+        });
+        defer self.allocator.free(port_path);
+
+        // Build flavor argument if present
+        var flavor_arg: ?[]const u8 = null;
+        defer if (flavor_arg) |f| self.allocator.free(f);
+        if (parsed.flavor) |flv| {
+            flavor_arg = try std.fmt.allocPrint(self.allocator, "FLAVOR={s}", .{flv});
+        }
+
         // Get BUILD_DEPENDS, LIB_DEPENDS, and RUN_DEPENDS
         const dep_vars = [_][]const u8{ "BUILD_DEPENDS", "LIB_DEPENDS", "RUN_DEPENDS" };
         var all_deps: [3]?[]const u8 = .{ null, null, null };
 
         for (dep_vars, 0..) |dep_var, idx| {
-            var args = [_][]const u8{ "make", "-C", port_path, "-V", dep_var };
-            var child = std.process.Child.init(&args, self.allocator);
+            // Build args list with optional flavor
+            var args_list = std.ArrayList([]const u8).init(self.allocator);
+            defer args_list.deinit();
+            try args_list.append("make");
+            try args_list.append("-C");
+            try args_list.append(port_path);
+            if (flavor_arg) |f| {
+                try args_list.append(f);
+            }
+            try args_list.append("-V");
+            try args_list.append(dep_var);
+
+            var child = std.process.Child.init(args_list.items, self.allocator);
             child.stdout_behavior = .Pipe;
             child.stderr_behavior = .Ignore;
             try child.spawn();
