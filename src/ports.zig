@@ -2765,6 +2765,48 @@ pub const PortsMigrator = struct {
                         \\
                     ) catch {};
 
+                    // For gobject-introspection-bootstrap, also create stub binaries
+                    if (std.mem.eql(u8, mapping.real_origin, "devel/gobject-introspection")) {
+                        const bootstrap_bin = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_path, "bin" });
+                        defer self.allocator.free(bootstrap_bin);
+
+                        std.fs.cwd().makePath(bootstrap_bin) catch {};
+
+                        // Create stub g-ir-scanner that exits successfully
+                        const scanner_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_bin, "g-ir-scanner" });
+                        defer self.allocator.free(scanner_path);
+
+                        // Create stub g-ir-scanner that exits successfully
+                        if (std.fs.cwd().createFile(scanner_path, .{ .mode = 0o755 })) |file| {
+                            defer file.close();
+                            file.writeAll(
+                                \\#!/bin/sh
+                                \\# Axiom stub for g-ir-scanner (gobject-introspection not yet built)
+                                \\# This stub allows glib20 to build without introspection support
+                                \\echo "Warning: g-ir-scanner stub - introspection disabled" >&2
+                                \\exit 0
+                                \\
+                            ) catch {};
+                        } else |err| {
+                            std.debug.print("    [BOOTSTRAP] Warning: could not create stub g-ir-scanner: {}\n", .{err});
+                        }
+
+                        // Create stub g-ir-compiler
+                        const compiler_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_bin, "g-ir-compiler" });
+                        defer self.allocator.free(compiler_path);
+
+                        if (std.fs.cwd().createFile(compiler_path, .{ .mode = 0o755 })) |file| {
+                            defer file.close();
+                            file.writeAll(
+                                \\#!/bin/sh
+                                \\# Axiom stub for g-ir-compiler (gobject-introspection not yet built)
+                                \\echo "Warning: g-ir-compiler stub - introspection disabled" >&2
+                                \\exit 0
+                                \\
+                            ) catch {};
+                        } else |_| {}
+                    }
+
                     std.debug.print("    [BOOTSTRAP] Created STUB bootstrap package: {s} (placeholder - introspection disabled)\n", .{bootstrap_path});
                     std.debug.print("    [BOOTSTRAP]   Build gobject-introspection first for full support\n", .{});
                 }
