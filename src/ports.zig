@@ -1168,6 +1168,8 @@ pub const PortsMigrator = struct {
         ldflags: []const u8,
         /// CPPFLAGS pointing to sysroot include/
         cppflags: []const u8,
+        /// PKG_CONFIG_PATH for pkg-config to find .pc files in sysroot
+        pkg_config_path: []const u8,
         /// PYTHONPATH for Python packages in sysroot lib/python*/site-packages
         pythonpath: []const u8,
         /// PERL5LIB for Perl modules in sysroot lib/perl5/site_perl
@@ -1209,6 +1211,7 @@ pub const PortsMigrator = struct {
             self.allocator.free(self.ld_library_path);
             self.allocator.free(self.ldflags);
             self.allocator.free(self.cppflags);
+            self.allocator.free(self.pkg_config_path);
             if (self.pythonpath.len > 0) self.allocator.free(self.pythonpath);
             if (self.perl5lib.len > 0) self.allocator.free(self.perl5lib);
             if (self.gmake_path.len > 0) self.allocator.free(self.gmake_path);
@@ -2276,6 +2279,7 @@ pub const PortsMigrator = struct {
                 .ld_library_path = try self.allocator.dupe(u8, "/usr/local/lib:/usr/lib:/lib"),
                 .ldflags = try self.allocator.dupe(u8, "-L/usr/local/lib"),
                 .cppflags = try self.allocator.dupe(u8, "-I/usr/local/include"),
+                .pkg_config_path = try self.allocator.dupe(u8, "/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig"),
                 .pythonpath = "",
                 .perl5lib = "",
                 .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
@@ -2303,6 +2307,7 @@ pub const PortsMigrator = struct {
                 .ld_library_path = try self.allocator.dupe(u8, "/usr/local/lib:/usr/lib:/lib"),
                 .ldflags = try self.allocator.dupe(u8, "-L/usr/local/lib"),
                 .cppflags = try self.allocator.dupe(u8, "-I/usr/local/include"),
+                .pkg_config_path = try self.allocator.dupe(u8, "/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig"),
                 .pythonpath = "",
                 .perl5lib = "",
                 .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
@@ -2426,6 +2431,7 @@ pub const PortsMigrator = struct {
                 .ld_library_path = try self.allocator.dupe(u8, "/usr/local/lib:/usr/lib:/lib"),
                 .ldflags = try self.allocator.dupe(u8, "-L/usr/local/lib"),
                 .cppflags = try self.allocator.dupe(u8, "-I/usr/local/include"),
+                .pkg_config_path = try self.allocator.dupe(u8, "/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig"),
                 .pythonpath = "",
                 .perl5lib = "",
                 .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
@@ -2483,6 +2489,19 @@ pub const PortsMigrator = struct {
             self.allocator,
             "-I{s} -I/usr/local/include",
             .{sysroot_include},
+        );
+
+        // PKG_CONFIG_PATH: sysroot pkgconfig directories first, then system paths
+        // .pc files can be in lib/pkgconfig or share/pkgconfig
+        const sysroot_lib_pkgconfig = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot_lib, "pkgconfig" });
+        defer self.allocator.free(sysroot_lib_pkgconfig);
+        const sysroot_share_pkgconfig = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "share/pkgconfig" });
+        defer self.allocator.free(sysroot_share_pkgconfig);
+
+        const pkg_config_path = try std.fmt.allocPrint(
+            self.allocator,
+            "{s}:{s}:/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig",
+            .{ sysroot_lib_pkgconfig, sysroot_share_pkgconfig },
         );
 
         // PYTHONPATH: scan sysroot/lib for python*/site-packages directories
@@ -2553,6 +2572,7 @@ pub const PortsMigrator = struct {
         std.debug.print("    [DEBUG] Sysroot created: {s}\n", .{sysroot});
         std.debug.print("    [DEBUG] Final PATH: {s}\n", .{path});
         std.debug.print("    [DEBUG] Final LDFLAGS: {s}\n", .{ldflags});
+        std.debug.print("    [DEBUG] Final PKG_CONFIG_PATH: {s}\n", .{pkg_config_path});
         std.debug.print("    [DEBUG] Final GMAKE: {s}\n", .{gmake_path});
         std.debug.print("    [DEBUG] Final CMAKE: {s}\n", .{cmake_path});
         if (pythonpath.len > 0) {
@@ -2582,6 +2602,7 @@ pub const PortsMigrator = struct {
                 .ld_library_path = ld_library_path,
                 .ldflags = ldflags,
                 .cppflags = cppflags,
+                .pkg_config_path = pkg_config_path,
                 .pythonpath = pythonpath,
                 .perl5lib = perl5lib,
                 .gmake_path = gmake_path,
@@ -2625,6 +2646,7 @@ pub const PortsMigrator = struct {
             .ld_library_path = ld_library_path,
             .ldflags = ldflags,
             .cppflags = cppflags,
+            .pkg_config_path = pkg_config_path,
             .pythonpath = pythonpath,
             .perl5lib = perl5lib,
             .gmake_path = gmake_path,
@@ -3366,6 +3388,13 @@ pub const PortsMigrator = struct {
         var configure_perl5lib_arg: ?[]const u8 = null;
         defer if (configure_perl5lib_arg) |f| self.allocator.free(f);
 
+        // PKG_CONFIG_PATH for pkg-config to find .pc files
+        var make_pkg_config_path_arg: ?[]const u8 = null;
+        defer if (make_pkg_config_path_arg) |f| self.allocator.free(f);
+
+        var configure_pkg_config_path_arg: ?[]const u8 = null;
+        defer if (configure_pkg_config_path_arg) |f| self.allocator.free(f);
+
         // LD_LIBRARY_PATH for loading shared libraries (needed for XS modules)
         var make_ld_library_path_arg: ?[]const u8 = null;
         defer if (make_ld_library_path_arg) |f| self.allocator.free(f);
@@ -3539,6 +3568,22 @@ pub const PortsMigrator = struct {
                 try args.append(configure_perl5lib_arg.?);
             }
 
+            // PKG_CONFIG_PATH for pkg-config to find .pc files in sysroot
+            // This is critical for configure scripts that use pkg-config
+            make_pkg_config_path_arg = try std.fmt.allocPrint(
+                self.allocator,
+                "MAKE_ENV+=PKG_CONFIG_PATH=\"{s}\"",
+                .{env.pkg_config_path},
+            );
+            try args.append(make_pkg_config_path_arg.?);
+
+            configure_pkg_config_path_arg = try std.fmt.allocPrint(
+                self.allocator,
+                "CONFIGURE_ENV+=PKG_CONFIG_PATH=\"{s}\"",
+                .{env.pkg_config_path},
+            );
+            try args.append(configure_pkg_config_path_arg.?);
+
             // LD_LIBRARY_PATH for loading shared libraries during configure
             // This is needed for Perl XS modules (like Locale::gettext) that load .so files
             if (env.ld_library_path.len > 0) {
@@ -3614,6 +3659,8 @@ pub const PortsMigrator = struct {
                 std.debug.print("    [DEBUG]   MAKE_ENV+=PERL5LIB=\"{s}\"\n", .{env.perl5lib});
                 std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PERL5LIB=\"{s}\"\n", .{env.perl5lib});
             }
+            std.debug.print("    [DEBUG]   MAKE_ENV+=PKG_CONFIG_PATH=\"{s}\"\n", .{env.pkg_config_path});
+            std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PKG_CONFIG_PATH=\"{s}\"\n", .{env.pkg_config_path});
             if (env.ld_library_path.len > 0) {
                 std.debug.print("    [DEBUG]   MAKE_ENV+=LD_LIBRARY_PATH=\"{s}\"\n", .{env.ld_library_path});
                 std.debug.print("    [DEBUG]   CONFIGURE_ENV+=LD_LIBRARY_PATH=\"{s}\"\n", .{env.ld_library_path});
@@ -3683,6 +3730,9 @@ pub const PortsMigrator = struct {
             if (env.pythonpath.len > 0) {
                 try env_map.?.put("PYTHONPATH", env.pythonpath);
             }
+
+            // Set PKG_CONFIG_PATH for pkg-config to find .pc files in sysroot
+            try env_map.?.put("PKG_CONFIG_PATH", env.pkg_config_path);
 
             // Set LDFLAGS and CPPFLAGS in environment for configure-time detection
             // This helps Perl Makefile.PL and other detection scripts find libraries
