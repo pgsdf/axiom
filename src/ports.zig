@@ -3793,18 +3793,18 @@ pub const PortsMigrator = struct {
                     if (dep_trimmed.len == 0) continue;
 
                     if (std.mem.indexOf(u8, dep_trimmed, ":")) |colon_pos| {
-                        const origin = dep_trimmed[colon_pos + 1 ..];
-                        if (origin.len > 0 and std.mem.indexOf(u8, origin, "/") != null) {
+                        const dep_origin = dep_trimmed[colon_pos + 1 ..];
+                        if (dep_origin.len > 0 and std.mem.indexOf(u8, dep_origin, "/") != null) {
                             // Check for duplicates
                             var found = false;
                             for (origins.items) |existing| {
-                                if (std.mem.eql(u8, existing, origin)) {
+                                if (std.mem.eql(u8, existing, dep_origin)) {
                                     found = true;
                                     break;
                                 }
                             }
                             if (!found) {
-                                try origins.append(try self.allocator.dupe(u8, origin));
+                                try origins.append(try self.allocator.dupe(u8, dep_origin));
                             }
                         }
                     }
@@ -3824,17 +3824,17 @@ pub const PortsMigrator = struct {
                         if (dep_trimmed.len == 0) continue;
 
                         if (std.mem.indexOf(u8, dep_trimmed, ":")) |colon_pos| {
-                            const origin = dep_trimmed[colon_pos + 1 ..];
-                            if (origin.len > 0 and std.mem.indexOf(u8, origin, "/") != null) {
+                            const dep_origin = dep_trimmed[colon_pos + 1 ..];
+                            if (dep_origin.len > 0 and std.mem.indexOf(u8, dep_origin, "/") != null) {
                                 var found = false;
                                 for (origins.items) |existing| {
-                                    if (std.mem.eql(u8, existing, origin)) {
+                                    if (std.mem.eql(u8, existing, dep_origin)) {
                                         found = true;
                                         break;
                                     }
                                 }
                                 if (!found) {
-                                    try origins.append(try self.allocator.dupe(u8, origin));
+                                    try origins.append(try self.allocator.dupe(u8, dep_origin));
                                 }
                             }
                         }
