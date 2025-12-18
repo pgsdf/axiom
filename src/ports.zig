@@ -311,6 +311,22 @@ pub const PortsMigrator = struct {
         "sysutils/coreutils", // Provides md5sum, sha256sum, etc. needed by ports framework
     };
 
+    /// Bootstrap package mappings: some ports expect special packages at hardcoded paths
+    /// under /usr/local/. These mappings tell axiom which real package provides the content.
+    /// The key is the bootstrap name (creates symlink at /usr/local/<name>),
+    /// the value is the real port origin that provides the content.
+    /// Example: glib20 expects /usr/local/gobject-introspection-bootstrap/ but the content
+    /// comes from devel/gobject-introspection in the axiom store.
+    const BootstrapMapping = struct {
+        bootstrap_name: []const u8,
+        real_origin: []const u8,
+    };
+
+    const BOOTSTRAP_PACKAGES = [_]BootstrapMapping{
+        // glib20 expects gobject-introspection-bootstrap at /usr/local/ for circular dep breaking
+        .{ .bootstrap_name = "gobject-introspection-bootstrap", .real_origin = "devel/gobject-introspection" },
+    };
+
     /// Get or create a local signing key for this machine
     /// Returns a KeyPair for signing packages built locally
     fn getOrCreateLocalSigningKey(self: *PortsMigrator) !KeyPair {
@@ -1183,10 +1199,23 @@ pub const PortsMigrator = struct {
         /// Symlinks created in /usr/local/share/ pointing to sysroot share dirs
         /// These are cleaned up when the build environment is destroyed
         system_share_symlinks: std.ArrayList([]const u8),
+        /// Symlinks created at /usr/local/<bootstrap-name>/ for bootstrap packages
+        /// These are cleaned up when the build environment is destroyed
+        bootstrap_symlinks: std.ArrayList([]const u8),
         allocator: std.mem.Allocator,
 
         pub fn deinit(self: *BuildEnvironment) void {
-            // Clean up system share symlinks first (before sysroot is deleted)
+            // Clean up bootstrap symlinks first (before sysroot is deleted)
+            for (self.bootstrap_symlinks.items) |symlink_path| {
+                // Bootstrap symlinks are directories, use deleteTree
+                std.fs.cwd().deleteTree(symlink_path) catch |err| {
+                    std.debug.print("    [CLEANUP] Warning: could not remove bootstrap symlink {s}: {}\n", .{ symlink_path, err });
+                };
+                self.allocator.free(symlink_path);
+            }
+            self.bootstrap_symlinks.deinit();
+
+            // Clean up system share symlinks (before sysroot is deleted)
             for (self.system_share_symlinks.items) |symlink_path| {
                 std.fs.cwd().deleteFile(symlink_path) catch |err| {
                     std.debug.print("    [CLEANUP] Warning: could not remove share symlink {s}: {}\n", .{ symlink_path, err });
@@ -2285,6 +2314,7 @@ pub const PortsMigrator = struct {
                 .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
                 .cmake_path = try self.allocator.dupe(u8, "/usr/local/bin/cmake"),
                 .system_share_symlinks = std.ArrayList([]const u8).init(self.allocator),
+                .bootstrap_symlinks = std.ArrayList([]const u8).init(self.allocator),
                 .allocator = self.allocator,
             };
         }
@@ -2313,6 +2343,7 @@ pub const PortsMigrator = struct {
                 .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
                 .cmake_path = try self.allocator.dupe(u8, "/usr/local/bin/cmake"),
                 .system_share_symlinks = std.ArrayList([]const u8).init(self.allocator),
+                .bootstrap_symlinks = std.ArrayList([]const u8).init(self.allocator),
                 .allocator = self.allocator,
             };
         };
@@ -2437,6 +2468,7 @@ pub const PortsMigrator = struct {
                 .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
                 .cmake_path = try self.allocator.dupe(u8, "/usr/local/bin/cmake"),
                 .system_share_symlinks = std.ArrayList([]const u8).init(self.allocator),
+                .bootstrap_symlinks = std.ArrayList([]const u8).init(self.allocator),
                 .allocator = self.allocator,
             };
         }
@@ -2593,6 +2625,109 @@ pub const PortsMigrator = struct {
         const sysroot_share = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "share" });
         defer self.allocator.free(sysroot_share);
 
+        // Create bootstrap symlinks for packages that expect hardcoded paths at /usr/local/
+        // These symlinks point from /usr/local/<bootstrap-name> to the sysroot content
+        var bootstrap_symlinks = std.ArrayList([]const u8).init(self.allocator);
+        errdefer {
+            for (bootstrap_symlinks.items) |s| self.allocator.free(s);
+            bootstrap_symlinks.deinit();
+        }
+
+        // Check if any bootstrap packages need symlinks
+        for (BOOTSTRAP_PACKAGES) |mapping| {
+            // Check if the real package exists in sysroot by looking for pkgconfig files
+            const sysroot_lib_pkgconfig = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "lib/pkgconfig" });
+            defer self.allocator.free(sysroot_lib_pkgconfig);
+
+            // Check if we have pkgconfig files from the real package
+            var has_pkgconfig = false;
+            if (std.mem.eql(u8, mapping.real_origin, "devel/gobject-introspection")) {
+                // Look for gobject-introspection .pc files
+                var pc_dir = std.fs.cwd().openDir(sysroot_lib_pkgconfig, .{ .iterate = true }) catch {
+                    std.debug.print("    [BOOTSTRAP] No pkgconfig dir found for {s}, skipping\n", .{mapping.bootstrap_name});
+                    continue;
+                };
+                defer pc_dir.close();
+                var pc_iter = pc_dir.iterate();
+                while (pc_iter.next() catch null) |entry| {
+                    if (std.mem.indexOf(u8, entry.name, "gobject-introspection") != null or
+                        std.mem.indexOf(u8, entry.name, "girepository") != null)
+                    {
+                        has_pkgconfig = true;
+                        break;
+                    }
+                }
+            } else {
+                // For other bootstrap packages, just check if pkgconfig dir exists
+                std.fs.cwd().access(sysroot_lib_pkgconfig, .{}) catch continue;
+                has_pkgconfig = true;
+            }
+
+            if (!has_pkgconfig) {
+                std.debug.print("    [BOOTSTRAP] No pkgconfig content found for {s}, skipping bootstrap symlink\n", .{mapping.bootstrap_name});
+                continue;
+            }
+
+            // Create bootstrap directory structure at /usr/local/<bootstrap-name>/
+            // FreeBSD ports expect /usr/local/<bootstrap-name>/libdata/pkgconfig/
+            // We create the directory and symlink libdata/pkgconfig -> sysroot lib/pkgconfig
+            const bootstrap_path = try std.fs.path.join(self.allocator, &[_][]const u8{ "/usr/local", mapping.bootstrap_name });
+
+            // Check if path already exists
+            std.fs.cwd().access(bootstrap_path, .{}) catch {
+                // Create the bootstrap directory structure
+                const bootstrap_libdata = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_path, "libdata" });
+                defer self.allocator.free(bootstrap_libdata);
+
+                std.fs.cwd().makePath(bootstrap_libdata) catch |err| {
+                    std.debug.print("    [BOOTSTRAP] Warning: could not create bootstrap dir {s}: {}\n", .{ bootstrap_libdata, err });
+                    self.allocator.free(bootstrap_path);
+                    continue;
+                };
+
+                // Create symlink: /usr/local/<bootstrap>/libdata/pkgconfig -> sysroot/lib/pkgconfig
+                const bootstrap_pkgconfig = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_libdata, "pkgconfig" });
+                defer self.allocator.free(bootstrap_pkgconfig);
+
+                std.fs.cwd().symLink(sysroot_lib_pkgconfig, bootstrap_pkgconfig, .{ .is_directory = true }) catch |err| {
+                    std.debug.print("    [BOOTSTRAP] Warning: could not create pkgconfig symlink {s} -> {s}: {}\n", .{ bootstrap_pkgconfig, sysroot_lib_pkgconfig, err });
+                    // Clean up the directory we created
+                    std.fs.cwd().deleteTree(bootstrap_path) catch {};
+                    self.allocator.free(bootstrap_path);
+                    continue;
+                };
+
+                // Also create lib symlink for libraries
+                const bootstrap_lib = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_path, "lib" });
+                defer self.allocator.free(bootstrap_lib);
+                const sysroot_lib = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "lib" });
+                defer self.allocator.free(sysroot_lib);
+
+                std.fs.cwd().symLink(sysroot_lib, bootstrap_lib, .{ .is_directory = true }) catch |err| {
+                    std.debug.print("    [BOOTSTRAP] Warning: could not create lib symlink {s} -> {s}: {}\n", .{ bootstrap_lib, sysroot_lib, err });
+                    // Continue anyway, pkgconfig might be enough
+                };
+
+                // Also create include symlink for headers
+                const bootstrap_include = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_path, "include" });
+                defer self.allocator.free(bootstrap_include);
+                const sysroot_include = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "include" });
+                defer self.allocator.free(sysroot_include);
+
+                std.fs.cwd().symLink(sysroot_include, bootstrap_include, .{ .is_directory = true }) catch |err| {
+                    std.debug.print("    [BOOTSTRAP] Warning: could not create include symlink {s} -> {s}: {}\n", .{ bootstrap_include, sysroot_include, err });
+                    // Continue anyway
+                };
+
+                std.debug.print("    [BOOTSTRAP] Created bootstrap package: {s}\n", .{bootstrap_path});
+                std.debug.print("    [BOOTSTRAP]   libdata/pkgconfig -> {s}\n", .{sysroot_lib_pkgconfig});
+                try bootstrap_symlinks.append(bootstrap_path);
+                continue;
+            };
+            // Already exists, skip
+            self.allocator.free(bootstrap_path);
+        }
+
         // Scan sysroot/share for subdirectories and create symlinks in /usr/local/share/
         var share_dir = std.fs.cwd().openDir(sysroot_share, .{ .iterate = true }) catch |err| {
             std.debug.print("    [DEBUG] Could not open sysroot share dir: {}\n", .{err});
@@ -2608,6 +2743,7 @@ pub const PortsMigrator = struct {
                 .gmake_path = gmake_path,
                 .cmake_path = cmake_path,
                 .system_share_symlinks = system_share_symlinks,
+                .bootstrap_symlinks = bootstrap_symlinks,
                 .allocator = self.allocator,
             };
         };
@@ -2652,6 +2788,7 @@ pub const PortsMigrator = struct {
             .gmake_path = gmake_path,
             .cmake_path = cmake_path,
             .system_share_symlinks = system_share_symlinks,
+            .bootstrap_symlinks = bootstrap_symlinks,
             .allocator = self.allocator,
         };
     }
