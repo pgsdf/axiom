@@ -1845,7 +1845,8 @@ pub const PortsMigrator = struct {
             .{ .alias = "realpath", .target = "grealpath" },
             .{ .alias = "stat", .target = "gstat" },
             .{ .alias = "date", .target = "gdate" },
-            .{ .alias = "install", .target = "ginstall" },
+            // NOTE: Do NOT alias 'install' - BSD install has different options than GNU install
+            // The ports framework expects BSD install behavior (e.g., -l flag)
             .{ .alias = "mktemp", .target = "gmktemp" },
             .{ .alias = "sort", .target = "gsort" },
             .{ .alias = "head", .target = "ghead" },
