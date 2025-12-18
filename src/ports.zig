@@ -1958,6 +1958,36 @@ pub const PortsMigrator = struct {
                 std.debug.print("    [SYSROOT] Created coreutils alias: {s} -> {s}\n", .{ alias_info.alias, alias_info.target });
             };
         }
+
+        // Python aliases: FreeBSD installs python3.11 but configure scripts look for 'python' or 'python3'
+        const python_aliases = [_]BinaryAlias{
+            .{ .alias = "python", .target = "python3.11" },
+            .{ .alias = "python3", .target = "python3.11" },
+        };
+
+        for (python_aliases) |alias_info| {
+            const target_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bin_dir, alias_info.target });
+            defer self.allocator.free(target_path);
+
+            const alias_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bin_dir, alias_info.alias });
+            defer self.allocator.free(alias_path);
+
+            // Check if target binary exists
+            std.fs.cwd().access(target_path, .{}) catch {
+                // Target doesn't exist, skip silently
+                continue;
+            };
+
+            // Check if alias already exists
+            std.fs.cwd().access(alias_path, .{}) catch {
+                // Alias doesn't exist, create symlink
+                std.fs.cwd().symLink(alias_info.target, alias_path, .{}) catch |err| {
+                    std.debug.print("    [SYSROOT] Warning: could not create python alias {s} -> {s}: {}\n", .{ alias_info.alias, alias_info.target, err });
+                    continue;
+                };
+                std.debug.print("    [SYSROOT] Created python alias: {s} -> {s}\n", .{ alias_info.alias, alias_info.target });
+            };
+        }
     }
 
     /// Create unversioned wrapper symlinks for autotools in the sysroot.
