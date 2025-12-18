@@ -325,6 +325,8 @@ pub const PortsMigrator = struct {
     const BOOTSTRAP_PACKAGES = [_]BootstrapMapping{
         // glib20 expects gobject-introspection-bootstrap at /usr/local/ for circular dep breaking
         .{ .bootstrap_name = "gobject-introspection-bootstrap", .real_origin = "devel/gobject-introspection" },
+        // glib20 also expects glib-bootstrap for self-bootstrapping
+        .{ .bootstrap_name = "glib-bootstrap", .real_origin = "devel/glib20" },
     };
 
     /// Get or create a local signing key for this machine
