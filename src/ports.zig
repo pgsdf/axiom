@@ -1178,9 +1178,21 @@ pub const PortsMigrator = struct {
         /// Path to cmake binary in sysroot (for CMAKE override)
         /// FreeBSD ports use CMAKE variable which defaults to /usr/local/bin/cmake
         cmake_path: []const u8,
+        /// Symlinks created in /usr/local/share/ pointing to sysroot share dirs
+        /// These are cleaned up when the build environment is destroyed
+        system_share_symlinks: std.ArrayList([]const u8),
         allocator: std.mem.Allocator,
 
         pub fn deinit(self: *BuildEnvironment) void {
+            // Clean up system share symlinks first (before sysroot is deleted)
+            for (self.system_share_symlinks.items) |symlink_path| {
+                std.fs.cwd().deleteFile(symlink_path) catch |err| {
+                    std.debug.print("    [CLEANUP] Warning: could not remove share symlink {s}: {}\n", .{ symlink_path, err });
+                };
+                self.allocator.free(symlink_path);
+            }
+            self.system_share_symlinks.deinit();
+
             // Clean up the sysroot directory
             if (self.sysroot.len > 0) {
                 // Get parent of sysroot (the temp directory)
@@ -2238,6 +2250,7 @@ pub const PortsMigrator = struct {
                 .perl5lib = "",
                 .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
                 .cmake_path = try self.allocator.dupe(u8, "/usr/local/bin/cmake"),
+                .system_share_symlinks = std.ArrayList([]const u8).init(self.allocator),
                 .allocator = self.allocator,
             };
         }
@@ -2264,6 +2277,7 @@ pub const PortsMigrator = struct {
                 .perl5lib = "",
                 .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
                 .cmake_path = try self.allocator.dupe(u8, "/usr/local/bin/cmake"),
+                .system_share_symlinks = std.ArrayList([]const u8).init(self.allocator),
                 .allocator = self.allocator,
             };
         };
@@ -2386,6 +2400,7 @@ pub const PortsMigrator = struct {
                 .perl5lib = "",
                 .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
                 .cmake_path = try self.allocator.dupe(u8, "/usr/local/bin/cmake"),
+                .system_share_symlinks = std.ArrayList([]const u8).init(self.allocator),
                 .allocator = self.allocator,
             };
         }
@@ -2517,6 +2532,63 @@ pub const PortsMigrator = struct {
             std.debug.print("    [DEBUG] Final PERL5LIB: {s}\n", .{perl5lib});
         }
 
+        // Create symlinks in /usr/local/share/ pointing to sysroot share directories
+        // This allows build systems that hardcode /usr/local/share/ paths to find data files
+        var system_share_symlinks = std.ArrayList([]const u8).init(self.allocator);
+        errdefer {
+            for (system_share_symlinks.items) |s| self.allocator.free(s);
+            system_share_symlinks.deinit();
+        }
+
+        const sysroot_share = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "share" });
+        defer self.allocator.free(sysroot_share);
+
+        // Scan sysroot/share for subdirectories and create symlinks in /usr/local/share/
+        var share_dir = std.fs.cwd().openDir(sysroot_share, .{ .iterate = true }) catch |err| {
+            std.debug.print("    [DEBUG] Could not open sysroot share dir: {}\n", .{err});
+            return BuildEnvironment{
+                .sysroot = sysroot,
+                .path = path,
+                .ld_library_path = ld_library_path,
+                .ldflags = ldflags,
+                .cppflags = cppflags,
+                .pythonpath = pythonpath,
+                .perl5lib = perl5lib,
+                .gmake_path = gmake_path,
+                .cmake_path = cmake_path,
+                .system_share_symlinks = system_share_symlinks,
+                .allocator = self.allocator,
+            };
+        };
+        defer share_dir.close();
+
+        var iter = share_dir.iterate();
+        while (iter.next() catch null) |entry| {
+            if (entry.kind != .directory) continue;
+
+            // Path in sysroot: /tmp/axiom-sysroot-XXX/usr/local/share/<name>
+            const sysroot_subdir = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot_share, entry.name });
+            defer self.allocator.free(sysroot_subdir);
+
+            // Path in system: /usr/local/share/<name>
+            const system_subdir = try std.fs.path.join(self.allocator, &[_][]const u8{ "/usr/local/share", entry.name });
+
+            // Check if system path already exists
+            std.fs.cwd().access(system_subdir, .{}) catch {
+                // Doesn't exist, create symlink
+                std.fs.cwd().symLink(sysroot_subdir, system_subdir, .{ .is_directory = true }) catch |err| {
+                    std.debug.print("    [SYSROOT] Warning: could not create share symlink {s} -> {s}: {}\n", .{ system_subdir, sysroot_subdir, err });
+                    self.allocator.free(system_subdir);
+                    continue;
+                };
+                std.debug.print("    [SYSROOT] Created system share symlink: {s} -> {s}\n", .{ system_subdir, sysroot_subdir });
+                try system_share_symlinks.append(system_subdir);
+                continue;
+            };
+            // Already exists, skip (don't overwrite system files)
+            self.allocator.free(system_subdir);
+        }
+
         return BuildEnvironment{
             .sysroot = sysroot,
             .path = path,
@@ -2527,6 +2599,7 @@ pub const PortsMigrator = struct {
             .perl5lib = perl5lib,
             .gmake_path = gmake_path,
             .cmake_path = cmake_path,
+            .system_share_symlinks = system_share_symlinks,
             .allocator = self.allocator,
         };
     }
