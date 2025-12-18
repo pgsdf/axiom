@@ -2745,7 +2745,7 @@ pub const PortsMigrator = struct {
                     // No real package available - create stub with placeholder pkgconfig file
                     // This allows glib20's post-extract to succeed (it copies the dir with wildcard)
                     // but introspection will be disabled
-                    const placeholder_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_libdata_pkgconfig, ".placeholder-stub.pc" });
+                    const placeholder_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_libdata_pkgconfig, "axiom-bootstrap-stub.pc" });
                     defer self.allocator.free(placeholder_path);
 
                     // Create a minimal placeholder .pc file
