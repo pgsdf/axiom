@@ -3268,7 +3268,7 @@ pub const PortsMigrator = struct {
 
             configure_env_arg = try std.fmt.allocPrint(
                 self.allocator,
-                "CONFIGURE_ENV+=PATH={s} LOCALBASE={s}",
+                "CONFIGURE_ENV+=PATH={s} LOCALBASE={s} FORCE_UNSAFE_CONFIGURE=1",
                 .{ env.path, localbase },
             );
             try args.append(configure_env_arg.?);
