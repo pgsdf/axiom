@@ -3622,6 +3622,13 @@ pub const PortsMigrator = struct {
         var configure_pkg_config_path_arg: ?[]const u8 = null;
         defer if (configure_pkg_config_path_arg) |f| self.allocator.free(f);
 
+        // PKG_CONFIG_SYSROOT_DIR to prepend sysroot path to pkg-config results
+        var make_pkg_config_sysroot_dir_arg: ?[]const u8 = null;
+        defer if (make_pkg_config_sysroot_dir_arg) |f| self.allocator.free(f);
+
+        var configure_pkg_config_sysroot_dir_arg: ?[]const u8 = null;
+        defer if (configure_pkg_config_sysroot_dir_arg) |f| self.allocator.free(f);
+
         // LD_LIBRARY_PATH for loading shared libraries (needed for XS modules)
         var make_ld_library_path_arg: ?[]const u8 = null;
         defer if (make_ld_library_path_arg) |f| self.allocator.free(f);
@@ -3811,6 +3818,28 @@ pub const PortsMigrator = struct {
             );
             try args.append(configure_pkg_config_path_arg.?);
 
+            // PKG_CONFIG_SYSROOT_DIR tells pkg-config to prepend sysroot path to all paths
+            // This is critical for meson/pkg-config builds that use paths from .pc files
+            // The sysroot is env.sysroot (/tmp/axiom-sysroot-XXX/usr/local)
+            // We need the root (/tmp/axiom-sysroot-XXX) for PKG_CONFIG_SYSROOT_DIR
+            const sysroot_suffix = "/usr/local";
+            if (std.mem.endsWith(u8, env.sysroot, sysroot_suffix)) {
+                const sysroot_root = env.sysroot[0 .. env.sysroot.len - sysroot_suffix.len];
+                make_pkg_config_sysroot_dir_arg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "MAKE_ENV+=PKG_CONFIG_SYSROOT_DIR=\"{s}\"",
+                    .{sysroot_root},
+                );
+                try args.append(make_pkg_config_sysroot_dir_arg.?);
+
+                configure_pkg_config_sysroot_dir_arg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "CONFIGURE_ENV+=PKG_CONFIG_SYSROOT_DIR=\"{s}\"",
+                    .{sysroot_root},
+                );
+                try args.append(configure_pkg_config_sysroot_dir_arg.?);
+            }
+
             // LD_LIBRARY_PATH for loading shared libraries during configure
             // This is needed for Perl XS modules (like Locale::gettext) that load .so files
             if (env.ld_library_path.len > 0) {
@@ -3888,6 +3917,11 @@ pub const PortsMigrator = struct {
             }
             std.debug.print("    [DEBUG]   MAKE_ENV+=PKG_CONFIG_PATH=\"{s}\"\n", .{env.pkg_config_path});
             std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PKG_CONFIG_PATH=\"{s}\"\n", .{env.pkg_config_path});
+            const sysroot_suffix_dbg = "/usr/local";
+            if (std.mem.endsWith(u8, env.sysroot, sysroot_suffix_dbg)) {
+                const sysroot_root_dbg = env.sysroot[0 .. env.sysroot.len - sysroot_suffix_dbg.len];
+                std.debug.print("    [DEBUG]   PKG_CONFIG_SYSROOT_DIR=\"{s}\"\n", .{sysroot_root_dbg});
+            }
             if (env.ld_library_path.len > 0) {
                 std.debug.print("    [DEBUG]   MAKE_ENV+=LD_LIBRARY_PATH=\"{s}\"\n", .{env.ld_library_path});
                 std.debug.print("    [DEBUG]   CONFIGURE_ENV+=LD_LIBRARY_PATH=\"{s}\"\n", .{env.ld_library_path});
@@ -3960,6 +3994,13 @@ pub const PortsMigrator = struct {
 
             // Set PKG_CONFIG_PATH for pkg-config to find .pc files in sysroot
             try env_map.?.put("PKG_CONFIG_PATH", env.pkg_config_path);
+
+            // Set PKG_CONFIG_SYSROOT_DIR for pkg-config to prepend sysroot to paths
+            const sysroot_suffix_env = "/usr/local";
+            if (std.mem.endsWith(u8, env.sysroot, sysroot_suffix_env)) {
+                const sysroot_root_env = env.sysroot[0 .. env.sysroot.len - sysroot_suffix_env.len];
+                try env_map.?.put("PKG_CONFIG_SYSROOT_DIR", sysroot_root_env);
+            }
 
             // Set LDFLAGS and CPPFLAGS in environment for configure-time detection
             // This helps Perl Makefile.PL and other detection scripts find libraries
