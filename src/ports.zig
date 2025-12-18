@@ -3849,8 +3849,8 @@ pub const PortsMigrator = struct {
         }
 
         std.debug.print("  Dependencies ({d} ports):\n", .{origins.items.len});
-        for (origins.items) |origin| {
-            std.debug.print("    - {s}\n", .{origin});
+        for (origins.items) |o| {
+            std.debug.print("    - {s}\n", .{o});
         }
 
         // Check which dependencies are missing from the Axiom store
