@@ -2633,94 +2633,104 @@ pub const PortsMigrator = struct {
             bootstrap_symlinks.deinit();
         }
 
-        // Check if any bootstrap packages need symlinks
+        // Check if any bootstrap packages need symlinks or stub directories
         for (BOOTSTRAP_PACKAGES) |mapping| {
             // Check if the real package exists in sysroot by looking for pkgconfig files
             const bootstrap_pkgconfig_src = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "lib/pkgconfig" });
             defer self.allocator.free(bootstrap_pkgconfig_src);
 
             // Check if we have pkgconfig files from the real package
-            var has_pkgconfig = false;
-            if (std.mem.eql(u8, mapping.real_origin, "devel/gobject-introspection")) {
-                // Look for gobject-introspection .pc files
-                var pc_dir = std.fs.cwd().openDir(bootstrap_pkgconfig_src, .{ .iterate = true }) catch {
-                    std.debug.print("    [BOOTSTRAP] No pkgconfig dir found for {s}, skipping\n", .{mapping.bootstrap_name});
-                    continue;
-                };
-                defer pc_dir.close();
-                var pc_iter = pc_dir.iterate();
-                while (pc_iter.next() catch null) |entry| {
-                    if (std.mem.indexOf(u8, entry.name, "gobject-introspection") != null or
-                        std.mem.indexOf(u8, entry.name, "girepository") != null)
-                    {
-                        has_pkgconfig = true;
-                        break;
+            const has_pkgconfig = blk: {
+                if (std.mem.eql(u8, mapping.real_origin, "devel/gobject-introspection")) {
+                    // Look for gobject-introspection .pc files
+                    var pc_dir = std.fs.cwd().openDir(bootstrap_pkgconfig_src, .{ .iterate = true }) catch {
+                        // No pkgconfig dir - will create stub below
+                        break :blk false;
+                    };
+                    defer pc_dir.close();
+                    var pc_iter = pc_dir.iterate();
+                    while (pc_iter.next() catch null) |entry| {
+                        if (std.mem.indexOf(u8, entry.name, "gobject-introspection") != null or
+                            std.mem.indexOf(u8, entry.name, "girepository") != null)
+                        {
+                            break :blk true;
+                        }
                     }
+                    break :blk false;
+                } else {
+                    // For other bootstrap packages, just check if pkgconfig dir exists
+                    std.fs.cwd().access(bootstrap_pkgconfig_src, .{}) catch {
+                        break :blk false;
+                    };
+                    break :blk true;
                 }
-            } else {
-                // For other bootstrap packages, just check if pkgconfig dir exists
-                std.fs.cwd().access(bootstrap_pkgconfig_src, .{}) catch continue;
-                has_pkgconfig = true;
-            }
+            };
 
-            if (!has_pkgconfig) {
-                std.debug.print("    [BOOTSTRAP] No pkgconfig content found for {s}, skipping bootstrap symlink\n", .{mapping.bootstrap_name});
-                continue;
-            }
-
-            // Create bootstrap directory structure at /usr/local/<bootstrap-name>/
-            // FreeBSD ports expect /usr/local/<bootstrap-name>/libdata/pkgconfig/
-            // We create the directory and symlink libdata/pkgconfig -> sysroot lib/pkgconfig
+            // Create bootstrap directory at /usr/local/<bootstrap-name>/
             const bootstrap_path = try std.fs.path.join(self.allocator, &[_][]const u8{ "/usr/local", mapping.bootstrap_name });
 
             // Check if path already exists
             std.fs.cwd().access(bootstrap_path, .{}) catch {
                 // Create the bootstrap directory structure
-                const bootstrap_libdata = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_path, "libdata" });
-                defer self.allocator.free(bootstrap_libdata);
+                // FreeBSD ports expect /usr/local/<bootstrap-name>/libdata/pkgconfig/
+                const bootstrap_libdata_pkgconfig = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_path, "libdata/pkgconfig" });
+                defer self.allocator.free(bootstrap_libdata_pkgconfig);
 
-                std.fs.cwd().makePath(bootstrap_libdata) catch |err| {
-                    std.debug.print("    [BOOTSTRAP] Warning: could not create bootstrap dir {s}: {}\n", .{ bootstrap_libdata, err });
+                std.fs.cwd().makePath(bootstrap_libdata_pkgconfig) catch |err| {
+                    std.debug.print("    [BOOTSTRAP] Warning: could not create bootstrap dir {s}: {}\n", .{ bootstrap_libdata_pkgconfig, err });
                     self.allocator.free(bootstrap_path);
                     continue;
                 };
 
-                // Create symlink: /usr/local/<bootstrap>/libdata/pkgconfig -> sysroot/lib/pkgconfig
-                const bootstrap_pkgconfig_dest = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_libdata, "pkgconfig" });
-                defer self.allocator.free(bootstrap_pkgconfig_dest);
+                if (has_pkgconfig) {
+                    // Real package exists - symlink to sysroot content
+                    // Symlink: /usr/local/<bootstrap>/libdata/pkgconfig/<files> from sysroot
+                    var src_dir = std.fs.cwd().openDir(bootstrap_pkgconfig_src, .{ .iterate = true }) catch {
+                        std.debug.print("    [BOOTSTRAP] Warning: could not open pkgconfig source dir\n", .{});
+                        self.allocator.free(bootstrap_path);
+                        continue;
+                    };
+                    defer src_dir.close();
 
-                std.fs.cwd().symLink(bootstrap_pkgconfig_src, bootstrap_pkgconfig_dest, .{ .is_directory = true }) catch |err| {
-                    std.debug.print("    [BOOTSTRAP] Warning: could not create pkgconfig symlink {s} -> {s}: {}\n", .{ bootstrap_pkgconfig_dest, bootstrap_pkgconfig_src, err });
-                    // Clean up the directory we created
-                    std.fs.cwd().deleteTree(bootstrap_path) catch {};
-                    self.allocator.free(bootstrap_path);
-                    continue;
-                };
+                    var src_iter = src_dir.iterate();
+                    while (src_iter.next() catch null) |entry| {
+                        if (entry.kind != .file and entry.kind != .sym_link) continue;
 
-                // Also create lib symlink for libraries
-                const bootstrap_lib_dest = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_path, "lib" });
-                defer self.allocator.free(bootstrap_lib_dest);
-                const bootstrap_lib_src = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "lib" });
-                defer self.allocator.free(bootstrap_lib_src);
+                        const src_file = std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_pkgconfig_src, entry.name }) catch continue;
+                        defer self.allocator.free(src_file);
 
-                std.fs.cwd().symLink(bootstrap_lib_src, bootstrap_lib_dest, .{ .is_directory = true }) catch |err| {
-                    std.debug.print("    [BOOTSTRAP] Warning: could not create lib symlink {s} -> {s}: {}\n", .{ bootstrap_lib_dest, bootstrap_lib_src, err });
-                    // Continue anyway, pkgconfig might be enough
-                };
+                        const dest_file = std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_libdata_pkgconfig, entry.name }) catch continue;
+                        defer self.allocator.free(dest_file);
 
-                // Also create include symlink for headers
-                const bootstrap_include_dest = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_path, "include" });
-                defer self.allocator.free(bootstrap_include_dest);
-                const bootstrap_include_src = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "include" });
-                defer self.allocator.free(bootstrap_include_src);
+                        std.fs.cwd().symLink(src_file, dest_file, .{}) catch |err| {
+                            std.debug.print("    [BOOTSTRAP] Warning: could not symlink {s}: {}\n", .{ entry.name, err });
+                        };
+                    }
 
-                std.fs.cwd().symLink(bootstrap_include_src, bootstrap_include_dest, .{ .is_directory = true }) catch |err| {
-                    std.debug.print("    [BOOTSTRAP] Warning: could not create include symlink {s} -> {s}: {}\n", .{ bootstrap_include_dest, bootstrap_include_src, err });
-                    // Continue anyway
-                };
+                    // Also create lib and include symlinks
+                    const bootstrap_lib_dest = std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_path, "lib" }) catch continue;
+                    defer self.allocator.free(bootstrap_lib_dest);
+                    const bootstrap_lib_src = std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "lib" }) catch continue;
+                    defer self.allocator.free(bootstrap_lib_src);
 
-                std.debug.print("    [BOOTSTRAP] Created bootstrap package: {s}\n", .{bootstrap_path});
-                std.debug.print("    [BOOTSTRAP]   libdata/pkgconfig -> {s}\n", .{bootstrap_pkgconfig_src});
+                    std.fs.cwd().symLink(bootstrap_lib_src, bootstrap_lib_dest, .{ .is_directory = true }) catch {};
+
+                    const bootstrap_include_dest = std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_path, "include" }) catch continue;
+                    defer self.allocator.free(bootstrap_include_dest);
+                    const bootstrap_include_src = std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "include" }) catch continue;
+                    defer self.allocator.free(bootstrap_include_src);
+
+                    std.fs.cwd().symLink(bootstrap_include_src, bootstrap_include_dest, .{ .is_directory = true }) catch {};
+
+                    std.debug.print("    [BOOTSTRAP] Created bootstrap package: {s} (with content from sysroot)\n", .{bootstrap_path});
+                } else {
+                    // No real package available - create stub with empty pkgconfig dir
+                    // This allows glib20's post-extract to succeed (it copies the dir)
+                    // but introspection will be disabled
+                    std.debug.print("    [BOOTSTRAP] Created STUB bootstrap package: {s} (empty - introspection disabled)\n", .{bootstrap_path});
+                    std.debug.print("    [BOOTSTRAP]   Build gobject-introspection first for full support\n", .{});
+                }
+
                 try bootstrap_symlinks.append(bootstrap_path);
                 continue;
             };
