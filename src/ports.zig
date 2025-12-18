@@ -2643,13 +2643,14 @@ pub const PortsMigrator = struct {
 
             // Check if we have pkgconfig files from the real package
             const has_pkgconfig = blk: {
+                var pc_dir = std.fs.cwd().openDir(bootstrap_pkgconfig_src, .{ .iterate = true }) catch {
+                    // No pkgconfig dir - will create stub below
+                    break :blk false;
+                };
+                defer pc_dir.close();
+
                 if (std.mem.eql(u8, mapping.real_origin, "devel/gobject-introspection")) {
                     // Look for gobject-introspection .pc files
-                    var pc_dir = std.fs.cwd().openDir(bootstrap_pkgconfig_src, .{ .iterate = true }) catch {
-                        // No pkgconfig dir - will create stub below
-                        break :blk false;
-                    };
-                    defer pc_dir.close();
                     var pc_iter = pc_dir.iterate();
                     while (pc_iter.next() catch null) |entry| {
                         if (std.mem.indexOf(u8, entry.name, "gobject-introspection") != null or
@@ -2659,12 +2660,27 @@ pub const PortsMigrator = struct {
                         }
                     }
                     break :blk false;
+                } else if (std.mem.eql(u8, mapping.real_origin, "devel/glib20")) {
+                    // Look for glib .pc files (glib-2.0.pc, gobject-2.0.pc, etc.)
+                    var pc_iter = pc_dir.iterate();
+                    while (pc_iter.next() catch null) |entry| {
+                        if (std.mem.eql(u8, entry.name, "glib-2.0.pc") or
+                            std.mem.eql(u8, entry.name, "gobject-2.0.pc") or
+                            std.mem.eql(u8, entry.name, "gio-2.0.pc"))
+                        {
+                            break :blk true;
+                        }
+                    }
+                    break :blk false;
                 } else {
-                    // For other bootstrap packages, just check if pkgconfig dir exists
-                    std.fs.cwd().access(bootstrap_pkgconfig_src, .{}) catch {
-                        break :blk false;
-                    };
-                    break :blk true;
+                    // For other bootstrap packages, just check if pkgconfig dir has any .pc files
+                    var pc_iter = pc_dir.iterate();
+                    while (pc_iter.next() catch null) |entry| {
+                        if (std.mem.endsWith(u8, entry.name, ".pc")) {
+                            break :blk true;
+                        }
+                    }
+                    break :blk false;
                 }
             };
 
