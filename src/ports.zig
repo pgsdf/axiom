@@ -4015,15 +4015,15 @@ pub const PortsMigrator = struct {
         // For glib20: disable introspection when gobject-introspection is not available
         // glib20 has its own girepository code that tries to generate .gir/.typelib files
         // Without full g-ir-scanner, these won't be generated and the build fails
-        // Also disable xattr (libexattr), dtrace (tracing), systemtap (Linux)
+        // Also disable xattr (libexattr), dtrace (tracing), systemtap (Linux), sysprof (Linux profiler)
         if (std.mem.eql(u8, parsed.path, "devel/glib20")) {
             meson_args_arg = try std.fmt.allocPrint(
                 self.allocator,
-                "MESON_ARGS+=-Dintrospection=disabled -Dxattr=false -Ddtrace=false -Dsystemtap=false",
+                "MESON_ARGS+=-Dintrospection=disabled -Dxattr=false -Ddtrace=false -Dsystemtap=false -Dsysprof=disabled",
                 .{},
             );
             try args.append(meson_args_arg.?);
-            std.debug.print("    [DEBUG] glib20: disabled introspection, xattr, dtrace, systemtap\n", .{});
+            std.debug.print("    [DEBUG] glib20: disabled introspection, xattr, dtrace, systemtap, sysprof\n", .{});
         }
 
         if (build_env) |env| {
