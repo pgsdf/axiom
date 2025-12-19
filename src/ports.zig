@@ -3734,9 +3734,7 @@ pub const PortsMigrator = struct {
         defer args.deinit();
 
         // Track allocated strings to free after process completes
-        var destdir_arg: ?[]const u8 = null;
-        defer if (destdir_arg) |d| self.allocator.free(d);
-
+        // Note: destdir is only used for env_map (meson DESTDIR), not as make arg
         var jobs_arg: ?[]const u8 = null;
         defer if (jobs_arg) |j| self.allocator.free(j);
 
