@@ -1406,11 +1406,18 @@ pub const PortsMigrator = struct {
                     };
                 },
                 .sym_link => {
-                    // Preserve symlinks
+                    // For symlinks, create a symlink pointing to the absolute source path
+                    // (not preserving the original target, as that might be relative and would
+                    // break when resolved from the sysroot location)
                     std.fs.cwd().access(dst_path, .{}) catch {
-                        var target_buf: [std.fs.max_path_bytes]u8 = undefined;
-                        const target = std.fs.cwd().readLink(src_path, &target_buf) catch continue;
-                        std.fs.cwd().symLink(target, dst_path, .{}) catch |err| {
+                        // Ensure parent directory exists
+                        if (std.fs.path.dirname(dst_path)) |parent| {
+                            std.fs.cwd().makePath(parent) catch |err| {
+                                errors.logMkdirBestEffort(@src(), err, parent);
+                            };
+                        }
+
+                        std.fs.cwd().symLink(src_path, dst_path, .{}) catch |err| {
                             errors.logNonCriticalWithCategory(@src(), err, .io, "create symlink", dst_path);
                         };
                         file_count += 1;
