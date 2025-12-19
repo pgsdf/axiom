@@ -1301,6 +1301,46 @@ pub const PortsMigrator = struct {
         defer self.allocator.free(sysroot_usr_include);
         try std.fs.cwd().makePath(sysroot_usr_include);
 
+        // Symlink system package headers that may be needed by test suites
+        // Some packages (like glib20) have test suites that depend on system packages (like dbus)
+        // that aren't part of the formal build dependencies but are needed for compilation
+        // These paths get sysroot-prefixed by PKG_CONFIG_SYSROOT_DIR, so we need symlinks
+        const system_include_dirs = [_][]const u8{
+            "dbus-1.0",
+        };
+        for (system_include_dirs) |inc_dir| {
+            const system_path = try std.fmt.allocPrint(self.allocator, "/usr/local/include/{s}", .{inc_dir});
+            defer self.allocator.free(system_path);
+
+            // Check if system path exists
+            std.fs.cwd().access(system_path, .{}) catch continue;
+
+            const sysroot_inc_path = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot_localbase, "include", inc_dir });
+            defer self.allocator.free(sysroot_inc_path);
+
+            // Create symlink from sysroot to system path
+            std.posix.symlink(system_path, sysroot_inc_path) catch |err| {
+                std.debug.print("    [SYSROOT] Warning: could not symlink {s}: {}\n", .{ inc_dir, err });
+            };
+        }
+
+        // Also symlink lib/dbus-1.0/include if it exists (dbus has headers here too)
+        const dbus_lib_include = "/usr/local/lib/dbus-1.0/include";
+        if (std.fs.cwd().access(dbus_lib_include, .{})) |_| {
+            const sysroot_dbus_lib_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot_localbase, "lib/dbus-1.0" });
+            defer self.allocator.free(sysroot_dbus_lib_dir);
+            std.fs.cwd().makePath(sysroot_dbus_lib_dir) catch {};
+
+            const sysroot_dbus_lib_include = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot_localbase, "lib/dbus-1.0/include" });
+            defer self.allocator.free(sysroot_dbus_lib_include);
+
+            std.posix.symlink(dbus_lib_include, sysroot_dbus_lib_include) catch |err| {
+                std.debug.print("    [SYSROOT] Warning: could not symlink dbus lib include: {}\n", .{err});
+            };
+        } else |_| {
+            // dbus not installed or path doesn't exist, skip
+        }
+
         std.debug.print("    [SYSROOT] Creating sysroot at: {s}\n", .{sysroot_root});
         std.debug.print("    [SYSROOT] Sysroot localbase: {s}\n", .{sysroot_localbase});
 
