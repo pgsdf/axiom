@@ -3468,6 +3468,29 @@ pub const PortsMigrator = struct {
         const work_stage = try self.makeVar(port_path, "STAGEDIR");
         defer self.allocator.free(work_stage);
 
+        // Debug: show STAGEDIR path and verify it has content
+        std.debug.print("    [DEBUG] STAGEDIR: {s}\n", .{work_stage});
+
+        // Check if STAGEDIR/usr/local exists and has files
+        const stagedir_usr_local = try std.fs.path.join(self.allocator, &[_][]const u8{ work_stage, "usr", "local" });
+        defer self.allocator.free(stagedir_usr_local);
+
+        var stagedir_file_count: usize = 0;
+        var stagedir_has_lib = false;
+        var stagedir_has_include = false;
+        if (std.fs.cwd().openDir(stagedir_usr_local, .{ .iterate = true })) |*dir| {
+            defer dir.close();
+            var iter = dir.iterate();
+            while (iter.next() catch null) |entry| {
+                stagedir_file_count += 1;
+                if (std.mem.eql(u8, entry.name, "lib")) stagedir_has_lib = true;
+                if (std.mem.eql(u8, entry.name, "include")) stagedir_has_include = true;
+            }
+            std.debug.print("    [DEBUG] STAGEDIR/usr/local has {d} entries (lib={}, include={})\n", .{ stagedir_file_count, stagedir_has_lib, stagedir_has_include });
+        } else |err| {
+            std.debug.print("    [DEBUG] WARNING: Could not open STAGEDIR/usr/local: {s}\n", .{@errorName(err)});
+        }
+
         // Use cp -a to preserve attributes and copy recursively
         var cp_args = [_][]const u8{
             "cp",
@@ -3503,6 +3526,38 @@ pub const PortsMigrator = struct {
             stage_dir,
             "stage",
         });
+
+        // Debug: verify files were copied
+        const copied_usr_local = try std.fs.path.join(self.allocator, &[_][]const u8{ final_stage, "usr", "local" });
+        defer self.allocator.free(copied_usr_local);
+
+        var copied_file_count: usize = 0;
+        var copied_has_lib = false;
+        var copied_has_include = false;
+        if (std.fs.cwd().openDir(copied_usr_local, .{ .iterate = true })) |*dir| {
+            defer dir.close();
+            var iter = dir.iterate();
+            while (iter.next() catch null) |entry| {
+                copied_file_count += 1;
+                if (std.mem.eql(u8, entry.name, "lib")) copied_has_lib = true;
+                if (std.mem.eql(u8, entry.name, "include")) copied_has_include = true;
+            }
+            std.debug.print("    [DEBUG] Copied stage/usr/local has {d} entries (lib={}, include={})\n", .{ copied_file_count, copied_has_lib, copied_has_include });
+
+            // Warn if STAGEDIR had files but copied doesn't, or if lib/include are missing
+            if (stagedir_file_count > 0 and copied_file_count == 0) {
+                std.debug.print("    [DEBUG] WARNING: Files in STAGEDIR but none copied!\n", .{});
+            }
+            if (stagedir_has_lib and !copied_has_lib) {
+                std.debug.print("    [DEBUG] WARNING: STAGEDIR has lib/ but copy doesn't!\n", .{});
+            }
+            if (stagedir_has_include and !copied_has_include) {
+                std.debug.print("    [DEBUG] WARNING: STAGEDIR has include/ but copy doesn't!\n", .{});
+            }
+        } else |err| {
+            std.debug.print("    [DEBUG] WARNING: Could not open copied stage/usr/local: {s}\n", .{@errorName(err)});
+        }
+
         self.allocator.free(stage_dir);
 
         return PortBuildResult{
