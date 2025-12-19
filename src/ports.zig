@@ -305,6 +305,30 @@ pub const PortsMigrator = struct {
         "ports-mgmt/pkg", // Axiom replaces pkg
     };
 
+    /// Infrastructure ports that should always be included in the sysroot
+    /// These provide tools that the ports framework itself needs (not just build dependencies)
+    const INFRA_PORTS = [_][]const u8{
+        "sysutils/coreutils", // Provides md5sum, sha256sum, etc. needed by ports framework
+    };
+
+    /// Bootstrap package mappings: some ports expect special packages at hardcoded paths
+    /// under /usr/local/. These mappings tell axiom which real package provides the content.
+    /// The key is the bootstrap name (creates symlink at /usr/local/<name>),
+    /// the value is the real port origin that provides the content.
+    /// Example: glib20 expects /usr/local/gobject-introspection-bootstrap/ but the content
+    /// comes from devel/gobject-introspection in the axiom store.
+    const BootstrapMapping = struct {
+        bootstrap_name: []const u8,
+        real_origin: []const u8,
+    };
+
+    const BOOTSTRAP_PACKAGES = [_]BootstrapMapping{
+        // glib20 expects gobject-introspection-bootstrap at /usr/local/ for circular dep breaking
+        .{ .bootstrap_name = "gobject-introspection-bootstrap", .real_origin = "devel/gobject-introspection" },
+        // glib20 also expects glib-bootstrap for self-bootstrapping
+        .{ .bootstrap_name = "glib-bootstrap", .real_origin = "devel/glib20" },
+    };
+
     /// Get or create a local signing key for this machine
     /// Returns a KeyPair for signing packages built locally
     fn getOrCreateLocalSigningKey(self: *PortsMigrator) !KeyPair {
@@ -1162,6 +1186,8 @@ pub const PortsMigrator = struct {
         ldflags: []const u8,
         /// CPPFLAGS pointing to sysroot include/
         cppflags: []const u8,
+        /// PKG_CONFIG_PATH for pkg-config to find .pc files in sysroot
+        pkg_config_path: []const u8,
         /// PYTHONPATH for Python packages in sysroot lib/python*/site-packages
         pythonpath: []const u8,
         /// PERL5LIB for Perl modules in sysroot lib/perl5/site_perl
@@ -1172,9 +1198,34 @@ pub const PortsMigrator = struct {
         /// Path to cmake binary in sysroot (for CMAKE override)
         /// FreeBSD ports use CMAKE variable which defaults to /usr/local/bin/cmake
         cmake_path: []const u8,
+        /// Symlinks created in /usr/local/share/ pointing to sysroot share dirs
+        /// These are cleaned up when the build environment is destroyed
+        system_share_symlinks: std.ArrayList([]const u8),
+        /// Symlinks created at /usr/local/<bootstrap-name>/ for bootstrap packages
+        /// These are cleaned up when the build environment is destroyed
+        bootstrap_symlinks: std.ArrayList([]const u8),
         allocator: std.mem.Allocator,
 
         pub fn deinit(self: *BuildEnvironment) void {
+            // Clean up bootstrap symlinks first (before sysroot is deleted)
+            for (self.bootstrap_symlinks.items) |symlink_path| {
+                // Bootstrap symlinks are directories, use deleteTree
+                std.fs.cwd().deleteTree(symlink_path) catch |err| {
+                    std.debug.print("    [CLEANUP] Warning: could not remove bootstrap symlink {s}: {}\n", .{ symlink_path, err });
+                };
+                self.allocator.free(symlink_path);
+            }
+            self.bootstrap_symlinks.deinit();
+
+            // Clean up system share symlinks (before sysroot is deleted)
+            for (self.system_share_symlinks.items) |symlink_path| {
+                std.fs.cwd().deleteFile(symlink_path) catch |err| {
+                    std.debug.print("    [CLEANUP] Warning: could not remove share symlink {s}: {}\n", .{ symlink_path, err });
+                };
+                self.allocator.free(symlink_path);
+            }
+            self.system_share_symlinks.deinit();
+
             // Clean up the sysroot directory
             if (self.sysroot.len > 0) {
                 // Get parent of sysroot (the temp directory)
@@ -1191,6 +1242,7 @@ pub const PortsMigrator = struct {
             self.allocator.free(self.ld_library_path);
             self.allocator.free(self.ldflags);
             self.allocator.free(self.cppflags);
+            self.allocator.free(self.pkg_config_path);
             if (self.pythonpath.len > 0) self.allocator.free(self.pythonpath);
             if (self.perl5lib.len > 0) self.allocator.free(self.perl5lib);
             if (self.gmake_path.len > 0) self.allocator.free(self.gmake_path);
@@ -1240,6 +1292,53 @@ pub const PortsMigrator = struct {
             const full_path = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot_localbase, subdir });
             defer self.allocator.free(full_path);
             try std.fs.cwd().makePath(full_path);
+        }
+
+        // Also create usr/include in the sysroot root (not usr/local/include)
+        // This is needed because PKG_CONFIG_SYSROOT_DIR prepends sysroot to all paths,
+        // and some packages look for headers in /usr/include which becomes sysroot/usr/include
+        const sysroot_usr_include = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot_root, "usr/include" });
+        defer self.allocator.free(sysroot_usr_include);
+        try std.fs.cwd().makePath(sysroot_usr_include);
+
+        // Symlink system package headers that may be needed by test suites
+        // Some packages (like glib20) have test suites that depend on system packages (like dbus)
+        // that aren't part of the formal build dependencies but are needed for compilation
+        // These paths get sysroot-prefixed by PKG_CONFIG_SYSROOT_DIR, so we need symlinks
+        const system_include_dirs = [_][]const u8{
+            "dbus-1.0",
+        };
+        for (system_include_dirs) |inc_dir| {
+            const system_path = try std.fmt.allocPrint(self.allocator, "/usr/local/include/{s}", .{inc_dir});
+            defer self.allocator.free(system_path);
+
+            // Check if system path exists
+            std.fs.cwd().access(system_path, .{}) catch continue;
+
+            const sysroot_inc_path = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot_localbase, "include", inc_dir });
+            defer self.allocator.free(sysroot_inc_path);
+
+            // Create symlink from sysroot to system path
+            std.posix.symlink(system_path, sysroot_inc_path) catch |err| {
+                std.debug.print("    [SYSROOT] Warning: could not symlink {s}: {}\n", .{ inc_dir, err });
+            };
+        }
+
+        // Also symlink lib/dbus-1.0/include if it exists (dbus has headers here too)
+        const dbus_lib_include = "/usr/local/lib/dbus-1.0/include";
+        if (std.fs.cwd().access(dbus_lib_include, .{})) |_| {
+            const sysroot_dbus_lib_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot_localbase, "lib/dbus-1.0" });
+            defer self.allocator.free(sysroot_dbus_lib_dir);
+            std.fs.cwd().makePath(sysroot_dbus_lib_dir) catch {};
+
+            const sysroot_dbus_lib_include = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot_localbase, "lib/dbus-1.0/include" });
+            defer self.allocator.free(sysroot_dbus_lib_include);
+
+            std.posix.symlink(dbus_lib_include, sysroot_dbus_lib_include) catch |err| {
+                std.debug.print("    [SYSROOT] Warning: could not symlink dbus lib include: {}\n", .{err});
+            };
+        } else |_| {
+            // dbus not installed or path doesn't exist, skip
         }
 
         std.debug.print("    [SYSROOT] Creating sysroot at: {s}\n", .{sysroot_root});
@@ -1354,11 +1453,18 @@ pub const PortsMigrator = struct {
                     };
                 },
                 .sym_link => {
-                    // Preserve symlinks
+                    // For symlinks, create a symlink pointing to the absolute source path
+                    // (not preserving the original target, as that might be relative and would
+                    // break when resolved from the sysroot location)
                     std.fs.cwd().access(dst_path, .{}) catch {
-                        var target_buf: [std.fs.max_path_bytes]u8 = undefined;
-                        const target = std.fs.cwd().readLink(src_path, &target_buf) catch continue;
-                        std.fs.cwd().symLink(target, dst_path, .{}) catch |err| {
+                        // Ensure parent directory exists
+                        if (std.fs.path.dirname(dst_path)) |parent| {
+                            std.fs.cwd().makePath(parent) catch |err| {
+                                errors.logMkdirBestEffort(@src(), err, parent);
+                            };
+                        }
+
+                        std.fs.cwd().symLink(src_path, dst_path, .{}) catch |err| {
                             errors.logNonCriticalWithCategory(@src(), err, .io, "create symlink", dst_path);
                         };
                         file_count += 1;
@@ -1826,6 +1932,58 @@ pub const PortsMigrator = struct {
             .{ "lang/gawk", BinaryAlias{ .alias = "awk", .target = "gawk" } },
         });
 
+        // Coreutils aliases: the package installs g-prefixed binaries, we create unprefixed aliases
+        // These are needed because the ports framework looks for unprefixed names
+        const coreutils_aliases = [_]BinaryAlias{
+            .{ .alias = "md5sum", .target = "gmd5sum" },
+            .{ .alias = "sha256sum", .target = "gsha256sum" },
+            .{ .alias = "sha512sum", .target = "gsha512sum" },
+            .{ .alias = "sha1sum", .target = "gsha1sum" },
+            .{ .alias = "sha224sum", .target = "gsha224sum" },
+            .{ .alias = "sha384sum", .target = "gsha384sum" },
+            .{ .alias = "readlink", .target = "greadlink" },
+            .{ .alias = "realpath", .target = "grealpath" },
+            .{ .alias = "stat", .target = "gstat" },
+            .{ .alias = "date", .target = "gdate" },
+            // NOTE: Do NOT alias 'install' - BSD install has different options than GNU install
+            // The ports framework expects BSD install behavior (e.g., -l flag)
+            .{ .alias = "mktemp", .target = "gmktemp" },
+            .{ .alias = "sort", .target = "gsort" },
+            .{ .alias = "head", .target = "ghead" },
+            .{ .alias = "tail", .target = "gtail" },
+            .{ .alias = "wc", .target = "gwc" },
+            .{ .alias = "cp", .target = "gcp" },
+            .{ .alias = "mv", .target = "gmv" },
+            .{ .alias = "rm", .target = "grm" },
+            .{ .alias = "ln", .target = "gln" },
+            .{ .alias = "ls", .target = "gls" },
+            .{ .alias = "cat", .target = "gcat" },
+            .{ .alias = "touch", .target = "gtouch" },
+            .{ .alias = "mkdir", .target = "gmkdir" },
+            .{ .alias = "rmdir", .target = "grmdir" },
+            .{ .alias = "chmod", .target = "gchmod" },
+            .{ .alias = "chown", .target = "gchown" },
+            .{ .alias = "tr", .target = "gtr" },
+            .{ .alias = "cut", .target = "gcut" },
+            .{ .alias = "paste", .target = "gpaste" },
+            .{ .alias = "join", .target = "gjoin" },
+            .{ .alias = "uniq", .target = "guniq" },
+            .{ .alias = "comm", .target = "gcomm" },
+            .{ .alias = "od", .target = "god" },
+            .{ .alias = "tee", .target = "gtee" },
+            .{ .alias = "xargs", .target = "gxargs" },
+            .{ .alias = "env", .target = "genv" },
+            .{ .alias = "basename", .target = "gbasename" },
+            .{ .alias = "dirname", .target = "gdirname" },
+            .{ .alias = "expr", .target = "gexpr" },
+            .{ .alias = "printf", .target = "gprintf" },
+            .{ .alias = "seq", .target = "gseq" },
+            .{ .alias = "yes", .target = "gyes" },
+            .{ .alias = "true", .target = "gtrue" },
+            .{ .alias = "false", .target = "gfalse" },
+            .{ .alias = "nproc", .target = "gnproc" },
+        };
+
         const bin_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "bin" });
         defer self.allocator.free(bin_dir);
 
@@ -1861,6 +2019,62 @@ pub const PortsMigrator = struct {
                     std.debug.print("    [SYSROOT] Created alias: {s} -> {s}\n", .{ alias_info.alias, alias_info.target });
                 };
             }
+        }
+
+        // Always create coreutils aliases if coreutils is in the sysroot (it's an INFRA_PORT)
+        // The ports framework expects unprefixed names like 'md5sum' but coreutils installs 'gmd5sum'
+        for (coreutils_aliases) |alias_info| {
+            const target_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bin_dir, alias_info.target });
+            defer self.allocator.free(target_path);
+
+            const alias_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bin_dir, alias_info.alias });
+            defer self.allocator.free(alias_path);
+
+            // Check if target binary exists (coreutils might not be installed yet)
+            std.fs.cwd().access(target_path, .{}) catch {
+                // Target doesn't exist, skip silently
+                continue;
+            };
+
+            // Check if alias already exists
+            std.fs.cwd().access(alias_path, .{}) catch {
+                // Alias doesn't exist, create symlink
+                std.fs.cwd().symLink(alias_info.target, alias_path, .{}) catch |err| {
+                    std.debug.print("    [SYSROOT] Warning: could not create coreutils alias {s} -> {s}: {}\n", .{ alias_info.alias, alias_info.target, err });
+                    continue;
+                };
+                std.debug.print("    [SYSROOT] Created coreutils alias: {s} -> {s}\n", .{ alias_info.alias, alias_info.target });
+            };
+        }
+
+        // Python aliases: FreeBSD installs python3.11 but configure scripts look for 'python' or 'python3'
+        const python_aliases = [_]BinaryAlias{
+            .{ .alias = "python", .target = "python3.11" },
+            .{ .alias = "python3", .target = "python3.11" },
+        };
+
+        for (python_aliases) |alias_info| {
+            const target_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bin_dir, alias_info.target });
+            defer self.allocator.free(target_path);
+
+            const alias_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bin_dir, alias_info.alias });
+            defer self.allocator.free(alias_path);
+
+            // Check if target binary exists
+            std.fs.cwd().access(target_path, .{}) catch {
+                // Target doesn't exist, skip silently
+                continue;
+            };
+
+            // Check if alias already exists
+            std.fs.cwd().access(alias_path, .{}) catch {
+                // Alias doesn't exist, create symlink
+                std.fs.cwd().symLink(alias_info.target, alias_path, .{}) catch |err| {
+                    std.debug.print("    [SYSROOT] Warning: could not create python alias {s} -> {s}: {}\n", .{ alias_info.alias, alias_info.target, err });
+                    continue;
+                };
+                std.debug.print("    [SYSROOT] Created python alias: {s} -> {s}\n", .{ alias_info.alias, alias_info.target });
+            };
         }
     }
 
@@ -2150,10 +2364,13 @@ pub const PortsMigrator = struct {
                 .ld_library_path = try self.allocator.dupe(u8, "/usr/local/lib:/usr/lib:/lib"),
                 .ldflags = try self.allocator.dupe(u8, "-L/usr/local/lib"),
                 .cppflags = try self.allocator.dupe(u8, "-I/usr/local/include"),
+                .pkg_config_path = try self.allocator.dupe(u8, "/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig"),
                 .pythonpath = "",
                 .perl5lib = "",
                 .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
                 .cmake_path = try self.allocator.dupe(u8, "/usr/local/bin/cmake"),
+                .system_share_symlinks = std.ArrayList([]const u8).init(self.allocator),
+                .bootstrap_symlinks = std.ArrayList([]const u8).init(self.allocator),
                 .allocator = self.allocator,
             };
         }
@@ -2176,10 +2393,13 @@ pub const PortsMigrator = struct {
                 .ld_library_path = try self.allocator.dupe(u8, "/usr/local/lib:/usr/lib:/lib"),
                 .ldflags = try self.allocator.dupe(u8, "-L/usr/local/lib"),
                 .cppflags = try self.allocator.dupe(u8, "-I/usr/local/include"),
+                .pkg_config_path = try self.allocator.dupe(u8, "/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig"),
                 .pythonpath = "",
                 .perl5lib = "",
                 .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
                 .cmake_path = try self.allocator.dupe(u8, "/usr/local/bin/cmake"),
+                .system_share_symlinks = std.ArrayList([]const u8).init(self.allocator),
+                .bootstrap_symlinks = std.ArrayList([]const u8).init(self.allocator),
                 .allocator = self.allocator,
             };
         };
@@ -2260,6 +2480,35 @@ pub const PortsMigrator = struct {
             }
         }
 
+        // Always add infrastructure packages to sysroot (tools the ports framework needs)
+        for (INFRA_PORTS) |infra_origin| {
+            const pkg_name = try self.mapPortNameAlloc(infra_origin);
+            defer self.allocator.free(pkg_name);
+
+            std.debug.print("    [DEBUG] Adding infrastructure package: {s} → {s}\n", .{ infra_origin, pkg_name });
+
+            var roots = self.findAllPackageRootsInStore(pkg_name) catch continue;
+            defer {
+                for (roots.items) |r| self.allocator.free(r);
+                roots.deinit();
+            }
+
+            if (roots.items.len == 0) {
+                std.debug.print("    [DEBUG] Infrastructure package {s} NOT found in store (build it first)\n", .{pkg_name});
+                continue;
+            }
+
+            std.debug.print("    [DEBUG] Found {d} version(s) of infrastructure package {s}\n", .{ roots.items.len, pkg_name });
+
+            for (roots.items) |root| {
+                const root_copy = self.allocator.dupe(u8, root) catch continue;
+                all_roots.append(root_copy) catch {
+                    self.allocator.free(root_copy);
+                    continue;
+                };
+            }
+        }
+
         // If no dependencies found, return system defaults
         if (all_roots.items.len == 0) {
             std.debug.print("    [DEBUG] No dependencies found in store, using system defaults\n", .{});
@@ -2269,10 +2518,13 @@ pub const PortsMigrator = struct {
                 .ld_library_path = try self.allocator.dupe(u8, "/usr/local/lib:/usr/lib:/lib"),
                 .ldflags = try self.allocator.dupe(u8, "-L/usr/local/lib"),
                 .cppflags = try self.allocator.dupe(u8, "-I/usr/local/include"),
+                .pkg_config_path = try self.allocator.dupe(u8, "/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig"),
                 .pythonpath = "",
                 .perl5lib = "",
                 .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
                 .cmake_path = try self.allocator.dupe(u8, "/usr/local/bin/cmake"),
+                .system_share_symlinks = std.ArrayList([]const u8).init(self.allocator),
+                .bootstrap_symlinks = std.ArrayList([]const u8).init(self.allocator),
                 .allocator = self.allocator,
             };
         }
@@ -2325,6 +2577,19 @@ pub const PortsMigrator = struct {
             self.allocator,
             "-I{s} -I/usr/local/include",
             .{sysroot_include},
+        );
+
+        // PKG_CONFIG_PATH: sysroot pkgconfig directories first, then system paths
+        // .pc files can be in lib/pkgconfig or share/pkgconfig
+        const sysroot_lib_pkgconfig = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot_lib, "pkgconfig" });
+        defer self.allocator.free(sysroot_lib_pkgconfig);
+        const sysroot_share_pkgconfig = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "share/pkgconfig" });
+        defer self.allocator.free(sysroot_share_pkgconfig);
+
+        const pkg_config_path = try std.fmt.allocPrint(
+            self.allocator,
+            "{s}:{s}:/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig",
+            .{ sysroot_lib_pkgconfig, sysroot_share_pkgconfig },
         );
 
         // PYTHONPATH: scan sysroot/lib for python*/site-packages directories
@@ -2395,6 +2660,7 @@ pub const PortsMigrator = struct {
         std.debug.print("    [DEBUG] Sysroot created: {s}\n", .{sysroot});
         std.debug.print("    [DEBUG] Final PATH: {s}\n", .{path});
         std.debug.print("    [DEBUG] Final LDFLAGS: {s}\n", .{ldflags});
+        std.debug.print("    [DEBUG] Final PKG_CONFIG_PATH: {s}\n", .{pkg_config_path});
         std.debug.print("    [DEBUG] Final GMAKE: {s}\n", .{gmake_path});
         std.debug.print("    [DEBUG] Final CMAKE: {s}\n", .{cmake_path});
         if (pythonpath.len > 0) {
@@ -2404,16 +2670,320 @@ pub const PortsMigrator = struct {
             std.debug.print("    [DEBUG] Final PERL5LIB: {s}\n", .{perl5lib});
         }
 
+        // Create symlinks in /usr/local/share/ pointing to sysroot share directories
+        // This allows build systems that hardcode /usr/local/share/ paths to find data files
+        var system_share_symlinks = std.ArrayList([]const u8).init(self.allocator);
+        errdefer {
+            for (system_share_symlinks.items) |s| self.allocator.free(s);
+            system_share_symlinks.deinit();
+        }
+
+        const sysroot_share = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "share" });
+        defer self.allocator.free(sysroot_share);
+
+        // Create bootstrap symlinks for packages that expect hardcoded paths at /usr/local/
+        // These symlinks point from /usr/local/<bootstrap-name> to the sysroot content
+        var bootstrap_symlinks = std.ArrayList([]const u8).init(self.allocator);
+        errdefer {
+            for (bootstrap_symlinks.items) |s| self.allocator.free(s);
+            bootstrap_symlinks.deinit();
+        }
+
+        // Check if any bootstrap packages need symlinks or stub directories
+        for (BOOTSTRAP_PACKAGES) |mapping| {
+            // Check if the real package exists in sysroot by looking for pkgconfig files
+            const bootstrap_pkgconfig_src = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "lib/pkgconfig" });
+            defer self.allocator.free(bootstrap_pkgconfig_src);
+
+            // Check if we have pkgconfig files from the real package
+            const has_pkgconfig = blk: {
+                var pc_dir = std.fs.cwd().openDir(bootstrap_pkgconfig_src, .{ .iterate = true }) catch {
+                    // No pkgconfig dir - will create stub below
+                    break :blk false;
+                };
+                defer pc_dir.close();
+
+                if (std.mem.eql(u8, mapping.real_origin, "devel/gobject-introspection")) {
+                    // Look for gobject-introspection .pc files
+                    var pc_iter = pc_dir.iterate();
+                    while (pc_iter.next() catch null) |entry| {
+                        if (std.mem.indexOf(u8, entry.name, "gobject-introspection") != null or
+                            std.mem.indexOf(u8, entry.name, "girepository") != null)
+                        {
+                            break :blk true;
+                        }
+                    }
+                    break :blk false;
+                } else if (std.mem.eql(u8, mapping.real_origin, "devel/glib20")) {
+                    // Look for glib .pc files (glib-2.0.pc, gobject-2.0.pc, etc.)
+                    var pc_iter = pc_dir.iterate();
+                    while (pc_iter.next() catch null) |entry| {
+                        if (std.mem.eql(u8, entry.name, "glib-2.0.pc") or
+                            std.mem.eql(u8, entry.name, "gobject-2.0.pc") or
+                            std.mem.eql(u8, entry.name, "gio-2.0.pc"))
+                        {
+                            break :blk true;
+                        }
+                    }
+                    break :blk false;
+                } else {
+                    // For other bootstrap packages, just check if pkgconfig dir has any .pc files
+                    var pc_iter = pc_dir.iterate();
+                    while (pc_iter.next() catch null) |entry| {
+                        if (std.mem.endsWith(u8, entry.name, ".pc")) {
+                            break :blk true;
+                        }
+                    }
+                    break :blk false;
+                }
+            };
+
+            // Create bootstrap directory at /usr/local/<bootstrap-name>/
+            const bootstrap_path = try std.fs.path.join(self.allocator, &[_][]const u8{ "/usr/local", mapping.bootstrap_name });
+
+            // Check if path already exists
+            std.fs.cwd().access(bootstrap_path, .{}) catch {
+                // Create the bootstrap directory structure
+                // FreeBSD ports expect /usr/local/<bootstrap-name>/libdata/pkgconfig/
+                const bootstrap_libdata_pkgconfig = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_path, "libdata/pkgconfig" });
+                defer self.allocator.free(bootstrap_libdata_pkgconfig);
+
+                std.fs.cwd().makePath(bootstrap_libdata_pkgconfig) catch |err| {
+                    std.debug.print("    [BOOTSTRAP] Warning: could not create bootstrap dir {s}: {}\n", .{ bootstrap_libdata_pkgconfig, err });
+                    self.allocator.free(bootstrap_path);
+                    continue;
+                };
+
+                if (has_pkgconfig) {
+                    // Real package exists - symlink to sysroot content
+                    // Symlink: /usr/local/<bootstrap>/libdata/pkgconfig/<files> from sysroot
+                    var src_dir = std.fs.cwd().openDir(bootstrap_pkgconfig_src, .{ .iterate = true }) catch {
+                        std.debug.print("    [BOOTSTRAP] Warning: could not open pkgconfig source dir\n", .{});
+                        self.allocator.free(bootstrap_path);
+                        continue;
+                    };
+                    defer src_dir.close();
+
+                    var src_iter = src_dir.iterate();
+                    while (src_iter.next() catch null) |entry| {
+                        if (entry.kind != .file and entry.kind != .sym_link) continue;
+
+                        const src_file = std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_pkgconfig_src, entry.name }) catch continue;
+                        defer self.allocator.free(src_file);
+
+                        const dest_file = std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_libdata_pkgconfig, entry.name }) catch continue;
+                        defer self.allocator.free(dest_file);
+
+                        std.fs.cwd().symLink(src_file, dest_file, .{}) catch |err| {
+                            std.debug.print("    [BOOTSTRAP] Warning: could not symlink {s}: {}\n", .{ entry.name, err });
+                        };
+                    }
+
+                    // Also create lib and include symlinks
+                    const bootstrap_lib_dest = std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_path, "lib" }) catch continue;
+                    defer self.allocator.free(bootstrap_lib_dest);
+                    const bootstrap_lib_src = std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "lib" }) catch continue;
+                    defer self.allocator.free(bootstrap_lib_src);
+
+                    std.fs.cwd().symLink(bootstrap_lib_src, bootstrap_lib_dest, .{ .is_directory = true }) catch {};
+
+                    const bootstrap_include_dest = std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_path, "include" }) catch continue;
+                    defer self.allocator.free(bootstrap_include_dest);
+                    const bootstrap_include_src = std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "include" }) catch continue;
+                    defer self.allocator.free(bootstrap_include_src);
+
+                    std.fs.cwd().symLink(bootstrap_include_src, bootstrap_include_dest, .{ .is_directory = true }) catch {};
+
+                    std.debug.print("    [BOOTSTRAP] Created bootstrap package: {s} (with content from sysroot)\n", .{bootstrap_path});
+                } else {
+                    // No real package available - create stub with placeholder pkgconfig file
+                    // This allows glib20's post-extract to succeed (it copies the dir with wildcard)
+                    // but introspection will be disabled
+                    const placeholder_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_libdata_pkgconfig, "axiom-bootstrap-stub.pc" });
+                    defer self.allocator.free(placeholder_path);
+
+                    // Create a minimal placeholder .pc file
+                    const placeholder_file = std.fs.cwd().createFile(placeholder_path, .{}) catch |err| {
+                        std.debug.print("    [BOOTSTRAP] Warning: could not create placeholder: {}\n", .{err});
+                        self.allocator.free(bootstrap_path);
+                        continue;
+                    };
+                    defer placeholder_file.close();
+
+                    placeholder_file.writeAll(
+                        \\# Axiom stub placeholder for bootstrap package
+                        \\# This file exists to allow wildcard cp commands to succeed
+                        \\Name: axiom-bootstrap-stub
+                        \\Description: Placeholder for circular dependency bootstrap
+                        \\Version: 0.0.0
+                        \\
+                    ) catch {};
+
+                    // For gobject-introspection-bootstrap, also create stub binaries
+                    if (std.mem.eql(u8, mapping.real_origin, "devel/gobject-introspection")) {
+                        const bootstrap_bin = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_path, "bin" });
+                        defer self.allocator.free(bootstrap_bin);
+
+                        std.fs.cwd().makePath(bootstrap_bin) catch {};
+
+                        // Create stub g-ir-scanner that exits successfully
+                        const scanner_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_bin, "g-ir-scanner" });
+                        defer self.allocator.free(scanner_path);
+
+                        // Create stub g-ir-scanner that exits successfully
+                        if (std.fs.cwd().createFile(scanner_path, .{ .mode = 0o755 })) |file| {
+                            defer file.close();
+                            file.writeAll(
+                                \\#!/bin/sh
+                                \\# Axiom stub for g-ir-scanner (gobject-introspection not yet built)
+                                \\# This stub allows glib20 to build without introspection support
+                                \\echo "Warning: g-ir-scanner stub - introspection disabled" >&2
+                                \\exit 0
+                                \\
+                            ) catch {};
+                        } else |err| {
+                            std.debug.print("    [BOOTSTRAP] Warning: could not create stub g-ir-scanner: {}\n", .{err});
+                        }
+
+                        // Create stub g-ir-compiler
+                        const compiler_path = try std.fs.path.join(self.allocator, &[_][]const u8{ bootstrap_bin, "g-ir-compiler" });
+                        defer self.allocator.free(compiler_path);
+
+                        if (std.fs.cwd().createFile(compiler_path, .{ .mode = 0o755 })) |file| {
+                            defer file.close();
+                            file.writeAll(
+                                \\#!/bin/sh
+                                \\# Axiom stub for g-ir-compiler (gobject-introspection not yet built)
+                                \\echo "Warning: g-ir-compiler stub - introspection disabled" >&2
+                                \\exit 0
+                                \\
+                            ) catch {};
+                        } else |_| {}
+                    }
+
+                    std.debug.print("    [BOOTSTRAP] Created STUB bootstrap package: {s} (placeholder - introspection disabled)\n", .{bootstrap_path});
+                    std.debug.print("    [BOOTSTRAP]   Build gobject-introspection first for full support\n", .{});
+                }
+
+                try bootstrap_symlinks.append(bootstrap_path);
+                continue;
+            };
+            // Already exists, skip
+            self.allocator.free(bootstrap_path);
+        }
+
+        // If gobject-introspection is not in the sysroot, create stub g-ir-scanner/compiler in sysroot bin
+        // This is needed because PKG_CONFIG_SYSROOT_DIR causes meson to look for tools in sysroot/bin
+        const sysroot_bin_gir = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "bin" });
+        defer self.allocator.free(sysroot_bin_gir);
+
+        const sysroot_gir_scanner = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot_bin_gir, "g-ir-scanner" });
+        defer self.allocator.free(sysroot_gir_scanner);
+
+        // Check if g-ir-scanner exists in sysroot; if not, create stub
+        std.fs.cwd().access(sysroot_gir_scanner, .{}) catch {
+            // Create stub g-ir-scanner in sysroot bin
+            if (std.fs.cwd().createFile(sysroot_gir_scanner, .{ .mode = 0o755 })) |file| {
+                defer file.close();
+                file.writeAll(
+                    \\#!/bin/sh
+                    \\# Axiom stub for g-ir-scanner (gobject-introspection not yet built)
+                    \\# This stub allows packages to build without introspection support
+                    \\if [ "$1" = "--version" ]; then
+                    \\    echo "g-ir-scanner 1.84.0"
+                    \\    exit 0
+                    \\fi
+                    \\echo "Warning: g-ir-scanner stub - introspection disabled" >&2
+                    \\exit 0
+                    \\
+                ) catch {};
+                std.debug.print("    [SYSROOT] Created stub g-ir-scanner in sysroot bin\n", .{});
+            } else |_| {}
+        };
+
+        const sysroot_gir_compiler = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot_bin_gir, "g-ir-compiler" });
+        defer self.allocator.free(sysroot_gir_compiler);
+
+        std.fs.cwd().access(sysroot_gir_compiler, .{}) catch {
+            // Create stub g-ir-compiler in sysroot bin
+            if (std.fs.cwd().createFile(sysroot_gir_compiler, .{ .mode = 0o755 })) |file| {
+                defer file.close();
+                file.writeAll(
+                    \\#!/bin/sh
+                    \\# Axiom stub for g-ir-compiler (gobject-introspection not yet built)
+                    \\if [ "$1" = "--version" ]; then
+                    \\    echo "g-ir-compiler 1.84.0"
+                    \\    exit 0
+                    \\fi
+                    \\echo "Warning: g-ir-compiler stub - introspection disabled" >&2
+                    \\exit 0
+                    \\
+                ) catch {};
+                std.debug.print("    [SYSROOT] Created stub g-ir-compiler in sysroot bin\n", .{});
+            } else |_| {}
+        };
+
+        // Scan sysroot/share for subdirectories and create symlinks in /usr/local/share/
+        var share_dir = std.fs.cwd().openDir(sysroot_share, .{ .iterate = true }) catch |err| {
+            std.debug.print("    [DEBUG] Could not open sysroot share dir: {}\n", .{err});
+            return BuildEnvironment{
+                .sysroot = sysroot,
+                .path = path,
+                .ld_library_path = ld_library_path,
+                .ldflags = ldflags,
+                .cppflags = cppflags,
+                .pkg_config_path = pkg_config_path,
+                .pythonpath = pythonpath,
+                .perl5lib = perl5lib,
+                .gmake_path = gmake_path,
+                .cmake_path = cmake_path,
+                .system_share_symlinks = system_share_symlinks,
+                .bootstrap_symlinks = bootstrap_symlinks,
+                .allocator = self.allocator,
+            };
+        };
+        defer share_dir.close();
+
+        var iter = share_dir.iterate();
+        while (iter.next() catch null) |entry| {
+            if (entry.kind != .directory) continue;
+
+            // Path in sysroot: /tmp/axiom-sysroot-XXX/usr/local/share/<name>
+            const sysroot_subdir = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot_share, entry.name });
+            defer self.allocator.free(sysroot_subdir);
+
+            // Path in system: /usr/local/share/<name>
+            const system_subdir = try std.fs.path.join(self.allocator, &[_][]const u8{ "/usr/local/share", entry.name });
+
+            // Check if system path already exists
+            std.fs.cwd().access(system_subdir, .{}) catch {
+                // Doesn't exist, create symlink
+                std.fs.cwd().symLink(sysroot_subdir, system_subdir, .{ .is_directory = true }) catch |err| {
+                    std.debug.print("    [SYSROOT] Warning: could not create share symlink {s} -> {s}: {}\n", .{ system_subdir, sysroot_subdir, err });
+                    self.allocator.free(system_subdir);
+                    continue;
+                };
+                std.debug.print("    [SYSROOT] Created system share symlink: {s} -> {s}\n", .{ system_subdir, sysroot_subdir });
+                try system_share_symlinks.append(system_subdir);
+                continue;
+            };
+            // Already exists, skip (don't overwrite system files)
+            self.allocator.free(system_subdir);
+        }
+
         return BuildEnvironment{
             .sysroot = sysroot,
             .path = path,
             .ld_library_path = ld_library_path,
             .ldflags = ldflags,
             .cppflags = cppflags,
+            .pkg_config_path = pkg_config_path,
             .pythonpath = pythonpath,
             .perl5lib = perl5lib,
             .gmake_path = gmake_path,
             .cmake_path = cmake_path,
+            .system_share_symlinks = system_share_symlinks,
+            .bootstrap_symlinks = bootstrap_symlinks,
             .allocator = self.allocator,
         };
     }
@@ -2820,7 +3390,7 @@ pub const PortsMigrator = struct {
 
         // Step 2: Check and display required dependencies
         // (User must build these first via separate ports-import calls)
-        try self.displayDependencies(port_path);
+        try self.displayDependencies(origin);
 
         // Step 3: Set up build environment with Axiom store paths
         // This allows built dependencies to be found by configure scripts and compilers
@@ -2848,9 +3418,10 @@ pub const PortsMigrator = struct {
             std.debug.print("  Build FAILED (exit code: {d})\n", .{build_result.exit_code});
             // Show the last part of stdout (compiler errors are in stdout)
             if (build_result.stdout) |stdout| {
-                // Show last 4KB of output to catch the actual error
-                const start = if (stdout.len > 4096) stdout.len - 4096 else 0;
-                std.debug.print("\n--- Build output (last 4KB) ---\n{s}\n", .{stdout[start..]});
+                // Show last 64KB of output to catch the actual error
+                const display_size: usize = 64 * 1024;
+                const start = if (stdout.len > display_size) stdout.len - display_size else 0;
+                std.debug.print("\n--- Build output (last 64KB) ---\n{s}\n", .{stdout[start..]});
             }
             if (build_result.stderr) |stderr| {
                 std.debug.print("--- stderr ---\n{s}\n", .{stderr});
@@ -2876,8 +3447,9 @@ pub const PortsMigrator = struct {
         if (stage_result.exit_code != 0) {
             std.debug.print("  Stage FAILED (exit code: {d})\n", .{stage_result.exit_code});
             if (stage_result.stdout) |stdout| {
-                const start = if (stdout.len > 4096) stdout.len - 4096 else 0;
-                std.debug.print("\n--- Stage output (last 4KB) ---\n{s}\n", .{stdout[start..]});
+                const display_size: usize = 64 * 1024;
+                const start = if (stdout.len > display_size) stdout.len - display_size else 0;
+                std.debug.print("\n--- Stage output (last 64KB) ---\n{s}\n", .{stdout[start..]});
             }
             if (stage_result.stderr) |stderr| {
                 std.debug.print("--- stderr ---\n{s}\n", .{stderr});
@@ -3150,6 +3722,20 @@ pub const PortsMigrator = struct {
         var configure_perl5lib_arg: ?[]const u8 = null;
         defer if (configure_perl5lib_arg) |f| self.allocator.free(f);
 
+        // PKG_CONFIG_PATH for pkg-config to find .pc files
+        var make_pkg_config_path_arg: ?[]const u8 = null;
+        defer if (make_pkg_config_path_arg) |f| self.allocator.free(f);
+
+        var configure_pkg_config_path_arg: ?[]const u8 = null;
+        defer if (configure_pkg_config_path_arg) |f| self.allocator.free(f);
+
+        // PKG_CONFIG_SYSROOT_DIR to prepend sysroot path to pkg-config results
+        var make_pkg_config_sysroot_dir_arg: ?[]const u8 = null;
+        defer if (make_pkg_config_sysroot_dir_arg) |f| self.allocator.free(f);
+
+        var configure_pkg_config_sysroot_dir_arg: ?[]const u8 = null;
+        defer if (configure_pkg_config_sysroot_dir_arg) |f| self.allocator.free(f);
+
         // LD_LIBRARY_PATH for loading shared libraries (needed for XS modules)
         var make_ld_library_path_arg: ?[]const u8 = null;
         defer if (make_ld_library_path_arg) |f| self.allocator.free(f);
@@ -3233,7 +3819,7 @@ pub const PortsMigrator = struct {
 
             configure_env_arg = try std.fmt.allocPrint(
                 self.allocator,
-                "CONFIGURE_ENV+=PATH={s} LOCALBASE={s}",
+                "CONFIGURE_ENV+=PATH={s} LOCALBASE={s} FORCE_UNSAFE_CONFIGURE=1",
                 .{ env.path, localbase },
             );
             try args.append(configure_env_arg.?);
@@ -3323,6 +3909,44 @@ pub const PortsMigrator = struct {
                 try args.append(configure_perl5lib_arg.?);
             }
 
+            // PKG_CONFIG_PATH for pkg-config to find .pc files in sysroot
+            // This is critical for configure scripts that use pkg-config
+            make_pkg_config_path_arg = try std.fmt.allocPrint(
+                self.allocator,
+                "MAKE_ENV+=PKG_CONFIG_PATH=\"{s}\"",
+                .{env.pkg_config_path},
+            );
+            try args.append(make_pkg_config_path_arg.?);
+
+            configure_pkg_config_path_arg = try std.fmt.allocPrint(
+                self.allocator,
+                "CONFIGURE_ENV+=PKG_CONFIG_PATH=\"{s}\"",
+                .{env.pkg_config_path},
+            );
+            try args.append(configure_pkg_config_path_arg.?);
+
+            // PKG_CONFIG_SYSROOT_DIR tells pkg-config to prepend sysroot path to all paths
+            // This is critical for meson/pkg-config builds that use paths from .pc files
+            // The sysroot is env.sysroot (/tmp/axiom-sysroot-XXX/usr/local)
+            // We need the root (/tmp/axiom-sysroot-XXX) for PKG_CONFIG_SYSROOT_DIR
+            const sysroot_suffix = "/usr/local";
+            if (std.mem.endsWith(u8, env.sysroot, sysroot_suffix)) {
+                const sysroot_root = env.sysroot[0 .. env.sysroot.len - sysroot_suffix.len];
+                make_pkg_config_sysroot_dir_arg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "MAKE_ENV+=PKG_CONFIG_SYSROOT_DIR=\"{s}\"",
+                    .{sysroot_root},
+                );
+                try args.append(make_pkg_config_sysroot_dir_arg.?);
+
+                configure_pkg_config_sysroot_dir_arg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "CONFIGURE_ENV+=PKG_CONFIG_SYSROOT_DIR=\"{s}\"",
+                    .{sysroot_root},
+                );
+                try args.append(configure_pkg_config_sysroot_dir_arg.?);
+            }
+
             // LD_LIBRARY_PATH for loading shared libraries during configure
             // This is needed for Perl XS modules (like Locale::gettext) that load .so files
             if (env.ld_library_path.len > 0) {
@@ -3353,13 +3977,13 @@ pub const PortsMigrator = struct {
                 try args.append(gmake_arg.?);
             }
 
-            // CMAKE: Override the path to cmake
-            // FreeBSD ports framework uses CMAKE variable which defaults to /usr/local/bin/cmake
+            // CMAKE_BIN: Override the path to cmake binary
+            // FreeBSD ports framework uses CMAKE_BIN variable which defaults to ${LOCALBASE}/bin/cmake
             // We override this to point to the sysroot cmake when available
             if (env.cmake_path.len > 0) {
                 cmake_arg = try std.fmt.allocPrint(
                     self.allocator,
-                    "CMAKE={s}",
+                    "CMAKE_BIN={s}",
                     .{env.cmake_path},
                 );
                 try args.append(cmake_arg.?);
@@ -3398,6 +4022,13 @@ pub const PortsMigrator = struct {
                 std.debug.print("    [DEBUG]   MAKE_ENV+=PERL5LIB=\"{s}\"\n", .{env.perl5lib});
                 std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PERL5LIB=\"{s}\"\n", .{env.perl5lib});
             }
+            std.debug.print("    [DEBUG]   MAKE_ENV+=PKG_CONFIG_PATH=\"{s}\"\n", .{env.pkg_config_path});
+            std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PKG_CONFIG_PATH=\"{s}\"\n", .{env.pkg_config_path});
+            const sysroot_suffix_dbg = "/usr/local";
+            if (std.mem.endsWith(u8, env.sysroot, sysroot_suffix_dbg)) {
+                const sysroot_root_dbg = env.sysroot[0 .. env.sysroot.len - sysroot_suffix_dbg.len];
+                std.debug.print("    [DEBUG]   PKG_CONFIG_SYSROOT_DIR=\"{s}\"\n", .{sysroot_root_dbg});
+            }
             if (env.ld_library_path.len > 0) {
                 std.debug.print("    [DEBUG]   MAKE_ENV+=LD_LIBRARY_PATH=\"{s}\"\n", .{env.ld_library_path});
                 std.debug.print("    [DEBUG]   CONFIGURE_ENV+=LD_LIBRARY_PATH=\"{s}\"\n", .{env.ld_library_path});
@@ -3406,7 +4037,7 @@ pub const PortsMigrator = struct {
                 std.debug.print("    [DEBUG]   GMAKE={s}\n", .{env.gmake_path});
             }
             if (env.cmake_path.len > 0) {
-                std.debug.print("    [DEBUG]   CMAKE={s}\n", .{env.cmake_path});
+                std.debug.print("    [DEBUG]   CMAKE_BIN={s}\n", .{env.cmake_path});
             }
             std.debug.print("    [DEBUG]   CMAKE_PREFIX_PATH={s}\n", .{env.sysroot});
         }
@@ -3466,6 +4097,16 @@ pub const PortsMigrator = struct {
             // Set PYTHONPATH for Python packages in sysroot (py-flit-core, py-setuptools, etc.)
             if (env.pythonpath.len > 0) {
                 try env_map.?.put("PYTHONPATH", env.pythonpath);
+            }
+
+            // Set PKG_CONFIG_PATH for pkg-config to find .pc files in sysroot
+            try env_map.?.put("PKG_CONFIG_PATH", env.pkg_config_path);
+
+            // Set PKG_CONFIG_SYSROOT_DIR for pkg-config to prepend sysroot to paths
+            const sysroot_suffix_env = "/usr/local";
+            if (std.mem.endsWith(u8, env.sysroot, sysroot_suffix_env)) {
+                const sysroot_root_env = env.sysroot[0 .. env.sysroot.len - sysroot_suffix_env.len];
+                try env_map.?.put("PKG_CONFIG_SYSROOT_DIR", sysroot_root_env);
             }
 
             // Set LDFLAGS and CPPFLAGS in environment for configure-time detection
@@ -3535,14 +4176,41 @@ pub const PortsMigrator = struct {
     }
 
     /// Display build dependencies (user must build these first via separate ports-import calls)
-    fn displayDependencies(self: *PortsMigrator, port_path: []const u8) !void {
+    fn displayDependencies(self: *PortsMigrator, origin: []const u8) !void {
+        // Parse origin to extract optional flavor (e.g., "devel/py-setuptools@py311")
+        const parsed = ParsedOrigin.parse(origin);
+
+        const port_path = try std.fs.path.join(self.allocator, &[_][]const u8{
+            self.options.ports_tree,
+            parsed.path, // Use path without @flavor suffix
+        });
+        defer self.allocator.free(port_path);
+
+        // Build flavor argument if present
+        var flavor_arg: ?[]const u8 = null;
+        defer if (flavor_arg) |f| self.allocator.free(f);
+        if (parsed.flavor) |flv| {
+            flavor_arg = try std.fmt.allocPrint(self.allocator, "FLAVOR={s}", .{flv});
+        }
+
         // Get BUILD_DEPENDS, LIB_DEPENDS, and RUN_DEPENDS
         const dep_vars = [_][]const u8{ "BUILD_DEPENDS", "LIB_DEPENDS", "RUN_DEPENDS" };
         var all_deps: [3]?[]const u8 = .{ null, null, null };
 
         for (dep_vars, 0..) |dep_var, idx| {
-            var args = [_][]const u8{ "make", "-C", port_path, "-V", dep_var };
-            var child = std.process.Child.init(&args, self.allocator);
+            // Build args list with optional flavor
+            var args_list = std.ArrayList([]const u8).init(self.allocator);
+            defer args_list.deinit();
+            try args_list.append("make");
+            try args_list.append("-C");
+            try args_list.append(port_path);
+            if (flavor_arg) |f| {
+                try args_list.append(f);
+            }
+            try args_list.append("-V");
+            try args_list.append(dep_var);
+
+            var child = std.process.Child.init(args_list.items, self.allocator);
             child.stdout_behavior = .Pipe;
             child.stderr_behavior = .Ignore;
             try child.spawn();
@@ -3580,18 +4248,18 @@ pub const PortsMigrator = struct {
                     if (dep_trimmed.len == 0) continue;
 
                     if (std.mem.indexOf(u8, dep_trimmed, ":")) |colon_pos| {
-                        const origin = dep_trimmed[colon_pos + 1 ..];
-                        if (origin.len > 0 and std.mem.indexOf(u8, origin, "/") != null) {
+                        const dep_origin = dep_trimmed[colon_pos + 1 ..];
+                        if (dep_origin.len > 0 and std.mem.indexOf(u8, dep_origin, "/") != null) {
                             // Check for duplicates
                             var found = false;
                             for (origins.items) |existing| {
-                                if (std.mem.eql(u8, existing, origin)) {
+                                if (std.mem.eql(u8, existing, dep_origin)) {
                                     found = true;
                                     break;
                                 }
                             }
                             if (!found) {
-                                try origins.append(try self.allocator.dupe(u8, origin));
+                                try origins.append(try self.allocator.dupe(u8, dep_origin));
                             }
                         }
                     }
@@ -3611,17 +4279,17 @@ pub const PortsMigrator = struct {
                         if (dep_trimmed.len == 0) continue;
 
                         if (std.mem.indexOf(u8, dep_trimmed, ":")) |colon_pos| {
-                            const origin = dep_trimmed[colon_pos + 1 ..];
-                            if (origin.len > 0 and std.mem.indexOf(u8, origin, "/") != null) {
+                            const dep_origin = dep_trimmed[colon_pos + 1 ..];
+                            if (dep_origin.len > 0 and std.mem.indexOf(u8, dep_origin, "/") != null) {
                                 var found = false;
                                 for (origins.items) |existing| {
-                                    if (std.mem.eql(u8, existing, origin)) {
+                                    if (std.mem.eql(u8, existing, dep_origin)) {
                                         found = true;
                                         break;
                                     }
                                 }
                                 if (!found) {
-                                    try origins.append(try self.allocator.dupe(u8, origin));
+                                    try origins.append(try self.allocator.dupe(u8, dep_origin));
                                 }
                             }
                         }
@@ -3636,8 +4304,8 @@ pub const PortsMigrator = struct {
         }
 
         std.debug.print("  Dependencies ({d} ports):\n", .{origins.items.len});
-        for (origins.items) |origin| {
-            std.debug.print("    - {s}\n", .{origin});
+        for (origins.items) |o| {
+            std.debug.print("    - {s}\n", .{o});
         }
 
         // Check which dependencies are missing from the Axiom store
