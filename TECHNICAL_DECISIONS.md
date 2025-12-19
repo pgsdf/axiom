@@ -171,6 +171,43 @@ PERL5LIB="<paths>" perl -e "use Locale::gettext; print 'OK\n'"
 
 ---
 
+## Port-Specific Build Workarounds
+
+### devel/glib20
+
+**Problem**: glib20 (GLib 2.x) requires several meson options to build in the Axiom sysroot environment on FreeBSD.
+
+**Issues encountered and solutions**:
+
+| Issue | Error | Solution |
+|-------|-------|----------|
+| Introspection | `gi-compile-repository` fails - GLib-2.0.gir not generated | `-Dintrospection=disabled` |
+| Extended attributes | `No getxattr implementation found` | `-Dxattr=false` |
+| DTrace | `Program 'dtrace' not found` | `-Ddtrace=false` |
+| SystemTap | Linux-only tracing framework | `-Dsystemtap=false` |
+| Sysprof | FreeBSD compat issues (strlcpy, reallocarray, O_BINARY, etc.) | `-Dsysprof=disabled` |
+| Linker undefined symbols | `undefined symbol: environ` in genviron.c | `-Db_lundef=false` |
+
+**Complete MESON_ARGS**:
+```
+MESON_ARGS+=-Dintrospection=disabled -Dxattr=false -Ddtrace=false -Dsystemtap=false -Dsysprof=disabled -Db_lundef=false
+```
+
+**Rationale**:
+- **Introspection**: gobject-introspection isn't available during glib20 bootstrap. Stub binaries for g-ir-scanner/g-ir-compiler don't generate actual .gir files.
+- **xattr**: libexattr is not in the sysroot.
+- **dtrace/systemtap**: Tracing frameworks not available in build environment.
+- **sysprof**: Linux-specific profiler with FreeBSD compatibility issues (missing POSIX extensions).
+- **b_lundef**: FreeBSD's `environ` global variable is provided by the C runtime, not resolvable at shared library link time with `-Wl,--no-undefined`.
+
+**Implementation**: `ports.zig` detects `devel/glib20` origin and appends these meson args.
+
+**Status**: RESOLVED
+
+**Date**: 2025-12-19
+
+---
+
 ## Adding New Decisions
 
 When solving a problem or making a technical decision, add an entry here with:
