@@ -3371,9 +3371,10 @@ pub const PortsMigrator = struct {
             std.debug.print("  Build FAILED (exit code: {d})\n", .{build_result.exit_code});
             // Show the last part of stdout (compiler errors are in stdout)
             if (build_result.stdout) |stdout| {
-                // Show last 4KB of output to catch the actual error
-                const start = if (stdout.len > 4096) stdout.len - 4096 else 0;
-                std.debug.print("\n--- Build output (last 4KB) ---\n{s}\n", .{stdout[start..]});
+                // Show last 64KB of output to catch the actual error
+                const display_size: usize = 64 * 1024;
+                const start = if (stdout.len > display_size) stdout.len - display_size else 0;
+                std.debug.print("\n--- Build output (last 64KB) ---\n{s}\n", .{stdout[start..]});
             }
             if (build_result.stderr) |stderr| {
                 std.debug.print("--- stderr ---\n{s}\n", .{stderr});
@@ -3399,8 +3400,9 @@ pub const PortsMigrator = struct {
         if (stage_result.exit_code != 0) {
             std.debug.print("  Stage FAILED (exit code: {d})\n", .{stage_result.exit_code});
             if (stage_result.stdout) |stdout| {
-                const start = if (stdout.len > 4096) stdout.len - 4096 else 0;
-                std.debug.print("\n--- Stage output (last 4KB) ---\n{s}\n", .{stdout[start..]});
+                const display_size: usize = 64 * 1024;
+                const start = if (stdout.len > display_size) stdout.len - display_size else 0;
+                std.debug.print("\n--- Stage output (last 64KB) ---\n{s}\n", .{stdout[start..]});
             }
             if (stage_result.stderr) |stderr| {
                 std.debug.print("--- stderr ---\n{s}\n", .{stderr});
