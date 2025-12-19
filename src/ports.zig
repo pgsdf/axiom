@@ -2842,6 +2842,10 @@ pub const PortsMigrator = struct {
                     \\#!/bin/sh
                     \\# Axiom stub for g-ir-scanner (gobject-introspection not yet built)
                     \\# This stub allows packages to build without introspection support
+                    \\if [ "$1" = "--version" ]; then
+                    \\    echo "g-ir-scanner 1.84.0"
+                    \\    exit 0
+                    \\fi
                     \\echo "Warning: g-ir-scanner stub - introspection disabled" >&2
                     \\exit 0
                     \\
@@ -2860,6 +2864,10 @@ pub const PortsMigrator = struct {
                 file.writeAll(
                     \\#!/bin/sh
                     \\# Axiom stub for g-ir-compiler (gobject-introspection not yet built)
+                    \\if [ "$1" = "--version" ]; then
+                    \\    echo "g-ir-compiler 1.84.0"
+                    \\    exit 0
+                    \\fi
                     \\echo "Warning: g-ir-compiler stub - introspection disabled" >&2
                     \\exit 0
                     \\
