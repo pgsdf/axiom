@@ -3734,9 +3734,7 @@ pub const PortsMigrator = struct {
         defer args.deinit();
 
         // Track allocated strings to free after process completes
-        var destdir_arg: ?[]const u8 = null;
-        defer if (destdir_arg) |d| self.allocator.free(d);
-
+        // Note: destdir is only used for env_map (meson DESTDIR), not as make arg
         var jobs_arg: ?[]const u8 = null;
         defer if (jobs_arg) |j| self.allocator.free(j);
 
@@ -4129,11 +4127,11 @@ pub const PortsMigrator = struct {
             }
         }
 
-        // Add DESTDIR if provided (both as make variable and in environment)
-        if (destdir) |dir| {
-            destdir_arg = try std.fmt.allocPrint(self.allocator, "DESTDIR={s}", .{dir});
-            try args.append(destdir_arg.?);
-        }
+        // Note: We do NOT pass DESTDIR as a make argument for the stage target.
+        // Passing DESTDIR as a make arg triggers "jail mode" in the ports framework.
+        // Instead, we only set DESTDIR in the environment (see env_map below) so
+        // meson/ninja can find it. The ports framework handles STAGEDIR internally.
+        // For non-stage targets (like install), DESTDIR as a make arg would be needed.
 
         // Add job count for parallel builds
         jobs_arg = try std.fmt.allocPrint(self.allocator, "-j{d}", .{self.options.build_jobs});
