@@ -1294,6 +1294,13 @@ pub const PortsMigrator = struct {
             try std.fs.cwd().makePath(full_path);
         }
 
+        // Also create usr/include in the sysroot root (not usr/local/include)
+        // This is needed because PKG_CONFIG_SYSROOT_DIR prepends sysroot to all paths,
+        // and some packages look for headers in /usr/include which becomes sysroot/usr/include
+        const sysroot_usr_include = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot_root, "usr/include" });
+        defer self.allocator.free(sysroot_usr_include);
+        try std.fs.cwd().makePath(sysroot_usr_include);
+
         std.debug.print("    [SYSROOT] Creating sysroot at: {s}\n", .{sysroot_root});
         std.debug.print("    [SYSROOT] Sysroot localbase: {s}\n", .{sysroot_localbase});
 
