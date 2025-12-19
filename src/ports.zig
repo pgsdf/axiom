@@ -3436,11 +3436,16 @@ pub const PortsMigrator = struct {
         // Step 5: Stage the port (uses internal staging in work/stage)
         std.debug.print("  Staging", .{});
 
+        // Get STAGEDIR before running stage - meson builds need this in the environment
+        // (via _DESTDIR_VIA_ENV=yes) to properly install to the staging directory
+        const stagedir = try self.makeVar(port_path, "STAGEDIR");
+        defer self.allocator.free(stagedir);
+
         // Start progress indicator for staging phase
         var stage_progress = ProgressIndicator{ .interval_ms = 5000 }; // Dot every 5 seconds
         stage_progress.start();
 
-        var stage_result = try self.runMakeTargetNoDeps(port_path, "stage", null, &build_env, origin);
+        var stage_result = try self.runMakeTargetNoDeps(port_path, "stage", stagedir, &build_env, origin);
 
         stage_progress.stop();
 
@@ -4119,9 +4124,12 @@ pub const PortsMigrator = struct {
                 std.debug.print("    [DEBUG]   CMAKE_BIN={s}\n", .{env.cmake_path});
             }
             std.debug.print("    [DEBUG]   CMAKE_PREFIX_PATH={s}\n", .{env.sysroot});
+            if (destdir) |dir| {
+                std.debug.print("    [DEBUG]   DESTDIR={s}\n", .{dir});
+            }
         }
 
-        // Add DESTDIR if provided
+        // Add DESTDIR if provided (both as make variable and in environment)
         if (destdir) |dir| {
             destdir_arg = try std.fmt.allocPrint(self.allocator, "DESTDIR={s}", .{dir});
             try args.append(destdir_arg.?);
@@ -4213,6 +4221,13 @@ pub const PortsMigrator = struct {
             // FreeBSD make needs these
             try env_map.?.put("MAKE", "make");
             try env_map.?.put("PORTSDIR", self.options.ports_tree);
+
+            // CRITICAL: Set DESTDIR in environment for meson/ninja builds
+            // Meson uses _DESTDIR_VIA_ENV=yes meaning it reads DESTDIR from environment
+            // Without this, meson install goes to real /usr/local instead of STAGEDIR
+            if (destdir) |dir| {
+                try env_map.?.put("DESTDIR", dir);
+            }
 
             // Set the pointer on child
             child.env_map = &(env_map.?);
