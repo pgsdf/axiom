@@ -4127,11 +4127,11 @@ pub const PortsMigrator = struct {
             }
         }
 
-        // Note: We do NOT pass DESTDIR as a make argument for the stage target.
-        // Passing DESTDIR as a make arg triggers "jail mode" in the ports framework.
-        // Instead, we only set DESTDIR in the environment (see env_map below) so
-        // meson/ninja can find it. The ports framework handles STAGEDIR internally.
-        // For non-stage targets (like install), DESTDIR as a make arg would be needed.
+        // Note: We do NOT pass DESTDIR as a make argument OR set it in the environment.
+        // Either approach triggers "jail mode" in the ports framework, which expects
+        // DESTDIR to be a valid jail/chroot directory. Instead, we rely on the ports
+        // framework's internal MAKE_ENV+=DESTDIR=${STAGEDIR} mechanism to export
+        // DESTDIR to meson/ninja at the make variable level (not shell environment).
 
         // Add job count for parallel builds
         jobs_arg = try std.fmt.allocPrint(self.allocator, "-j{d}", .{self.options.build_jobs});
@@ -4220,12 +4220,12 @@ pub const PortsMigrator = struct {
             try env_map.?.put("MAKE", "make");
             try env_map.?.put("PORTSDIR", self.options.ports_tree);
 
-            // CRITICAL: Set DESTDIR in environment for meson/ninja builds
-            // Meson uses _DESTDIR_VIA_ENV=yes meaning it reads DESTDIR from environment
-            // Without this, meson install goes to real /usr/local instead of STAGEDIR
-            if (destdir) |dir| {
-                try env_map.?.put("DESTDIR", dir);
-            }
+            // Note: We do NOT set DESTDIR in the environment here.
+            // Setting DESTDIR in the shell environment triggers "jail mode" in
+            // the ports framework, which expects DESTDIR to be a valid jail/chroot.
+            // Instead, we rely on the ports framework's internal mechanism:
+            // MAKE_ENV+=DESTDIR=${STAGEDIR} (for _DESTDIR_VIA_ENV=yes ports like meson)
+            // This exports DESTDIR to ninja/meson at the make variable level.
 
             // Set the pointer on child
             child.env_map = &(env_map.?);
