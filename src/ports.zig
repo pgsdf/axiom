@@ -4016,7 +4016,7 @@ pub const PortsMigrator = struct {
         // glib20 has its own girepository code that tries to generate .gir/.typelib files
         // Without full g-ir-scanner, these won't be generated and the build fails
         // The proper fix is to disable introspection via meson option
-        if (std.mem.eql(u8, parsed.origin, "devel/glib20")) {
+        if (std.mem.eql(u8, parsed.path, "devel/glib20")) {
             meson_args_arg = try std.fmt.allocPrint(
                 self.allocator,
                 "MESON_ARGS+=-Dintrospection=disabled",
