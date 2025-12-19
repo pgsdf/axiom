@@ -3478,9 +3478,10 @@ pub const PortsMigrator = struct {
         var stagedir_file_count: usize = 0;
         var stagedir_has_lib = false;
         var stagedir_has_include = false;
-        if (std.fs.cwd().openDir(stagedir_usr_local, .{ .iterate = true })) |*dir| {
-            defer dir.close();
-            var iter = dir.iterate();
+        if (std.fs.cwd().openDir(stagedir_usr_local, .{ .iterate = true })) |dir| {
+            var d = dir;
+            defer d.close();
+            var iter = d.iterate();
             while (iter.next() catch null) |entry| {
                 stagedir_file_count += 1;
                 if (std.mem.eql(u8, entry.name, "lib")) stagedir_has_lib = true;
@@ -3534,9 +3535,10 @@ pub const PortsMigrator = struct {
         var copied_file_count: usize = 0;
         var copied_has_lib = false;
         var copied_has_include = false;
-        if (std.fs.cwd().openDir(copied_usr_local, .{ .iterate = true })) |*dir| {
-            defer dir.close();
-            var iter = dir.iterate();
+        if (std.fs.cwd().openDir(copied_usr_local, .{ .iterate = true })) |dir| {
+            var d = dir;
+            defer d.close();
+            var iter = d.iterate();
             while (iter.next() catch null) |entry| {
                 copied_file_count += 1;
                 if (std.mem.eql(u8, entry.name, "lib")) copied_has_lib = true;
