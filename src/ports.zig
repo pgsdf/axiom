@@ -2825,6 +2825,49 @@ pub const PortsMigrator = struct {
             self.allocator.free(bootstrap_path);
         }
 
+        // If gobject-introspection is not in the sysroot, create stub g-ir-scanner/compiler in sysroot bin
+        // This is needed because PKG_CONFIG_SYSROOT_DIR causes meson to look for tools in sysroot/bin
+        const sysroot_bin_gir = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "bin" });
+        defer self.allocator.free(sysroot_bin_gir);
+
+        const sysroot_gir_scanner = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot_bin_gir, "g-ir-scanner" });
+        defer self.allocator.free(sysroot_gir_scanner);
+
+        // Check if g-ir-scanner exists in sysroot; if not, create stub
+        std.fs.cwd().access(sysroot_gir_scanner, .{}) catch {
+            // Create stub g-ir-scanner in sysroot bin
+            if (std.fs.cwd().createFile(sysroot_gir_scanner, .{ .mode = 0o755 })) |file| {
+                defer file.close();
+                file.writeAll(
+                    \\#!/bin/sh
+                    \\# Axiom stub for g-ir-scanner (gobject-introspection not yet built)
+                    \\# This stub allows packages to build without introspection support
+                    \\echo "Warning: g-ir-scanner stub - introspection disabled" >&2
+                    \\exit 0
+                    \\
+                ) catch {};
+                std.debug.print("    [SYSROOT] Created stub g-ir-scanner in sysroot bin\n", .{});
+            } else |_| {}
+        };
+
+        const sysroot_gir_compiler = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot_bin_gir, "g-ir-compiler" });
+        defer self.allocator.free(sysroot_gir_compiler);
+
+        std.fs.cwd().access(sysroot_gir_compiler, .{}) catch {
+            // Create stub g-ir-compiler in sysroot bin
+            if (std.fs.cwd().createFile(sysroot_gir_compiler, .{ .mode = 0o755 })) |file| {
+                defer file.close();
+                file.writeAll(
+                    \\#!/bin/sh
+                    \\# Axiom stub for g-ir-compiler (gobject-introspection not yet built)
+                    \\echo "Warning: g-ir-compiler stub - introspection disabled" >&2
+                    \\exit 0
+                    \\
+                ) catch {};
+                std.debug.print("    [SYSROOT] Created stub g-ir-compiler in sysroot bin\n", .{});
+            } else |_| {}
+        };
+
         // Scan sysroot/share for subdirectories and create symlinks in /usr/local/share/
         var share_dir = std.fs.cwd().openDir(sysroot_share, .{ .iterate = true }) catch |err| {
             std.debug.print("    [DEBUG] Could not open sysroot share dir: {}\n", .{err});
