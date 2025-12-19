@@ -3758,6 +3758,10 @@ pub const PortsMigrator = struct {
         var configure_cmake_prefix_arg: ?[]const u8 = null;
         defer if (configure_cmake_prefix_arg) |f| self.allocator.free(f);
 
+        // MESON_ARGS for meson-based builds (like glib20)
+        var meson_args_arg: ?[]const u8 = null;
+        defer if (meson_args_arg) |f| self.allocator.free(f);
+
         // FLAVOR argument for flavored ports (e.g., devel/py-setuptools@py311)
         var flavor_arg: ?[]const u8 = null;
         defer if (flavor_arg) |f| self.allocator.free(f);
@@ -4006,7 +4010,25 @@ pub const PortsMigrator = struct {
                 .{env.sysroot},
             );
             try args.append(configure_cmake_prefix_arg.?);
+        }
 
+        // For glib20: disable introspection when gobject-introspection is not available
+        // glib20 has its own girepository code that tries to generate .gir/.typelib files
+        // Without full g-ir-scanner, these won't be generated and the build fails
+        // Also disable xattr (libexattr), dtrace (tracing), systemtap (Linux), sysprof (Linux profiler)
+        // b_lundef=false disables -Wl,--no-undefined which breaks on FreeBSD (environ symbol)
+        if (std.mem.eql(u8, parsed.path, "devel/glib20")) {
+            meson_args_arg = try std.fmt.allocPrint(
+                self.allocator,
+                "MESON_ARGS+=-Dintrospection=disabled -Dxattr=false -Ddtrace=false -Dsystemtap=false -Dsysprof=disabled -Db_lundef=false",
+                .{},
+            );
+            try args.append(meson_args_arg.?);
+            std.debug.print("    [DEBUG] glib20: disabled introspection, xattr, dtrace, systemtap, sysprof, b_lundef\n", .{});
+        }
+
+        if (build_env) |env| {
+            const localbase = "/usr/local";
             std.debug.print("    [DEBUG] Passing to ports framework:\n", .{});
             std.debug.print("    [DEBUG]   MAKE_ENV+=PATH={s} LOCALBASE={s}\n", .{ env.path, localbase });
             std.debug.print("    [DEBUG]   CONFIGURE_ENV+=PATH={s} LOCALBASE={s}\n", .{ env.path, localbase });
