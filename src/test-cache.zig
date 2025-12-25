@@ -40,7 +40,7 @@ pub fn main() !void {
 
     // Try loading from non-existent file (should not error)
     var config2 = cache.CacheConfig.init(allocator);
-    defer config2.deinit(allocator);
+    defer config2.deinit();
     config2.loadFromFile("/tmp/nonexistent-cache-config.yaml") catch {};
     std.debug.print("   ✓ loadFromFile handles missing file gracefully\n", .{});
 
