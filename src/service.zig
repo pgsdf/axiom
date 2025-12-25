@@ -222,7 +222,7 @@ pub const ServiceConfig = struct {
     pub fn toRcConf(self: ServiceConfig, allocator: std.mem.Allocator) ![]u8 {
         var result: std.ArrayList(u8) = .empty;
         errdefer result.deinit(allocator);
-        const writer = result.writer(allocator);
+        const writer = result.writer();
 
         try writer.print("# Axiom-managed service configuration for {s}\n", .{self.name});
         try writer.print("# Do not edit manually - use 'axiom service' commands\n\n", .{});

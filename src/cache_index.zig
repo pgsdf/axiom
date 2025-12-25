@@ -62,9 +62,9 @@ pub const CompressionType = enum {
 pub const PackageVersions = struct {
     versions: std.StringHashMap(PackageVersionEntry),
 
-    pub fn init(_allocator: Allocator) PackageVersions {
+    pub fn init(allocator: Allocator) PackageVersions {
         return .{
-            .versions = std.StringHashMap(PackageVersionEntry).init(_allocator),
+            .versions = std.StringHashMap(PackageVersionEntry).init(allocator),
         };
     }
 
@@ -802,16 +802,14 @@ pub const CacheIndexManager = struct {
 
 // Tests
 test "CacheIndex.init" {
-    const _ = std.testing.allocator;
-    var index = CacheIndex.empty;
+    var index = CacheIndex.init(std.testing.allocator);
     defer index.deinit();
 
     try std.testing.expectEqual(@as(usize, 0), index.packageCount());
 }
 
 test "ConflictResolver.resolve" {
-    const _ = std.testing.allocator;
-    var resolver = ConflictResolver.empty;
+    var resolver = ConflictResolver.init(std.testing.allocator);
 
     // Test no conflict when one is null
     const result = resolver.resolve(null, null);
@@ -819,8 +817,7 @@ test "ConflictResolver.resolve" {
 }
 
 test "EvictionPlan.totalBytesToFree" {
-    const _ = std.testing.allocator;
-    var plan = EvictionPlan.empty;
+    var plan = EvictionPlan.init(std.testing.allocator);
     defer plan.deinit();
 
     try std.testing.expectEqual(@as(u64, 0), plan.totalBytesToFree());

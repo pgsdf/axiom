@@ -291,31 +291,31 @@ pub const UrlValidator = struct {
 // ============================================================================
 
 /// Escape a string for safe inclusion in JSON
-pub fn escapeJsonString(_: Allocator, input: []const u8) ![]const u8 {
-    var result = .empty;
-    errdefer result.deinit();
+pub fn escapeJsonString(allocator: Allocator, input: []const u8) ![]const u8 {
+    var result: std.ArrayList(u8) = .empty;
+    errdefer result.deinit(allocator);
 
     for (input) |c| {
         switch (c) {
-            '"' => try result.appendSlice("\\\""),
-            '\\' => try result.appendSlice("\\\\"),
-            '\n' => try result.appendSlice("\\n"),
-            '\r' => try result.appendSlice("\\r"),
-            '\t' => try result.appendSlice("\\t"),
-            0x08 => try result.appendSlice("\\b"), // backspace
-            0x0C => try result.appendSlice("\\f"), // form feed
+            '"' => try result.appendSlice(allocator, "\\\""),
+            '\\' => try result.appendSlice(allocator, "\\\\"),
+            '\n' => try result.appendSlice(allocator, "\\n"),
+            '\r' => try result.appendSlice(allocator, "\\r"),
+            '\t' => try result.appendSlice(allocator, "\\t"),
+            0x08 => try result.appendSlice(allocator, "\\b"), // backspace
+            0x0C => try result.appendSlice(allocator, "\\f"), // form feed
             else => {
                 if (c < 0x20) {
                     // Other control characters - use \uXXXX notation
                     try result.writer().print("\\u{x:0>4}", .{c});
                 } else {
-                    try result.append(c);
+                    try result.append(allocator, c);
                 }
             },
         }
     }
 
-    return result.toOwnedSlice();
+    return result.toOwnedSlice(allocator);
 }
 
 /// Write a JSON-escaped string directly to a writer
@@ -669,28 +669,28 @@ pub fn yamlNeedsQuoting(value: []const u8) bool {
 }
 
 /// Escape a string for YAML (double-quoted style)
-pub fn escapeYamlString(_: Allocator, input: []const u8) ![]const u8 {
-    var result = .empty;
-    errdefer result.deinit();
+pub fn escapeYamlString(allocator: Allocator, input: []const u8) ![]const u8 {
+    var result: std.ArrayList(u8) = .empty;
+    errdefer result.deinit(allocator);
 
     for (input) |c| {
         switch (c) {
-            '"' => try result.appendSlice("\\\""),
-            '\\' => try result.appendSlice("\\\\"),
-            '\n' => try result.appendSlice("\\n"),
-            '\r' => try result.appendSlice("\\r"),
-            '\t' => try result.appendSlice("\\t"),
+            '"' => try result.appendSlice(allocator, "\\\""),
+            '\\' => try result.appendSlice(allocator, "\\\\"),
+            '\n' => try result.appendSlice(allocator, "\\n"),
+            '\r' => try result.appendSlice(allocator, "\\r"),
+            '\t' => try result.appendSlice(allocator, "\\t"),
             else => {
                 if (c < 0x20) {
                     try result.writer().print("\\x{x:0>2}", .{c});
                 } else {
-                    try result.append(c);
+                    try result.append(allocator, c);
                 }
             },
         }
     }
 
-    return result.toOwnedSlice();
+    return result.toOwnedSlice(allocator);
 }
 
 // ============================================================================

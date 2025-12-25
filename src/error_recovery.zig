@@ -994,16 +994,14 @@ pub const TransactionLog = struct {
 
 // Tests
 test "RecoveryPlan.isEmpty" {
-    const _ = std.testing.allocator;
-    var plan = RecoveryPlan.empty;
+    var plan = RecoveryPlan.init(std.testing.allocator);
     defer plan.deinit();
 
     try std.testing.expect(plan.isEmpty());
 }
 
 test "VerificationResult.overallStatus" {
-    const _ = std.testing.allocator;
-    var result = VerificationResult.empty;
+    var result = VerificationResult.init(std.testing.allocator);
     defer result.deinit();
 
     try std.testing.expectEqual(VerificationStatus.ok, result.overallStatus());

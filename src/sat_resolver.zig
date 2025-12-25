@@ -471,9 +471,9 @@ test "SATResolver basic resolution" {
 }
 
 test "SATResolver conflict detection" {
-    const _allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
-    var resolver = SATResolver.init(_allocator);
+    var resolver = SATResolver.init(allocator);
     defer resolver.deinit();
 
     // Register package A that conflicts with B
