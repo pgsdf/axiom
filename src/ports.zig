@@ -5344,7 +5344,7 @@ pub const SkipReason = enum {
 };
 
 /// Generate a migration report
-pub fn generateReport(allocator: std.mem.Allocator, results: []const MigrationResult) ![]const u8 {
+pub fn generateReport(_allocator: std.mem.Allocator, results: []const MigrationResult) ![]const u8 {
     var output = .empty;
     const writer = output.writer();
 
@@ -5387,5 +5387,5 @@ pub fn generateReport(allocator: std.mem.Allocator, results: []const MigrationRe
         }
     }
 
-    return output.toOwnedSlice(allocator);
+    return output.toOwnedSlice(_allocator);
 }

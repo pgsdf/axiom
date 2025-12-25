@@ -62,9 +62,9 @@ pub const CompressionType = enum {
 pub const PackageVersions = struct {
     versions: std.StringHashMap(PackageVersionEntry),
 
-    pub fn init(allocator: Allocator) PackageVersions {
+    pub fn init(_allocator: Allocator) PackageVersions {
         return .{
-            .versions = std.StringHashMap(PackageVersionEntry).init(allocator),
+            .versions = std.StringHashMap(PackageVersionEntry).init(_allocator),
         };
     }
 

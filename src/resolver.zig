@@ -272,10 +272,10 @@ pub const ResourceStats = struct {
         }
     };
 
-    pub fn init(allocator: std.mem.Allocator) ResourceStats {
+    pub fn init(_allocator: std.mem.Allocator) ResourceStats {
         return .{
             .start_time_ms = std.time.milliTimestamp(),
-            .candidates_per_package = std.StringHashMap(u32).init(allocator),
+            .candidates_per_package = std.StringHashMap(u32).init(_allocator),
         };
     }
 
