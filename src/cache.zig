@@ -94,7 +94,7 @@ pub const CacheConfig = struct {
     pub fn init(allocator: std.mem.Allocator) Self {
         return Self{
             .allocator = allocator,
-            .caches = std.ArrayList(RemoteCache).empty,
+            .caches = .empty,
             .local = LocalCacheConfig{},
             .push = PushConfig{},
         };

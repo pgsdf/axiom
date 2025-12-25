@@ -110,11 +110,11 @@ pub const IntegrityReport = struct {
 
     pub fn init(allocator: Allocator) IntegrityReport {
         return .{
-            .orphaned_datasets = std.ArrayList([]const u8).empty,
-            .missing_manifests = std.ArrayList([]const u8).empty,
-            .hash_mismatches = std.ArrayList(HashMismatch).empty,
-            .broken_references = std.ArrayList(BrokenRef).empty,
-            .partial_imports = std.ArrayList([]const u8).empty,
+            .orphaned_datasets = .empty,
+            .missing_manifests = .empty,
+            .hash_mismatches = .empty,
+            .broken_references = .empty,
+            .partial_imports = .empty,
             .allocator = allocator,
         };
     }

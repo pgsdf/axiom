@@ -5345,7 +5345,7 @@ pub const SkipReason = enum {
 
 /// Generate a migration report
 pub fn generateReport(allocator: std.mem.Allocator, results: []const MigrationResult) ![]const u8 {
-    var output = std.ArrayList(u8).empty;
+    var output = .empty;
     const writer = output.writer();
 
     var generated: u32 = 0;

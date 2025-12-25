@@ -548,7 +548,7 @@ pub const ResolutionContext = struct {
             .requested = std.StringHashMap(bool).init(allocator),
             .resolving = std.StringHashMap(bool).init(allocator),
             .virtual_index = VirtualPackageIndex.init(allocator),
-            .conflicts = std.ArrayList(ConflictInfo).empty,
+            .conflicts = .empty,
             .resolved_candidates = std.StringHashMap(Candidate).init(allocator),
         };
     }

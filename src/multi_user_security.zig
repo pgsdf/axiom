@@ -119,7 +119,7 @@ pub const SetuidPolicy = struct {
 
     pub fn init(allocator: Allocator) SetuidPolicy {
         return .{
-            .allowed_binaries = std.ArrayList([]const u8).empty,
+            .allowed_binaries = .empty,
         };
     }
 
@@ -148,7 +148,7 @@ pub const SetuidValidationResult = struct {
     pub fn init(allocator: Allocator) SetuidValidationResult {
         return .{
             .valid = true,
-            .issues = std.ArrayList([]const u8).empty,
+            .issues = .empty,
         };
     }
 

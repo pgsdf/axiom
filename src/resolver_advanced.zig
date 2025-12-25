@@ -131,7 +131,7 @@ pub const ResolvedFeatures = struct {
             .allocator = allocator,
             .package_name = package_name,
             .enabled = std.StringHashMap(void).init(allocator),
-            .feature_deps = std.ArrayList(Dependency).empty,
+            .feature_deps = .empty,
         };
     }
 

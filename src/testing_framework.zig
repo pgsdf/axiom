@@ -60,7 +60,7 @@ pub const TestResults = struct {
     pub fn init(allocator: Allocator) Self {
         return .{
             .allocator = allocator,
-            .cases = std.ArrayList(TestCase).empty,
+            .cases = .empty,
             .passed = 0,
             .failed = 0,
             .skipped = 0,

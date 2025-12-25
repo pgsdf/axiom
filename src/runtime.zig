@@ -257,7 +257,7 @@ pub const RuntimeManager = struct {
         try manifest_file.writeAll(manifest_content);
 
         // Collect packages
-        var packages: std.ArrayList(PackageId) = .empty;
+        var packages = .empty;
         defer packages.deinit(self.allocator);
 
         for (runtime_manifest.core_packages) |pkg_name| {

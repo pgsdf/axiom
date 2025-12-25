@@ -75,7 +75,7 @@ pub const ConflictConfig = struct {
         return ConflictConfig{
             .allocator = allocator,
             .default_policy = .error_on_conflict,
-            .rules = std.ArrayList(ConflictRule).empty,
+            .rules = .empty,
         };
     }
 
@@ -121,8 +121,8 @@ pub const ConflictTracker = struct {
     pub fn init(allocator: std.mem.Allocator, config: *ConflictConfig) ConflictTracker {
         return ConflictTracker{
             .allocator = allocator,
-            .conflicts = std.ArrayList(FileConflict).empty,
-            .resolutions = std.ArrayList(ConflictRecord).empty,
+            .conflicts = .empty,
+            .resolutions = .empty,
             .config = config,
         };
     }
@@ -365,7 +365,7 @@ pub fn applyRenameStrategy(
     strategy: RenameStrategy,
 ) ![]const u8 {
     // Parse the pattern and replace placeholders
-    var result = std.ArrayList(u8).empty;
+    var result = .empty;
     defer result.deinit();
 
     // Get the base name and extension
@@ -398,7 +398,7 @@ pub fn applyRenameStrategy(
 
     // Combine with directory
     if (dirname.len > 0) {
-        var full_path = std.ArrayList(u8).empty;
+        var full_path = .empty;
         try full_path.appendSlice(dirname);
         try full_path.append('/');
         try full_path.appendSlice(result.items);

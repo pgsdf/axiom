@@ -113,9 +113,9 @@ pub const BuildRecipe = struct {
             .name = "",
             .version = Version{ .major = 0, .minor = 0, .patch = 0 },
             .source = Source{},
-            .build_deps = std.ArrayList(Dependency).empty,
-            .runtime_deps = std.ArrayList(Dependency).empty,
-            .phases = std.ArrayList(BuildPhase).empty,
+            .build_deps = .empty,
+            .runtime_deps = .empty,
+            .phases = .empty,
             .output = OutputConfig{},
         };
     }
@@ -559,7 +559,7 @@ pub const SecureBuildSandbox = struct {
             .allocator = allocator,
             .zfs_handle = zfs_handle,
             .config = config,
-            .active_mounts = std.ArrayList(SandboxMount).empty,
+            .active_mounts = .empty,
         };
     }
 

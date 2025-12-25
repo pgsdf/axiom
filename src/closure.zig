@@ -50,9 +50,9 @@ pub const Closure = struct {
     pub fn init(allocator: std.mem.Allocator) Closure {
         return .{
             .allocator = allocator,
-            .roots = std.ArrayList(PackageId).empty,
+            .roots = .empty,
             .entries = std.StringHashMap(ClosureEntry).init(allocator),
-            .topo_order = std.ArrayList(PackageId).empty,
+            .topo_order = .empty,
             .total_size = 0,
             .base_packages = std.StringHashMap(void).init(allocator),
         };
@@ -406,7 +406,7 @@ pub fn formatClosure(
     closure: *const Closure,
     options: FormatOptions,
 ) ![]const u8 {
-    var output = std.ArrayList(u8).empty;
+    var output = .empty;
     defer output.deinit(allocator);
 
     const writer = output.writer();

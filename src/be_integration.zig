@@ -66,7 +66,7 @@ pub const HealthStatus = struct {
     pub fn init(allocator: Allocator) HealthStatus {
         return .{
             .allocator = allocator,
-            .results = std.ArrayList(HealthCheckResult).empty,
+            .results = .empty,
             .all_passed = true,
             .required_passed = true,
         };
@@ -110,7 +110,7 @@ pub const RollbackPolicy = struct {
 
     pub fn init(allocator: Allocator) RollbackPolicy {
         return .{
-            .health_checks = std.ArrayList(HealthCheck).empty,
+            .health_checks = .empty,
         };
     }
 
@@ -211,7 +211,7 @@ pub const ProfileDiff = struct {
     pub fn init(allocator: Allocator, be_a: []const u8, be_b: []const u8) !ProfileDiff {
         return .{
             .allocator = allocator,
-            .entries = std.ArrayList(ProfileDiffEntry).empty,
+            .entries = .empty,
             .be_a = try allocator.dupe(u8, be_a),
             .be_b = try allocator.dupe(u8, be_b),
         };
@@ -492,7 +492,7 @@ pub const BootloaderIntegration = struct {
             .allocator = allocator,
             .zfs_handle = zfs_handle,
             .bootloader_type = .freebsd,
-            .hooks = std.ArrayList(ActivationHook).empty,
+            .hooks = .empty,
             .rollback_policy = RollbackPolicy.empty,
         };
     }

@@ -220,7 +220,7 @@ pub const ServiceConfig = struct {
 
     /// Generate rc.conf.d file content
     pub fn toRcConf(self: ServiceConfig, _: std.mem.Allocator) ![]u8 {
-        var result = std.ArrayList(u8).empty;
+        var result = .empty;
         defer result.deinit();
         const writer = result.writer();
 
@@ -586,7 +586,7 @@ pub const ServiceManager = struct {
 
 /// Parse service declarations from manifest YAML
 pub fn parseServiceDeclarations(allocator: std.mem.Allocator, yaml_content: []const u8) ![]ServiceDeclaration {
-    var services = std.ArrayList(ServiceDeclaration).empty;
+    var services = .empty;
     defer services.deinit(allocator);
 
     var current_service: ?ServiceDeclaration = null;
@@ -595,11 +595,11 @@ pub fn parseServiceDeclarations(allocator: std.mem.Allocator, yaml_content: []co
     var in_conflicts = false;
     var in_ports = false;
 
-    var deps_list = std.ArrayList([]const u8).empty;
+    var deps_list = .empty;
     defer deps_list.deinit(allocator);
-    var conflicts_list = std.ArrayList([]const u8).empty;
+    var conflicts_list = .empty;
     defer conflicts_list.deinit(allocator);
-    var ports_list = std.ArrayList(u16).empty;
+    var ports_list = .empty;
     defer ports_list.deinit(allocator);
 
     var lines = std.mem.splitSequence(u8, yaml_content, "\n");
@@ -625,9 +625,9 @@ pub fn parseServiceDeclarations(allocator: std.mem.Allocator, yaml_content: []co
                 svc.conflicts = try toOwnedSliceOrCleanupStrings(allocator, &conflicts_list);
                 svc.ports = try toOwnedSliceOrCleanupU16(allocator, &ports_list);
                 try services.append(allocator, svc.*);
-                deps_list = std.ArrayList([]const u8).empty;
-                conflicts_list = std.ArrayList([]const u8).empty;
-                ports_list = std.ArrayList(u16).empty;
+                deps_list = .empty;
+                conflicts_list = .empty;
+                ports_list = .empty;
             }
 
             var value = std.mem.trim(u8, trimmed[7..], " \t");

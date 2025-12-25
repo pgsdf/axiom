@@ -242,10 +242,10 @@ pub const RecoveryPlan = struct {
     pub fn init(allocator: Allocator) Self {
         return .{
             .allocator = allocator,
-            .interrupted_imports = std.ArrayList(ImportRecovery).empty,
-            .interrupted_realizations = std.ArrayList(RealizationRecovery).empty,
-            .orphaned_datasets = std.ArrayList([]const u8).empty,
-            .corrupted_packages = std.ArrayList(PackageRecovery).empty,
+            .interrupted_imports = .empty,
+            .interrupted_realizations = .empty,
+            .orphaned_datasets = .empty,
+            .corrupted_packages = .empty,
             .scan_time = std.time.timestamp(),
         };
     }
@@ -312,7 +312,7 @@ pub const RecoveryResult = struct {
             .actions_taken = 0,
             .actions_failed = 0,
             .actions_skipped = 0,
-            .messages = std.ArrayList([]const u8).empty,
+            .messages = .empty,
         };
     }
 
@@ -406,7 +406,7 @@ pub const VerificationResult = struct {
                 .invalid_count = 0,
                 .details = null,
             },
-            .recommendations = std.ArrayList([]const u8).empty,
+            .recommendations = .empty,
         };
     }
 

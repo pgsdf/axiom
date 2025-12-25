@@ -445,7 +445,7 @@ pub const EvictionPlan = struct {
     pub fn init(allocator: Allocator) EvictionPlan {
         return .{
             .allocator = allocator,
-            .candidates = std.ArrayList(EvictionCandidate).empty,
+            .candidates = .empty,
             .current_size = 0,
             .target_size = 0,
         };
@@ -651,7 +651,7 @@ pub const CacheIndexManager = struct {
         return .{
             .allocator = allocator,
             .local_index = CacheIndex.empty,
-            .remote_indices = std.ArrayList(CacheIndex).empty,
+            .remote_indices = .empty,
             .trust_store = null,
             .eviction_engine = CacheEvictionEngine.init(allocator, cache_path),
             .conflict_resolver = ConflictResolver.empty,
