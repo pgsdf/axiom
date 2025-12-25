@@ -613,28 +613,39 @@ pub const RealizationEngine = struct {
         const file = try std.fs.cwd().createFile(script_path, .{ .mode = 0o755 });
         defer file.close();
 
-        var write_buf: [4096]u8 = undefined;
-        const writer = file.writer(&write_buf);
+        try file.writeAll("#!/bin/sh\n");
+        try file.writeAll("# Axiom environment activation script\n");
 
-        try writer.writeAll("#!/bin/sh\n");
-        try writer.writeAll("# Axiom environment activation script\n");
-        try writer.print("# Environment: {s}\n\n", .{env_name});
+        const env_comment = try std.fmt.allocPrint(self.allocator, "# Environment: {s}\n\n", .{env_name});
+        defer self.allocator.free(env_comment);
+        try file.writeAll(env_comment);
 
-        try writer.print("export AXIOM_ENV=\"{s}\"\n", .{env_name});
-        try writer.print("export PATH=\"{s}/bin:$PATH\"\n", .{env_mountpoint});
-        try writer.print("export LD_LIBRARY_PATH=\"{s}/lib:$LD_LIBRARY_PATH\"\n", .{env_mountpoint});
-        try writer.print("export MANPATH=\"{s}/share/man:$MANPATH\"\n", .{env_mountpoint});
+        const axiom_env = try std.fmt.allocPrint(self.allocator, "export AXIOM_ENV=\"{s}\"\n", .{env_name});
+        defer self.allocator.free(axiom_env);
+        try file.writeAll(axiom_env);
 
-        try writer.writeAll("\necho \"Axiom environment '");
-        try writer.writeAll(env_name);
-        try writer.writeAll("' activated\"\n");
-        try writer.writeAll("echo \"To deactivate, run: deactivate\"\n\n");
+        const path_export = try std.fmt.allocPrint(self.allocator, "export PATH=\"{s}/bin:$PATH\"\n", .{env_mountpoint});
+        defer self.allocator.free(path_export);
+        try file.writeAll(path_export);
 
-        try writer.writeAll("deactivate() {\n");
-        try writer.writeAll("  unset AXIOM_ENV\n");
-        try writer.writeAll("  # PATH and other vars are inherited from parent shell\n");
-        try writer.writeAll("  echo \"Environment deactivated\"\n");
-        try writer.writeAll("}\n");
+        const ld_export = try std.fmt.allocPrint(self.allocator, "export LD_LIBRARY_PATH=\"{s}/lib:$LD_LIBRARY_PATH\"\n", .{env_mountpoint});
+        defer self.allocator.free(ld_export);
+        try file.writeAll(ld_export);
+
+        const man_export = try std.fmt.allocPrint(self.allocator, "export MANPATH=\"{s}/share/man:$MANPATH\"\n", .{env_mountpoint});
+        defer self.allocator.free(man_export);
+        try file.writeAll(man_export);
+
+        const echo_msg = try std.fmt.allocPrint(self.allocator, "\necho \"Axiom environment '{s}' activated\"\n", .{env_name});
+        defer self.allocator.free(echo_msg);
+        try file.writeAll(echo_msg);
+
+        try file.writeAll("echo \"To deactivate, run: deactivate\"\n\n");
+        try file.writeAll("deactivate() {\n");
+        try file.writeAll("  unset AXIOM_ENV\n");
+        try file.writeAll("  # PATH and other vars are inherited from parent shell\n");
+        try file.writeAll("  echo \"Environment deactivated\"\n");
+        try file.writeAll("}\n");
     }
 
     /// Activate an environment (mount to standard location)

@@ -3516,7 +3516,7 @@ pub const CLI = struct {
             .build_id = build_id,
         };
 
-        std.debug.print("Fetching {s}/{}/{d}/{s}...\n", .{ name, version, revision, build_id });
+        std.debug.print("Fetching {s}/{f}/{d}/{s}...\n", .{ name, version, revision, build_id });
 
         // Check for --no-verify flag
         var verify = true;
@@ -3597,7 +3597,7 @@ pub const CLI = struct {
             .build_id = build_id,
         };
 
-        std.debug.print("Pushing {s}/{}/{d}/{s} to cache...\n", .{ name, version, revision, build_id });
+        std.debug.print("Pushing {s}/{f}/{d}/{s} to cache...\n", .{ name, version, revision, build_id });
 
         cache.pushPackage(
             self.allocator,

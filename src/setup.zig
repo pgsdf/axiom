@@ -377,18 +377,16 @@ pub const SetupWizard = struct {
     fn confirm(self: *SetupWizard, prompt: []const u8) !bool {
         _ = self;
         const stdin_file = std.fs.File.stdin();
-        var stdin_buf: [256]u8 = undefined;
-        const stdin = stdin_file.reader(&stdin_buf);
 
         std.debug.print("{s} [y/N]: ", .{prompt});
 
         var buf: [256]u8 = undefined;
-        const line = stdin.readUntilDelimiterOrEof(&buf, '\n') catch {
+        const bytes_read = stdin_file.read(&buf) catch {
             return false;
         };
 
-        if (line) |l| {
-            const trimmed = std.mem.trim(u8, l, " \t\r\n");
+        if (bytes_read > 0) {
+            const trimmed = std.mem.trim(u8, buf[0..bytes_read], " \t\r\n");
             return std.mem.eql(u8, trimmed, "y") or std.mem.eql(u8, trimmed, "Y") or
                 std.mem.eql(u8, trimmed, "yes") or std.mem.eql(u8, trimmed, "Yes") or
                 std.mem.eql(u8, trimmed, "YES");

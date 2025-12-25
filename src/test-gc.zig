@@ -48,7 +48,7 @@ pub fn main() !void {
     std.debug.print("Run actual garbage collection? (y/N): ", .{});
 
     var buffer: [10]u8 = undefined;
-    const stdin_file = std.io.getStdIn();
+    const stdin_file = std.fs.File.stdin();
     const bytes_read = stdin_file.read(&buffer) catch 0;
     const input: ?[]u8 = if (bytes_read > 0) buffer[0..bytes_read] else null;
     

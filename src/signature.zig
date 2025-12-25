@@ -414,11 +414,11 @@ pub const Signature = struct {
             try writer.print("signer: \"{s}\"\n", .{s});
         }
         try writer.print("timestamp: {d}\n", .{self.timestamp});
-        try writer.print("signature: {s}\n", .{std.fmt.fmtSliceHexLower(&self.signature)});
+        try writer.print("signature: {x}\n", .{self.signature});
         try writer.writeAll("files:\n");
         for (self.files) |f| {
             try writer.print("  - path: \"{s}\"\n", .{f.path});
-            try writer.print("    sha256: {s}\n", .{std.fmt.fmtSliceHexLower(&f.hash)});
+            try writer.print("    sha256: {x}\n", .{f.hash});
         }
 
         return result.toOwnedSlice(allocator);

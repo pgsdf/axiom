@@ -161,9 +161,9 @@ pub const SecureTarExtractor = struct {
 
     /// Extract gzip-compressed tar
     fn extractGzip(self: *SecureTarExtractor, file: std.fs.File) !void {
-        // Use gzip.Decompressor in Zig 0.15
+        // Use zlib decompressor with gzip_or_zlib format in Zig 0.15
         var read_buf: [4096]u8 = undefined;
-        var decompress = std.compress.gzip.Decompressor(std.fs.File.Reader).init(file.reader(&read_buf));
+        var decompress = std.compress.zlib.decompressor(.gzip_or_zlib, file.reader(&read_buf));
         try self.extractTar(decompress.reader());
     }
 

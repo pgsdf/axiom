@@ -25,8 +25,12 @@ pub const Version = struct {
     /// Format version as string (major.minor.patch)
     pub fn format(
         self: Version,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
+        _ = fmt;
+        _ = options;
         try writer.print("{d}.{d}.{d}", .{ self.major, self.minor, self.patch });
     }
 
@@ -180,9 +184,13 @@ pub const PackageId = struct {
 
     pub fn format(
         self: PackageId,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
-        try writer.print("{s}/{}/{d}/{s}", .{
+        _ = fmt;
+        _ = options;
+        try writer.print("{s}/{f}/{d}/{s}", .{
             self.name,
             self.version,
             self.revision,
