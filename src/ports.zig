@@ -4779,7 +4779,7 @@ pub const PortsMigrator = struct {
             return PortsError.ImportFailed;
         };
 
-        std.debug.print("  ✓ Package imported: {s}@{}\n", .{ pkg_id.name, pkg_id.version });
+        std.debug.print("  ✓ Package imported: {s}@{f}\n", .{ pkg_id.name, pkg_id.version });
 
         return pkg_id;
     }

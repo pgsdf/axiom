@@ -665,24 +665,44 @@ pub const TrustStore = struct {
         const file = try std.fs.cwd().createFile(self.store_path, .{});
         defer file.close();
 
-        var write_buf: [4096]u8 = undefined;
-        const writer = file.writer(&write_buf);
-        try writer.writeAll("# Axiom Trust Store\n\n");
+        try file.writeAll("# Axiom Trust Store\n\n");
 
         var iter = self.keys.iterator();
         while (iter.next()) |entry| {
             const key = entry.value_ptr.*;
-            try writer.print("[[key]]\n", .{});
-            try writer.print("key_id = \"{s}\"\n", .{key.key_id});
-            try writer.print("key_data = \"{s}\"\n", .{std.fmt.fmtSliceHexLower(&key.key_data)});
-            if (key.owner) |o| try writer.print("owner = \"{s}\"\n", .{o});
-            if (key.email) |e| try writer.print("email = \"{s}\"\n", .{e});
-            try writer.print("created = {d}\n", .{key.created});
-            if (key.expires) |exp| try writer.print("expires = {d}\n", .{exp});
-            try writer.print("trust_level = \"{s}\"\n", .{@tagName(key.trust_level)});
+            try file.writeAll("[[key]]\n");
+            const key_id_line = try std.fmt.allocPrint(self.allocator, "key_id = \"{s}\"\n", .{key.key_id});
+            defer self.allocator.free(key_id_line);
+            try file.writeAll(key_id_line);
+            const key_data_line = try std.fmt.allocPrint(self.allocator, "key_data = \"{x}\"\n", .{key.key_data});
+            defer self.allocator.free(key_data_line);
+            try file.writeAll(key_data_line);
+            if (key.owner) |o| {
+                const owner_line = try std.fmt.allocPrint(self.allocator, "owner = \"{s}\"\n", .{o});
+                defer self.allocator.free(owner_line);
+                try file.writeAll(owner_line);
+            }
+            if (key.email) |e| {
+                const email_line = try std.fmt.allocPrint(self.allocator, "email = \"{s}\"\n", .{e});
+                defer self.allocator.free(email_line);
+                try file.writeAll(email_line);
+            }
+            const created_line = try std.fmt.allocPrint(self.allocator, "created = {d}\n", .{key.created});
+            defer self.allocator.free(created_line);
+            try file.writeAll(created_line);
+            if (key.expires) |exp| {
+                const expires_line = try std.fmt.allocPrint(self.allocator, "expires = {d}\n", .{exp});
+                defer self.allocator.free(expires_line);
+                try file.writeAll(expires_line);
+            }
+            const trust_level_line = try std.fmt.allocPrint(self.allocator, "trust_level = \"{s}\"\n", .{@tagName(key.trust_level)});
+            defer self.allocator.free(trust_level_line);
+            try file.writeAll(trust_level_line);
             const trusted = self.trusted.get(key.key_id) orelse false;
-            try writer.print("trusted = {}\n", .{trusted});
-            try writer.writeAll("\n");
+            const trusted_line = try std.fmt.allocPrint(self.allocator, "trusted = {}\n", .{trusted});
+            defer self.allocator.free(trusted_line);
+            try file.writeAll(trusted_line);
+            try file.writeAll("\n");
         }
     }
 

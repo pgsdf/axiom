@@ -1084,7 +1084,7 @@ pub const Resolver = struct {
             }
 
             // Select this candidate
-            std.debug.print("  → Resolved {s} to {}\n", .{ pkg_name, candidate.id.version });
+            std.debug.print("  → Resolved {s} to {f}\n", .{ pkg_name, candidate.id.version });
             try ctx.resolved.put(pkg_name, candidate.id);
             try ctx.resolved_candidates.put(pkg_name, candidate);
 
@@ -1355,7 +1355,7 @@ pub const Resolver = struct {
             // Check for conflicts
             const has_conflict = try ctx.checkConflicts(candidate);
             if (has_conflict) {
-                std.debug.print("  ⚠ Skipping {s}@{} due to conflict\n", .{ pkg_name, candidate.id.version });
+                std.debug.print("  ⚠ Skipping {s}@{f} due to conflict\n", .{ pkg_name, candidate.id.version });
                 continue;
             }
 

@@ -407,8 +407,7 @@ pub const ZfsHandle = struct {
             child.stderr_behavior = .Pipe;
             child.stdout_behavior = .Ignore;
             try child.spawn();
-            var stderr_buf: [4096]u8 = undefined;
-            const stderr_output = child.stderr.?.reader(&stderr_buf).readAllAlloc(allocator, 4096) catch "";
+            const stderr_output = child.stderr.?.readToEndAlloc(allocator, 4096) catch "";
             defer if (stderr_output.len > 0) allocator.free(stderr_output);
             const term = child.wait() catch return ZfsError.InternalError;
             if (term.Exited != 0) {

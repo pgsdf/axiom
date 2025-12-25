@@ -12,7 +12,7 @@ pub fn main() !void {
     // Test CacheConfig initialization
     std.debug.print("1. Testing CacheConfig initialization...\n", .{});
     var config = cache.CacheConfig.init(allocator);
-    defer config.deinit(allocator);
+    defer config.deinit();
     std.debug.print("   ✓ CacheConfig created\n", .{});
     std.debug.print("   Local cache path: {s}\n", .{config.local.path});
     std.debug.print("   Max size: {d} bytes\n", .{config.local.max_size_bytes});

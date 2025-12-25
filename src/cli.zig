@@ -1262,7 +1262,7 @@ pub const CLI = struct {
         };
 
         if (!options.dry_run) {
-            std.debug.print("\nImported: {s} {}\n", .{ pkg_id.name, pkg_id.version });
+            std.debug.print("\nImported: {s} {f}\n", .{ pkg_id.name, pkg_id.version });
         }
     }
 
@@ -2643,7 +2643,7 @@ pub const CLI = struct {
         if (options.dry_run) {
             std.debug.print("\n✓ Dry run complete\n", .{});
         } else if (options.import_result) {
-            std.debug.print("\n✓ Build complete: {s}/{}\n", .{ pkg_id.name, pkg_id.version });
+            std.debug.print("\n✓ Build complete: {s}/{f}\n", .{ pkg_id.name, pkg_id.version });
         } else {
             std.debug.print("\n✓ Build complete (not imported)\n", .{});
         }
@@ -7354,7 +7354,7 @@ pub const CLI = struct {
                     self.allocator.free(metadata.dataset_path);
                 }
 
-                std.debug.print("Dependencies of {s} {}:\n", .{ pkg.name, pkg.version });
+                std.debug.print("Dependencies of {s} {f}:\n", .{ pkg.name, pkg.version });
                 if (metadata.dependencies.len > 0) {
                     for (metadata.dependencies) |dep| {
                         std.debug.print("  - {s}\n", .{dep.name});

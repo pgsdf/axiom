@@ -176,7 +176,7 @@ pub const Solver = struct {
     pub fn init(allocator: std.mem.Allocator) Solver {
         return .{
             .allocator = allocator,
-            .clauses: std.ArrayList(Clause) = .empty,
+            .clauses = .empty,
             .num_variables = 0,
             .assignment = Assignment.init(allocator),
             .variable_activity = std.AutoHashMap(u32, f64).init(allocator),
