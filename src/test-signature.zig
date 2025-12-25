@@ -19,7 +19,7 @@ pub fn main() !void {
 
     std.debug.print("  Generated key pair\n", .{});
     std.debug.print("  Key ID: {s}\n", .{key_id});
-    std.debug.print("  Public key: {s}...\n", .{std.fmt.fmtSliceHexLower(key_pair.public_key[0..16])});
+    std.debug.print("  Public key: {x}...\n", .{key_pair.public_key[0..16].*});
 
     // Test 2: Trust store
     std.debug.print("\n2. Trust Store\n", .{});

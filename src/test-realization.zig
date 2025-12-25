@@ -66,8 +66,9 @@ pub fn main() !void {
 
             const file = try std.fs.cwd().createFile(test_file, .{});
             defer file.close();
-            var write_buf: [256]u8 = undefined;
-            try file.writer(&write_buf).print("Test package: {s}\n", .{pkg_info.name});
+            const content = try std.fmt.allocPrint(allocator, "Test package: {s}\n", .{pkg_info.name});
+            defer allocator.free(content);
+            try file.writeAll(content);
 
             // Create manifests
             const pkg_manifest = manifest.Manifest{

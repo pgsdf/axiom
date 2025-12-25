@@ -129,14 +129,10 @@ pub const SecureTarExtractor = struct {
 
     /// Extract a tar archive from a file handle
     pub fn extractFromFile(self: *SecureTarExtractor, file: std.fs.File) !void {
-        // Get file reader with buffer
-        var read_buf: [4096]u8 = undefined;
-        var reader = file.reader(&read_buf);
-
         // Detect and handle compression
         // Read magic bytes to detect compression type
         var magic: [6]u8 = undefined;
-        const bytes_read = reader.readAll(&magic) catch |err| {
+        const bytes_read = file.readAll(&magic) catch |err| {
             std.debug.print("SecureTarExtractor: Failed to read magic bytes: {}\n", .{err});
             return ExtractionError.IoError;
         };

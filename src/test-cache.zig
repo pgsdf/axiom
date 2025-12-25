@@ -39,8 +39,8 @@ pub fn main() !void {
     std.debug.print("\n4. Testing configuration file handling...\n", .{});
 
     // Try loading from non-existent file (should not error)
-    var config2 = cache.CacheConfig.init(_allocator);
-    defer config2.deinit(_allocator);
+    var config2 = cache.CacheConfig.init(allocator);
+    defer config2.deinit(allocator);
     config2.loadFromFile("/tmp/nonexistent-cache-config.yaml") catch {};
     std.debug.print("   ✓ loadFromFile handles missing file gracefully\n", .{});
 

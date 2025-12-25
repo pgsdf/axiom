@@ -114,7 +114,7 @@ fn runMockTest(allocator: std.mem.Allocator) !void {
         while (key_iter.next()) |key| {
             allocator.free(key.*);
         }
-        referenced.deinit(allocator);
+        referenced.deinit();
     }
 
     // Mock: bash 5.2.0 and git 2.43.0 are referenced
