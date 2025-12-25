@@ -25,8 +25,8 @@ pub const Config = struct {
     show_timestamps: bool = true,
     /// Whether logging is enabled at all
     enabled: bool = true,
-    /// Output writer (defaults to stderr)
-    writer: std.fs.File.Writer = std.io.getStdErr().writer(),
+    /// Output file (defaults to stderr)
+    file: std.fs.File = std.fs.File.stderr(),
 };
 
 /// Global configuration instance
@@ -52,7 +52,8 @@ fn logImpl(level: Level, comptime fmt: []const u8, args: anytype) void {
     if (!global_config.enabled) return;
     if (@intFromEnum(level) < @intFromEnum(global_config.min_level)) return;
 
-    const writer = global_config.writer;
+    var buf: [4096]u8 = undefined;
+    const writer = global_config.file.writer(&buf);
 
     // Write timestamp if enabled
     if (global_config.show_timestamps) {
@@ -66,6 +67,7 @@ fn logImpl(level: Level, comptime fmt: []const u8, args: anytype) void {
     // Write message
     writer.print(fmt, args) catch return;
     writer.writeByte('\n') catch return;
+    writer.flush() catch return;
 }
 
 /// Log a debug message

@@ -69,7 +69,7 @@ pub const RuntimeManifest = struct {
     min_compatible: ?Version = null,
 
     pub fn serialize(self: RuntimeManifest, allocator: std.mem.Allocator) ![]const u8 {
-        var output = std.ArrayList(u8).init(allocator);
+        var output = std.ArrayList(u8).empty;
         defer output.deinit();
 
         const writer = output.writer();

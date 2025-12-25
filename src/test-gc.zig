@@ -46,9 +46,11 @@ pub fn main() !void {
 
     // Ask if user wants to run actual collection
     std.debug.print("Run actual garbage collection? (y/N): ", .{});
-    
+
     var buffer: [10]u8 = undefined;
-    const stdin = std.io.getStdIn().reader();
+    const stdin_file = std.fs.File.stdin();
+    var stdin_buf: [256]u8 = undefined;
+    const stdin = stdin_file.reader(&stdin_buf);
     const input = try stdin.readUntilDelimiterOrEof(&buffer, '\n');
     
     if (input) |line| {
@@ -78,7 +80,7 @@ fn runMockTest(allocator: std.mem.Allocator) !void {
     // Simulate package scanning
     std.debug.print("Phase 1: Scanning package store...\n", .{});
     
-    var all_packages = std.ArrayList(types.PackageId).init(allocator);
+    var all_packages = std.ArrayList(types.PackageId).empty;
     defer {
         for (all_packages.items) |pkg| {
             allocator.free(pkg.name);
@@ -106,7 +108,7 @@ fn runMockTest(allocator: std.mem.Allocator) !void {
     // Simulate profile references
     std.debug.print("\nPhase 2: Finding references...\n", .{});
     
-    var referenced = std.StringHashMap(bool).init(allocator);
+    var referenced = std.StringHashMap(bool).empty;
     defer {
         var key_iter = referenced.keyIterator();
         while (key_iter.next()) |key| {
@@ -139,7 +141,7 @@ fn runMockTest(allocator: std.mem.Allocator) !void {
     // Identify unreferenced
     std.debug.print("\nPhase 3: Identifying unreferenced packages...\n", .{});
     
-    var unreferenced = std.ArrayList(types.PackageId).init(allocator);
+    var unreferenced = std.ArrayList(types.PackageId).empty;
     defer unreferenced.deinit();
 
     for (all_packages.items) |pkg| {

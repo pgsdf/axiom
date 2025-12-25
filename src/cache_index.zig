@@ -64,7 +64,7 @@ pub const PackageVersions = struct {
 
     pub fn init(allocator: Allocator) PackageVersions {
         return .{
-            .versions = std.StringHashMap(PackageVersionEntry).init(allocator),
+            .versions = std.StringHashMap(PackageVersionEntry).empty,
         };
     }
 
@@ -111,7 +111,7 @@ pub const CacheIndex = struct {
             .format_version = "",
             .cache_id = "",
             .updated_at = "",
-            .packages = std.StringHashMap(PackageVersions).init(allocator),
+            .packages = std.StringHashMap(PackageVersions).empty,
             .signature = null,
         };
     }
@@ -445,7 +445,7 @@ pub const EvictionPlan = struct {
     pub fn init(allocator: Allocator) EvictionPlan {
         return .{
             .allocator = allocator,
-            .candidates = std.ArrayList(EvictionCandidate).init(allocator),
+            .candidates = std.ArrayList(EvictionCandidate).empty,
             .current_size = 0,
             .target_size = 0,
         };
@@ -650,11 +650,11 @@ pub const CacheIndexManager = struct {
     pub fn init(allocator: Allocator, cache_path: []const u8) Self {
         return .{
             .allocator = allocator,
-            .local_index = CacheIndex.init(allocator),
-            .remote_indices = std.ArrayList(CacheIndex).init(allocator),
+            .local_index = CacheIndex.empty,
+            .remote_indices = std.ArrayList(CacheIndex).empty,
             .trust_store = null,
             .eviction_engine = CacheEvictionEngine.init(allocator, cache_path),
-            .conflict_resolver = ConflictResolver.init(allocator),
+            .conflict_resolver = ConflictResolver.empty,
         };
     }
 
@@ -803,7 +803,7 @@ pub const CacheIndexManager = struct {
 // Tests
 test "CacheIndex.init" {
     const allocator = std.testing.allocator;
-    var index = CacheIndex.init(allocator);
+    var index = CacheIndex.empty;
     defer index.deinit();
 
     try std.testing.expectEqual(@as(usize, 0), index.packageCount());
@@ -811,7 +811,7 @@ test "CacheIndex.init" {
 
 test "ConflictResolver.resolve" {
     const allocator = std.testing.allocator;
-    var resolver = ConflictResolver.init(allocator);
+    var resolver = ConflictResolver.empty;
 
     // Test no conflict when one is null
     const result = resolver.resolve(null, null);
@@ -820,7 +820,7 @@ test "ConflictResolver.resolve" {
 
 test "EvictionPlan.totalBytesToFree" {
     const allocator = std.testing.allocator;
-    var plan = EvictionPlan.init(allocator);
+    var plan = EvictionPlan.empty;
     defer plan.deinit();
 
     try std.testing.expectEqual(@as(u64, 0), plan.totalBytesToFree());

@@ -50,11 +50,11 @@ pub const Closure = struct {
     pub fn init(allocator: std.mem.Allocator) Closure {
         return .{
             .allocator = allocator,
-            .roots = std.ArrayList(PackageId).init(allocator),
-            .entries = std.StringHashMap(ClosureEntry).init(allocator),
-            .topo_order = std.ArrayList(PackageId).init(allocator),
+            .roots = std.ArrayList(PackageId).empty,
+            .entries = std.StringHashMap(ClosureEntry).empty,
+            .topo_order = std.ArrayList(PackageId).empty,
             .total_size = 0,
-            .base_packages = std.StringHashMap(void).init(allocator),
+            .base_packages = std.StringHashMap(void).empty,
         };
     }
 
@@ -109,7 +109,7 @@ pub const ClosureComputer = struct {
         var computer = ClosureComputer{
             .allocator = allocator,
             .pkg_store = pkg_store,
-            .base_packages = std.StringHashMap(void).init(allocator),
+            .base_packages = std.StringHashMap(void).empty,
         };
 
         // Initialize default base packages
@@ -406,7 +406,7 @@ pub fn formatClosure(
     closure: *const Closure,
     options: FormatOptions,
 ) ![]const u8 {
-    var output = std.ArrayList(u8).init(allocator);
+    var output = std.ArrayList(u8).empty;
     defer output.deinit();
 
     const writer = output.writer();

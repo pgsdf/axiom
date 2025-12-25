@@ -119,7 +119,7 @@ pub const SetuidPolicy = struct {
 
     pub fn init(allocator: Allocator) SetuidPolicy {
         return .{
-            .allowed_binaries = std.ArrayList([]const u8).init(allocator),
+            .allowed_binaries = std.ArrayList([]const u8).empty,
         };
     }
 
@@ -148,7 +148,7 @@ pub const SetuidValidationResult = struct {
     pub fn init(allocator: Allocator) SetuidValidationResult {
         return .{
             .valid = true,
-            .issues = std.ArrayList([]const u8).init(allocator),
+            .issues = std.ArrayList([]const u8).empty,
         };
     }
 
@@ -294,7 +294,7 @@ pub const SetuidManager = struct {
     pub fn init(allocator: Allocator) Self {
         return .{
             .allocator = allocator,
-            .policy = SetuidPolicy.init(allocator),
+            .policy = SetuidPolicy.empty,
             .audit_log_path = "/var/log/axiom-setuid.log",
         };
     }
@@ -565,7 +565,7 @@ pub const SharedGroup = struct {
 // Tests
 test "AccessControl.checkStoreAccess" {
     const allocator = std.testing.allocator;
-    var ac = AccessControl.init(allocator);
+    var ac = AccessControl.empty;
 
     var root_user = User{
         .uid = 0,
@@ -581,7 +581,7 @@ test "AccessControl.checkStoreAccess" {
 
 test "SetuidPolicy.isAllowed" {
     const allocator = std.testing.allocator;
-    var policy = SetuidPolicy.init(allocator);
+    var policy = SetuidPolicy.empty;
     defer policy.deinit(allocator);
 
     try policy.allowed_binaries.append(try allocator.dupe(u8, "sudo"));

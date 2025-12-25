@@ -621,7 +621,7 @@ pub const PolicyChecker = struct {
         return .{
             .allocator = allocator,
             .policy = .{},
-            .verifier = ProvenanceVerifier.init(allocator),
+            .verifier = ProvenanceVerifier.empty,
         };
     }
 
@@ -747,7 +747,7 @@ pub fn createProvenance(
 
 /// Serialize provenance to YAML format
 pub fn serializeProvenance(allocator: Allocator, provenance: *const Provenance) ![]u8 {
-    var buffer = std.ArrayList(u8).init(allocator);
+    var buffer = std.ArrayList(u8).empty;
     const writer = buffer.writer();
 
     try writer.print("format_version: \"{s}\"\n\n", .{provenance.format_version});
@@ -817,7 +817,7 @@ test "Provenance.computeHash" {
 
 test "ProvenanceVerifier.init" {
     const allocator = std.testing.allocator;
-    var verifier = ProvenanceVerifier.init(allocator);
+    var verifier = ProvenanceVerifier.empty;
     defer verifier.deinit();
 
     try std.testing.expect(verifier.policy.require_provenance);
