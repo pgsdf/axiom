@@ -306,7 +306,7 @@ pub const RecoveryResult = struct {
 
     const Self = @This();
 
-    pub fn init(_allocator: Allocator) Self {
+    pub fn init() Self {
         return .{
             .success = true,
             .actions_taken = 0,
@@ -545,7 +545,7 @@ pub const RecoveryEngine = struct {
 
     /// Execute recovery plan
     pub fn execute(self: *Self, plan: *RecoveryPlan, mode: RecoveryMode) !RecoveryResult {
-        var result = RecoveryResult.init(self.allocator);
+        var result = RecoveryResult.init();
 
         if (mode == .dry_run) {
             try result.addMessage(self.allocator, "Dry run - no changes made");

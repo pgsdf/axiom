@@ -117,7 +117,7 @@ pub const SetuidPolicy = struct {
     deny_unknown: bool = true,
     require_signature: bool = true,
 
-    pub fn init(_allocator: Allocator) SetuidPolicy {
+    pub fn init() SetuidPolicy {
         return .{
             .allowed_binaries = .empty,
         };
@@ -145,7 +145,7 @@ pub const SetuidValidationResult = struct {
     valid: bool,
     issues: std.ArrayList([]const u8),
 
-    pub fn init(_allocator: Allocator) SetuidValidationResult {
+    pub fn init() SetuidValidationResult {
         return .{
             .valid = true,
             .issues = .empty,
@@ -314,7 +314,7 @@ pub const SetuidManager = struct {
         binary: *const SetuidBinary,
         has_signature: bool,
     ) !SetuidValidationResult {
-        var result = SetuidValidationResult.init(self.allocator);
+        var result = SetuidValidationResult.init();
 
         // Extract binary name from path
         const binary_name = std.fs.path.basename(binary.path);

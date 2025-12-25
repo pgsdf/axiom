@@ -104,7 +104,7 @@ pub const Assignment = struct {
             .values = std.AutoHashMap(u32, bool).init(allocator),
             .decision_levels = std.AutoHashMap(u32, u32).init(allocator),
             .antecedents = std.AutoHashMap(u32, ?*Clause).init(allocator),
-            .trail: std.ArrayList(u32) = .empty,
+            .trail = .empty,
             .current_level = 0,
         };
     }

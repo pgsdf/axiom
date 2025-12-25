@@ -586,7 +586,7 @@ pub const ServiceManager = struct {
 
 /// Parse service declarations from manifest YAML
 pub fn parseServiceDeclarations(allocator: std.mem.Allocator, yaml_content: []const u8) ![]ServiceDeclaration {
-    var services = .empty;
+    var services: std.ArrayList(ServiceDeclaration) = .empty;
     defer services.deinit(allocator);
 
     var current_service: ?ServiceDeclaration = null;
@@ -595,11 +595,11 @@ pub fn parseServiceDeclarations(allocator: std.mem.Allocator, yaml_content: []co
     var in_conflicts = false;
     var in_ports = false;
 
-    var deps_list = .empty;
+    var deps_list: std.ArrayList([]const u8) = .empty;
     defer deps_list.deinit(allocator);
-    var conflicts_list = .empty;
+    var conflicts_list: std.ArrayList([]const u8) = .empty;
     defer conflicts_list.deinit(allocator);
-    var ports_list = .empty;
+    var ports_list: std.ArrayList(u16) = .empty;
     defer ports_list.deinit(allocator);
 
     var lines = std.mem.splitSequence(u8, yaml_content, "\n");
