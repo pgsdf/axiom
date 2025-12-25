@@ -319,8 +319,7 @@ pub fn resetGlobalConfig() void {
 // =============================================================================
 
 test "Config.init uses defaults" {
-    const _ = std.testing.allocator;
-    var config = try Config.empty;
+    var config = try Config.init(std.testing.allocator);
     defer config.deinit();
 
     // Check default dataset paths

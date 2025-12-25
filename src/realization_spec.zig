@@ -535,8 +535,8 @@ pub const EnvironmentMetadata = struct {
     abi_verified: bool = false,
 
     /// Serialize to YAML format
-    pub fn toYaml(self: *const EnvironmentMetadata, _: Allocator) ![]u8 {
-        var buffer = .empty;
+    pub fn toYaml(self: *const EnvironmentMetadata, allocator: Allocator) ![]u8 {
+        var buffer: std.ArrayList(u8) = .empty;
         const writer = buffer.writer();
 
         try writer.print("name: {s}\n", .{self.name});
@@ -557,7 +557,7 @@ pub const EnvironmentMetadata = struct {
             try writer.print("    build_id: {s}\n", .{pkg.build_id});
         }
 
-        return buffer.toOwnedSlice();
+        return buffer.toOwnedSlice(allocator);
     }
 };
 

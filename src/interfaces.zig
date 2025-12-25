@@ -256,9 +256,9 @@ pub const MockPackageStore = struct {
     packages: std.StringHashMap(PackageStore.PackageInfo),
     store_path: []const u8,
 
-    pub fn init(_allocator: std.mem.Allocator) MockPackageStore {
+    pub fn init(allocator: std.mem.Allocator) MockPackageStore {
         return .{
-            .packages = std.StringHashMap(PackageStore.PackageInfo).init(_allocator),
+            .packages = std.StringHashMap(PackageStore.PackageInfo).init(allocator),
             .store_path = "/mock/store",
         };
     }
@@ -276,14 +276,14 @@ pub const MockPackageStore = struct {
         return self.packages.get(id.name);
     }
 
-    fn listPackages(ctx: *anyopaque, _allocator: std.mem.Allocator) anyerror![]PackageId {
+    fn listPackages(ctx: *anyopaque, allocator: std.mem.Allocator) anyerror![]PackageId {
         const self: *MockPackageStore = @ptrCast(@alignCast(ctx));
-        var result = .empty;
+        var result: std.ArrayList(PackageId) = .empty;
         var iter = self.packages.iterator();
         while (iter.next()) |entry| {
-            try result.append(entry.value_ptr.id);
+            try result.append(allocator, entry.value_ptr.id);
         }
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(allocator);
     }
 
     fn packageExists(ctx: *anyopaque, id: PackageId) bool {

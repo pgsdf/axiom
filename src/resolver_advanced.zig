@@ -44,7 +44,7 @@ pub const VirtualProviderIndex = struct {
     pub fn init(allocator: Allocator) VirtualProviderIndex {
         return .{
             .allocator = allocator,
-            .providers = std.StringHashMap(std.ArrayList(VirtualProvider)).empty,
+            .providers = std.StringHashMap(std.ArrayList(VirtualProvider)).init(allocator),
         };
     }
 
@@ -553,8 +553,7 @@ test "PreferenceHandler.matchesPattern" {
 }
 
 test "VirtualProviderIndex" {
-    const _allocator = std.testing.allocator;
-    var index = VirtualProviderIndex.empty;
+    var index = VirtualProviderIndex.init(std.testing.allocator);
     defer index.deinit();
 
     const pkg1 = PackageId{
@@ -576,8 +575,7 @@ test "VirtualProviderIndex" {
 }
 
 test "FeatureResolver.basic" {
-    const _allocator = std.testing.allocator;
-    var resolver = FeatureResolver.empty;
+    var resolver = FeatureResolver.init(std.testing.allocator);
     defer resolver.deinit();
 
     // Mock manifest with features

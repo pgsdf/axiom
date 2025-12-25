@@ -862,7 +862,7 @@ pub const ZfsHandle = struct {
             for (datasets.items) |item| {
                 allocator.free(item);
             }
-            datasets.deinit();
+            datasets.deinit(allocator);
         }
 
         var lines = std.mem.splitScalar(u8, stdout, '\n');
@@ -886,7 +886,7 @@ pub const ZfsHandle = struct {
             }
         }
 
-        return try datasets.toOwnedSlice();
+        return try datasets.toOwnedSlice(allocator);
     }
 
     /// Get disk usage (used property) for a dataset in bytes
@@ -1561,9 +1561,9 @@ pub const ThreadSafeZfs = struct {
     error_lock: std.Thread.Mutex = .{},
 
     /// Initialize the thread-safe ZFS wrapper
-    pub fn init(_allocator: std.mem.Allocator) ThreadSafeZfs {
+    pub fn init(allocator: std.mem.Allocator) ThreadSafeZfs {
         return .{
-            .error_contexts = std.AutoHashMap(std.Thread.Id, ZfsErrorContext).init(_allocator),
+            .error_contexts = std.AutoHashMap(std.Thread.Id, ZfsErrorContext).init(allocator),
         };
     }
 
@@ -2050,9 +2050,9 @@ pub fn deinitGlobalThreadSafeZfs(allocator: std.mem.Allocator) void {
 // ============================================================================
 
 test "ThreadSafeZfs basic initialization" {
-    const _allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
-    var zfs = ThreadSafeZfs.init(_allocator);
+    var zfs = ThreadSafeZfs.init(allocator);
     defer zfs.deinit();
 
     // Should start with no references
@@ -2067,9 +2067,9 @@ test "ThreadSafeZfs basic initialization" {
 }
 
 test "ScopedOperation lifecycle" {
-    const _allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
-    var zfs = ThreadSafeZfs.init(_allocator);
+    var zfs = ThreadSafeZfs.init(allocator);
     defer zfs.deinit();
 
     // Create scoped operation
@@ -2113,9 +2113,9 @@ test "ZfsErrorContext operations" {
 }
 
 test "concurrent reference counting" {
-    const _allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
-    var zfs = ThreadSafeZfs.init(_allocator);
+    var zfs = ThreadSafeZfs.init(allocator);
     defer zfs.deinit();
 
     const num_threads = 10;

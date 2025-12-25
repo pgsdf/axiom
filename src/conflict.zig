@@ -359,14 +359,14 @@ fn matchesPattern(path: []const u8, pattern: []const u8) bool {
 
 /// Apply a rename strategy to generate a new filename
 pub fn applyRenameStrategy(
-    _: std.mem.Allocator,
+    allocator: std.mem.Allocator,
     path: []const u8,
     package_name: []const u8,
     strategy: RenameStrategy,
 ) ![]const u8 {
     // Parse the pattern and replace placeholders
-    var result = .empty;
-    defer result.deinit();
+    var result: std.ArrayList(u8) = .empty;
+    defer result.deinit(allocator);
 
     // Get the base name and extension
     const basename = std.fs.path.basename(path);
@@ -382,37 +382,35 @@ pub fn applyRenameStrategy(
     var i: usize = 0;
     while (i < strategy.pattern.len) {
         if (std.mem.startsWith(u8, strategy.pattern[i..], "{name}")) {
-            try result.appendSlice(name_part);
+            try result.appendSlice(allocator, name_part);
             i += 6;
         } else if (std.mem.startsWith(u8, strategy.pattern[i..], "{package}")) {
-            try result.appendSlice(package_name);
+            try result.appendSlice(allocator, package_name);
             i += 9;
         } else if (std.mem.startsWith(u8, strategy.pattern[i..], "{ext}")) {
-            try result.appendSlice(ext_part);
+            try result.appendSlice(allocator, ext_part);
             i += 5;
         } else {
-            try result.append(strategy.pattern[i]);
+            try result.append(allocator, strategy.pattern[i]);
             i += 1;
         }
     }
 
     // Combine with directory
     if (dirname.len > 0) {
-        var full_path = .empty;
-        try full_path.appendSlice(dirname);
-        try full_path.append('/');
-        try full_path.appendSlice(result.items);
-        return full_path.toOwnedSlice();
+        var full_path: std.ArrayList(u8) = .empty;
+        try full_path.appendSlice(allocator, dirname);
+        try full_path.append(allocator, '/');
+        try full_path.appendSlice(allocator, result.items);
+        return full_path.toOwnedSlice(allocator);
     }
 
-    return result.toOwnedSlice();
+    return result.toOwnedSlice(allocator);
 }
 
 // Tests
 test "ConflictConfig.findRule" {
-    const _ = std.testing.allocator;
-
-    var config = ConflictConfig.empty;
+    var config = ConflictConfig.init(std.testing.allocator);
     defer config.deinit();
 
     try config.addRule(.{

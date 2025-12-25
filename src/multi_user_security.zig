@@ -564,8 +564,7 @@ pub const SharedGroup = struct {
 
 // Tests
 test "AccessControl.checkStoreAccess" {
-    const _ = std.testing.allocator;
-    var ac = AccessControl.empty;
+    var ac = AccessControl.init(std.testing.allocator);
 
     var root_user = User{
         .uid = 0,

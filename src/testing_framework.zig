@@ -757,8 +757,7 @@ pub const TestFixture = struct {
 
 // Built-in tests
 test "MockZfs.create" {
-    const _allocator = std.testing.allocator;
-    var mock = MockZfs.empty;
+    var mock = MockZfs.init(std.testing.allocator);
     defer mock.deinit();
 
     try mock.create("pool/test");
@@ -766,8 +765,7 @@ test "MockZfs.create" {
 }
 
 test "MockZfs.destroy" {
-    const _allocator = std.testing.allocator;
-    var mock = MockZfs.empty;
+    var mock = MockZfs.init(std.testing.allocator);
     defer mock.deinit();
 
     try mock.create("pool/test");
@@ -776,8 +774,7 @@ test "MockZfs.destroy" {
 }
 
 test "MockZfs.failure_injection" {
-    const _allocator = std.testing.allocator;
-    var mock = MockZfs.empty;
+    var mock = MockZfs.init(std.testing.allocator);
     defer mock.deinit();
 
     mock.injectFailure(.create, error.OutOfMemory);

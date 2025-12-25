@@ -402,12 +402,12 @@ pub fn getClosureStats(closure: *const Closure) ClosureStats {
 
 /// Format closure for display
 pub fn formatClosure(
-    _allocator: std.mem.Allocator,
+    allocator: std.mem.Allocator,
     closure: *const Closure,
     options: FormatOptions,
 ) ![]const u8 {
-    var output = .empty;
-    defer output.deinit(_allocator);
+    var output: std.ArrayList(u8) = .empty;
+    defer output.deinit(allocator);
 
     const writer = output.writer();
 
@@ -446,7 +446,7 @@ pub fn formatClosure(
         }
     }
 
-    return try output.toOwnedSlice(_allocator);
+    return try output.toOwnedSlice(allocator);
 }
 
 fn formatTreeNode(

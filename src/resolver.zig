@@ -272,10 +272,10 @@ pub const ResourceStats = struct {
         }
     };
 
-    pub fn init(_allocator: std.mem.Allocator) ResourceStats {
+    pub fn init(allocator: std.mem.Allocator) ResourceStats {
         return .{
             .start_time_ms = std.time.milliTimestamp(),
-            .candidates_per_package = std.StringHashMap(u32).init(_allocator),
+            .candidates_per_package = std.StringHashMap(u32).init(allocator),
         };
     }
 
@@ -1718,9 +1718,9 @@ test "Resolver.version_comparison" {
 }
 
 test "VirtualPackageIndex.basic_operations" {
-    const _allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
-    var index = VirtualPackageIndex.init(_allocator);
+    var index = VirtualPackageIndex.init(allocator);
     defer index.deinit();
 
     // Add providers for virtual packages

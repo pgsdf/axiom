@@ -746,9 +746,9 @@ pub fn createProvenance(
 }
 
 /// Serialize provenance to YAML format
-pub fn serializeProvenance(_allocator: Allocator, provenance: *const Provenance) ![]u8 {
+pub fn serializeProvenance(allocator: Allocator, provenance: *const Provenance) ![]u8 {
     var buffer: std.ArrayList(u8) = .empty;
-    const writer = buffer.writer(_allocator);
+    const writer = buffer.writer();
 
     try writer.print("format_version: \"{s}\"\n\n", .{provenance.format_version});
 
@@ -816,8 +816,7 @@ test "Provenance.computeHash" {
 }
 
 test "ProvenanceVerifier.init" {
-    const _ = std.testing.allocator;
-    var verifier = ProvenanceVerifier.empty;
+    var verifier = ProvenanceVerifier.init(std.testing.allocator);
     defer verifier.deinit();
 
     try std.testing.expect(verifier.policy.require_provenance);

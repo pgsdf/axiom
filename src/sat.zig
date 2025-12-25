@@ -98,12 +98,12 @@ pub const Assignment = struct {
     trail: std.ArrayList(u32),
     current_level: u32,
 
-    pub fn init(_allocator: std.mem.Allocator) Assignment {
+    pub fn init(allocator: std.mem.Allocator) Assignment {
         return .{
-            .allocator = _allocator,
-            .values = std.AutoHashMap(u32, bool).init(_allocator),
-            .decision_levels = std.AutoHashMap(u32, u32).init(_allocator),
-            .antecedents = std.AutoHashMap(u32, ?*Clause).init(_allocator),
+            .allocator = allocator,
+            .values = std.AutoHashMap(u32, bool).init(allocator),
+            .decision_levels = std.AutoHashMap(u32, u32).init(allocator),
+            .antecedents = std.AutoHashMap(u32, ?*Clause).init(allocator),
             .trail: std.ArrayList(u32) = .empty,
             .current_level = 0,
         };
@@ -607,9 +607,9 @@ test "Solver basic satisfiability" {
 }
 
 test "Solver unsatisfiable" {
-    const _allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
 
-    var solver = Solver.init(_allocator);
+    var solver = Solver.init(allocator);
     defer solver.deinit();
 
     const a = try solver.newVariable();

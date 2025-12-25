@@ -120,11 +120,11 @@ pub const BundleManifest = struct {
     /// Provenance information
     provenance: ?Provenance = null,
 
-    pub fn serialize(self: BundleManifest, _allocator: std.mem.Allocator) ![]const u8 {
+    pub fn serialize(self: BundleManifest, allocator: std.mem.Allocator) ![]const u8 {
         var output: std.ArrayList(u8) = .empty;
-        defer output.deinit(_allocator);
+        defer output.deinit(allocator);
 
-        const writer = output.writer(_allocator);
+        const writer = output.writer();
 
         try writer.print("format_version: {d}\n", .{self.format_version});
         try writer.print("name: {s}\n", .{self.name});

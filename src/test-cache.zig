@@ -4,15 +4,15 @@ const cache = @import("cache.zig");
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
-    const _allocator = gpa.allocator();
+    const allocator = gpa.allocator();
 
     std.debug.print("Cache Module Tests\n", .{});
     std.debug.print("==================\n\n", .{});
 
     // Test CacheConfig initialization
     std.debug.print("1. Testing CacheConfig initialization...\n", .{});
-    var config = cache.CacheConfig.init(_allocator);
-    defer config.deinit(_allocator);
+    var config = cache.CacheConfig.init(allocator);
+    defer config.deinit(allocator);
     std.debug.print("   ✓ CacheConfig created\n", .{});
     std.debug.print("   Local cache path: {s}\n", .{config.local.path});
     std.debug.print("   Max size: {d} bytes\n", .{config.local.max_size_bytes});
