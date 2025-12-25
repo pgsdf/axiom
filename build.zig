@@ -7,9 +7,11 @@ pub fn build(b: *std.Build) void {
     // Main executable (CLI)
     const exe = b.addExecutable(.{
         .name = "axiom",
-        .root_source_file = b.path("src/axiom-cli.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/axiom-cli.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     // Add src/ to include path for stub headers
@@ -26,18 +28,22 @@ pub fn build(b: *std.Build) void {
     // Manifest parser test executable
     const test_manifest = b.addExecutable(.{
         .name = "test-manifest",
-        .root_source_file = b.path("src/test-manifest.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/test-manifest.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     b.installArtifact(test_manifest);
 
     // Package store test executable
     const test_store = b.addExecutable(.{
         .name = "test-store",
-        .root_source_file = b.path("src/test-store.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/test-store.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     test_store.addIncludePath(b.path("src"));
     test_store.linkLibC();
@@ -49,9 +55,11 @@ pub fn build(b: *std.Build) void {
     // Profile management test executable
     const test_profile = b.addExecutable(.{
         .name = "test-profile",
-        .root_source_file = b.path("src/test-profile.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/test-profile.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     test_profile.addIncludePath(b.path("src"));
     test_profile.linkLibC();
@@ -63,9 +71,11 @@ pub fn build(b: *std.Build) void {
     // Dependency resolver test executable
     const test_resolver = b.addExecutable(.{
         .name = "test-resolver",
-        .root_source_file = b.path("src/test-resolver.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/test-resolver.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     test_resolver.addIncludePath(b.path("src"));
     test_resolver.linkLibC();
@@ -77,9 +87,11 @@ pub fn build(b: *std.Build) void {
     // Realization engine test executable
     const test_realization = b.addExecutable(.{
         .name = "test-realization",
-        .root_source_file = b.path("src/test-realization.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/test-realization.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     test_realization.addIncludePath(b.path("src"));
     test_realization.linkLibC();
@@ -91,9 +103,11 @@ pub fn build(b: *std.Build) void {
     // ZFS integration test executable (original main.zig)
     const zfs_test = b.addExecutable(.{
         .name = "zfs-test",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     zfs_test.addIncludePath(b.path("src"));
     zfs_test.linkLibC();
@@ -105,9 +119,11 @@ pub fn build(b: *std.Build) void {
     // Garbage collector test executable
     const test_gc = b.addExecutable(.{
         .name = "test-gc",
-        .root_source_file = b.path("src/test-gc.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/test-gc.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     test_gc.addIncludePath(b.path("src"));
     test_gc.linkLibC();
@@ -119,9 +135,11 @@ pub fn build(b: *std.Build) void {
     // Import test executable
     const test_import = b.addExecutable(.{
         .name = "test-import",
-        .root_source_file = b.path("src/test-import.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/test-import.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     test_import.addIncludePath(b.path("src"));
     test_import.linkLibC();
@@ -133,9 +151,11 @@ pub fn build(b: *std.Build) void {
     // Signature test executable
     const test_signature = b.addExecutable(.{
         .name = "test-signature",
-        .root_source_file = b.path("src/test-signature.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/test-signature.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     test_signature.addIncludePath(b.path("src"));
     test_signature.linkLibC();
@@ -144,9 +164,11 @@ pub fn build(b: *std.Build) void {
     // Cache test executable
     const test_cache = b.addExecutable(.{
         .name = "test-cache",
-        .root_source_file = b.path("src/test-cache.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/test-cache.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     test_cache.addIncludePath(b.path("src"));
     test_cache.linkLibC();
@@ -169,9 +191,11 @@ pub fn build(b: *std.Build) void {
 
     // ZFS module unit tests
     const zfs_tests = b.addTest(.{
-        .root_source_file = b.path("src/zfs.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/zfs.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     zfs_tests.addIncludePath(b.path("src"));
     zfs_tests.linkLibC();
@@ -181,23 +205,29 @@ pub fn build(b: *std.Build) void {
 
     // Types module unit tests (version constraints, etc.)
     const types_tests = b.addTest(.{
-        .root_source_file = b.path("src/types.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/types.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     // Manifest module unit tests
     const manifest_tests = b.addTest(.{
-        .root_source_file = b.path("src/manifest.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/manifest.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     // Resolver module unit tests
     const resolver_tests = b.addTest(.{
-        .root_source_file = b.path("src/resolver.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/resolver.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     resolver_tests.addIncludePath(b.path("src"));
     resolver_tests.linkLibC();
@@ -207,9 +237,11 @@ pub fn build(b: *std.Build) void {
 
     // Signature module unit tests (no ZFS needed)
     const signature_tests = b.addTest(.{
-        .root_source_file = b.path("src/signature.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/signature.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     signature_tests.linkLibC();
 

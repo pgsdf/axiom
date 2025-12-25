@@ -33,7 +33,7 @@ zroot/axiom/
 ### Prerequisites
 
 - FreeBSD 14.x or GhostBSD with ZFS
-- Zig 0.13.0 or later
+- Zig 0.15.0 or later
 - FreeBSD ports tree (`portsnap fetch extract` or `git clone`)
 
 ### Option 1: Automated Bootstrap (Recommended)
@@ -390,7 +390,7 @@ The cache server exposes a RESTful API (Protocol v1.0):
 ## Building
 
 Requires:
-- Zig 0.13.0 or later
+- Zig 0.15.0 or later
 - FreeBSD with ZFS or PGSD
 - libzfs development headers
 

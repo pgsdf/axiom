@@ -45,12 +45,8 @@ pub const UrlValidator = struct {
 
         pub fn format(
             self: ValidationResult,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
             writer: anytype,
         ) !void {
-            _ = fmt;
-            _ = options;
             if (self.valid) {
                 try writer.print("URL(scheme={s}, host={s}, port={?}, path={s})", .{
                     @tagName(self.scheme),
