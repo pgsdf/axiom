@@ -46,7 +46,7 @@ Axiom is a ZFS-native package manager designed for the Pacific Grove Software Di
 ### Prerequisites
 
 - FreeBSD or GhostBSD with ZFS
-- Zig 0.13.0 or later
+- Zig 0.15.0 or later
 - Root access for ZFS operations
 
 ### Building from Source

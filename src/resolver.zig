@@ -331,12 +331,8 @@ pub const ResourceStats = struct {
     /// Format stats for display
     pub fn format(
         self: *const ResourceStats,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
-        _ = fmt;
-        _ = options;
         try writer.print(
             "Resolution completed in {d:.2}s\n" ++
                 "  Memory used: {d} MB (peak: {d} MB)\n" ++
