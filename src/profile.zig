@@ -132,8 +132,8 @@ pub const Profile = struct {
         };
 
         var lines = std.mem.splitScalar(u8, yaml_content, '\n');
-        var packages = std.ArrayList(PackageRequest).empty;
-        defer packages.deinit();
+        var packages: std.ArrayList(PackageRequest) = .empty;
+        defer packages.deinit(allocator);
 
         var current_pkg: ?struct {
             name: ?[]const u8 = null,
