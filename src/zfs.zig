@@ -1561,9 +1561,9 @@ pub const ThreadSafeZfs = struct {
     error_lock: std.Thread.Mutex = .{},
 
     /// Initialize the thread-safe ZFS wrapper
-    pub fn init(allocator: std.mem.Allocator) ThreadSafeZfs {
+    pub fn init(_allocator: std.mem.Allocator) ThreadSafeZfs {
         return .{
-            .error_contexts = std.AutoHashMap(std.Thread.Id, ZfsErrorContext).init(allocator),
+            .error_contexts = std.AutoHashMap(std.Thread.Id, ZfsErrorContext).init(_allocator),
         };
     }
 

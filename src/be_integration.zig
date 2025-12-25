@@ -108,7 +108,7 @@ pub const RollbackPolicy = struct {
     grace_period_seconds: u32 = 300,
     health_checks: std.ArrayList(HealthCheck),
 
-    pub fn init(allocator: Allocator) RollbackPolicy {
+    pub fn init(_allocator: Allocator) RollbackPolicy {
         return .{
             .health_checks = .empty,
         };

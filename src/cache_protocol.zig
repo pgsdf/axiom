@@ -35,40 +35,40 @@ pub const CacheInfo = struct {
     public_key: ?[]const u8,
     features: []const []const u8,
 
-    pub fn toJson(self: *const CacheInfo, allocator: Allocator) ![]const u8 {
+    pub fn toJson(self: *const CacheInfo, _allocator: Allocator) ![]const u8 {
         var buffer: std.ArrayList(u8) = .empty;
-        errdefer buffer.deinit(allocator);
+        errdefer buffer.deinit(_allocator);
 
         const writer = buffer.writer();
 
-        try buffer.appendSlice(allocator, "{\"name\":\"");
+        try buffer.appendSlice(_allocator, "{\"name\":\"");
         try validation.writeJsonEscaped(writer, self.name);
-        try buffer.appendSlice(allocator, "\",\"version\":\"");
+        try buffer.appendSlice(_allocator, "\",\"version\":\"");
         try validation.writeJsonEscaped(writer, self.version);
-        try buffer.appendSlice(allocator, "\",\"protocol_version\":\"");
+        try buffer.appendSlice(_allocator, "\",\"protocol_version\":\"");
         try validation.writeJsonEscaped(writer, self.protocol_version);
-        try buffer.appendSlice(allocator, "\",");
+        try buffer.appendSlice(_allocator, "\",");
         try std.fmt.format(writer, "\"package_count\":{d},", .{self.package_count});
         try std.fmt.format(writer, "\"total_size\":{d},", .{self.total_size});
 
         if (self.public_key) |key| {
-            try buffer.appendSlice(allocator, "\"public_key\":\"");
+            try buffer.appendSlice(_allocator, "\"public_key\":\"");
             try validation.writeJsonEscaped(writer, key);
-            try buffer.appendSlice(allocator, "\",");
+            try buffer.appendSlice(_allocator, "\",");
         } else {
-            try buffer.appendSlice(allocator, "\"public_key\":null,");
+            try buffer.appendSlice(_allocator, "\"public_key\":null,");
         }
 
-        try buffer.appendSlice(allocator, "\"features\":[");
+        try buffer.appendSlice(_allocator, "\"features\":[");
         for (self.features, 0..) |feature, i| {
-            if (i > 0) try buffer.append(allocator, ',');
-            try buffer.append(allocator, '"');
+            if (i > 0) try buffer.append(_allocator, ',');
+            try buffer.append(_allocator, '"');
             try validation.writeJsonEscaped(writer, feature);
-            try buffer.append(allocator, '"');
+            try buffer.append(_allocator, '"');
         }
-        try buffer.appendSlice(allocator, "]}");
+        try buffer.appendSlice(_allocator, "]}");
 
-        return buffer.toOwnedSlice(allocator);
+        return buffer.toOwnedSlice(_allocator);
     }
 };
 
@@ -124,50 +124,50 @@ pub const PackageMeta = struct {
         allocator.free(self.signatures);
     }
 
-    pub fn toJson(self: *const PackageMeta, allocator: Allocator) ![]const u8 {
+    pub fn toJson(self: *const PackageMeta, _allocator: Allocator) ![]const u8 {
         var buffer: std.ArrayList(u8) = .empty;
-        errdefer buffer.deinit(allocator);
+        errdefer buffer.deinit(_allocator);
 
         const writer = buffer.writer();
 
-        try buffer.appendSlice(allocator, "{\"name\":\"");
+        try buffer.appendSlice(_allocator, "{\"name\":\"");
         try validation.writeJsonEscaped(writer, self.name);
-        try buffer.appendSlice(allocator, "\",\"version\":\"");
+        try buffer.appendSlice(_allocator, "\",\"version\":\"");
         try validation.writeJsonEscaped(writer, self.version);
-        try buffer.appendSlice(allocator, "\",\"hash\":\"");
+        try buffer.appendSlice(_allocator, "\",\"hash\":\"");
         try validation.writeJsonEscaped(writer, self.hash);
-        try buffer.appendSlice(allocator, "\",");
+        try buffer.appendSlice(_allocator, "\",");
         try std.fmt.format(writer, "\"size\":{d},", .{self.size});
         try std.fmt.format(writer, "\"compressed_size\":{d},", .{self.compressed_size});
         try std.fmt.format(writer, "\"compression\":\"{s}\",", .{@tagName(self.compression)});
 
-        try buffer.appendSlice(allocator, "\"dependencies\":[");
+        try buffer.appendSlice(_allocator, "\"dependencies\":[");
         for (self.dependencies, 0..) |dep, i| {
-            if (i > 0) try buffer.append(allocator, ',');
-            try buffer.append(allocator, '"');
+            if (i > 0) try buffer.append(_allocator, ',');
+            try buffer.append(_allocator, '"');
             try validation.writeJsonEscaped(writer, dep);
-            try buffer.append(allocator, '"');
+            try buffer.append(_allocator, '"');
         }
-        try buffer.appendSlice(allocator, "],");
+        try buffer.appendSlice(_allocator, "],");
 
         if (self.description) |desc| {
-            try buffer.appendSlice(allocator, "\"description\":\"");
+            try buffer.appendSlice(_allocator, "\"description\":\"");
             try validation.writeJsonEscaped(writer, desc);
-            try buffer.appendSlice(allocator, "\",");
+            try buffer.appendSlice(_allocator, "\",");
         } else {
-            try buffer.appendSlice(allocator, "\"description\":null,");
+            try buffer.appendSlice(_allocator, "\"description\":null,");
         }
 
-        try buffer.appendSlice(allocator, "\"signatures\":[");
+        try buffer.appendSlice(_allocator, "\"signatures\":[");
         for (self.signatures, 0..) |sig, i| {
-            if (i > 0) try buffer.append(allocator, ',');
-            try buffer.append(allocator, '"');
+            if (i > 0) try buffer.append(_allocator, ',');
+            try buffer.append(_allocator, '"');
             try validation.writeJsonEscaped(writer, sig);
-            try buffer.append(allocator, '"');
+            try buffer.append(_allocator, '"');
         }
-        try buffer.appendSlice(allocator, "]}");
+        try buffer.appendSlice(_allocator, "]}");
 
-        return buffer.toOwnedSlice(allocator);
+        return buffer.toOwnedSlice(_allocator);
     }
 };
 

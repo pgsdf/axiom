@@ -117,7 +117,7 @@ pub const SetuidPolicy = struct {
     deny_unknown: bool = true,
     require_signature: bool = true,
 
-    pub fn init(allocator: Allocator) SetuidPolicy {
+    pub fn init(_allocator: Allocator) SetuidPolicy {
         return .{
             .allowed_binaries = .empty,
         };
@@ -145,7 +145,7 @@ pub const SetuidValidationResult = struct {
     valid: bool,
     issues: std.ArrayList([]const u8),
 
-    pub fn init(allocator: Allocator) SetuidValidationResult {
+    pub fn init(_allocator: Allocator) SetuidValidationResult {
         return .{
             .valid = true,
             .issues = .empty,
@@ -564,7 +564,7 @@ pub const SharedGroup = struct {
 
 // Tests
 test "AccessControl.checkStoreAccess" {
-    const allocator = std.testing.allocator;
+    const _ = std.testing.allocator;
     var ac = AccessControl.empty;
 
     var root_user = User{

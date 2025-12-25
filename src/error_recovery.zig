@@ -306,7 +306,7 @@ pub const RecoveryResult = struct {
 
     const Self = @This();
 
-    pub fn init(allocator: Allocator) Self {
+    pub fn init(_allocator: Allocator) Self {
         return .{
             .success = true,
             .actions_taken = 0,
@@ -994,7 +994,7 @@ pub const TransactionLog = struct {
 
 // Tests
 test "RecoveryPlan.isEmpty" {
-    const allocator = std.testing.allocator;
+    const _ = std.testing.allocator;
     var plan = RecoveryPlan.empty;
     defer plan.deinit();
 
@@ -1002,7 +1002,7 @@ test "RecoveryPlan.isEmpty" {
 }
 
 test "VerificationResult.overallStatus" {
-    const allocator = std.testing.allocator;
+    const _ = std.testing.allocator;
     var result = VerificationResult.empty;
     defer result.deinit();
 
