@@ -1563,7 +1563,7 @@ pub const ThreadSafeZfs = struct {
     /// Initialize the thread-safe ZFS wrapper
     pub fn init(allocator: std.mem.Allocator) ThreadSafeZfs {
         return .{
-            .error_contexts = std.AutoHashMap(std.Thread.Id, ZfsErrorContext).empty,
+            .error_contexts = std.AutoHashMap(std.Thread.Id, ZfsErrorContext).init(allocator),
         };
     }
 

@@ -247,8 +247,8 @@ pub const MockZfs = struct {
     pub fn init(allocator: Allocator) Self {
         return .{
             .allocator = allocator,
-            .datasets = std.StringHashMap(MockDataset).empty,
-            .snapshots = std.StringHashMap(MockSnapshot).empty,
+            .datasets = std.StringHashMap(MockDataset).init(allocator),
+            .snapshots = std.StringHashMap(MockSnapshot).init(allocator),
             .failure_injection = null,
         };
     }
@@ -698,7 +698,7 @@ pub const CoverageTracker = struct {
     pub fn init(allocator: Allocator) Self {
         return .{
             .allocator = allocator,
-            .hit_lines = std.AutoHashMap(u64, bool).empty,
+            .hit_lines = std.AutoHashMap(u64, bool).init(allocator),
             .total_lines = 0,
         };
     }

@@ -18,20 +18,20 @@ fn toOwnedSliceOrCleanupStrings(
     allocator: std.mem.Allocator,
     list: *std.ArrayList([]const u8),
 ) ![]const []const u8 {
-    return list.toOwnedSlice() catch |err| {
+    return list.toOwnedSlice(allocator) catch |err| {
         // Free all duped strings in the list
         for (list.items) |item| {
             allocator.free(item);
         }
-        list.deinit();
+        list.deinit(allocator);
         return err;
     };
 }
 
 /// Safely convert ArrayList(u16) to owned slice, cleaning up on failure.
-fn toOwnedSliceOrCleanupU16(list: *std.ArrayList(u16)) ![]const u16 {
-    return list.toOwnedSlice() catch |err| {
-        list.deinit();
+fn toOwnedSliceOrCleanupU16(allocator: std.mem.Allocator, list: *std.ArrayList(u16)) ![]const u16 {
+    return list.toOwnedSlice(allocator) catch |err| {
+        list.deinit(allocator);
         return err;
     };
 }
@@ -196,7 +196,7 @@ pub const ServiceConfig = struct {
         return ServiceConfig{
             .name = name,
             .enable = false,
-            .variables = std.StringHashMap([]const u8).empty,
+            .variables = std.StringHashMap([]const u8).init(allocator),
             .allocator = allocator,
         };
     }
@@ -623,11 +623,11 @@ pub fn parseServiceDeclarations(allocator: std.mem.Allocator, yaml_content: []co
                 // Use safe conversion with proper cleanup on failure
                 svc.dependencies = try toOwnedSliceOrCleanupStrings(allocator, &deps_list);
                 svc.conflicts = try toOwnedSliceOrCleanupStrings(allocator, &conflicts_list);
-                svc.ports = try toOwnedSliceOrCleanupU16(&ports_list);
-                try services.append(svc.*);
-                deps_list = std.ArrayList([]const u8).empty;
-                conflicts_list = std.ArrayList([]const u8).empty;
-                ports_list = std.ArrayList(u16).empty;
+                svc.ports = try toOwnedSliceOrCleanupU16(allocator, &ports_list);
+                try services.append(allocator, svc.*);
+                deps_list = std.ArrayList([]const u8).init(allocator);
+                conflicts_list = std.ArrayList([]const u8).init(allocator);
+                ports_list = std.ArrayList(u16).init(allocator);
             }
 
             var value = std.mem.trim(u8, trimmed[7..], " \t");
@@ -725,11 +725,11 @@ pub fn parseServiceDeclarations(allocator: std.mem.Allocator, yaml_content: []co
         // Use safe conversion with proper cleanup on failure
         svc.dependencies = try toOwnedSliceOrCleanupStrings(allocator, &deps_list);
         svc.conflicts = try toOwnedSliceOrCleanupStrings(allocator, &conflicts_list);
-        svc.ports = try toOwnedSliceOrCleanupU16(&ports_list);
-        try services.append(svc.*);
+        svc.ports = try toOwnedSliceOrCleanupU16(allocator, &ports_list);
+        try services.append(allocator, svc.*);
     }
 
-    return services.toOwnedSlice();
+    return services.toOwnedSlice(allocator);
 }
 
 fn getIndent(line: []const u8) usize {

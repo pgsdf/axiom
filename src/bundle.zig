@@ -1006,7 +1006,7 @@ pub const SecureBundleLauncher = struct {
             .trust_store_path = config.trust_store_path,
             .require_signature = config.require_signature,
             .allow_untrusted = config.allow_untrusted,
-            .verification_cache = std.StringHashMap(BundleVerificationResult).empty,
+            .verification_cache = std.StringHashMap(BundleVerificationResult).init(allocator),
         };
     }
 
