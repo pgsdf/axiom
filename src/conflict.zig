@@ -359,7 +359,7 @@ fn matchesPattern(path: []const u8, pattern: []const u8) bool {
 
 /// Apply a rename strategy to generate a new filename
 pub fn applyRenameStrategy(
-    allocator: std.mem.Allocator,
+    _: std.mem.Allocator,
     path: []const u8,
     package_name: []const u8,
     strategy: RenameStrategy,
@@ -410,7 +410,7 @@ pub fn applyRenameStrategy(
 
 // Tests
 test "ConflictConfig.findRule" {
-    const allocator = std.testing.allocator;
+    const _ = std.testing.allocator;
 
     var config = ConflictConfig.empty;
     defer config.deinit();

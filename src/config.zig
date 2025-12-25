@@ -319,7 +319,7 @@ pub fn resetGlobalConfig() void {
 // =============================================================================
 
 test "Config.init uses defaults" {
-    const allocator = std.testing.allocator;
+    const _ = std.testing.allocator;
     var config = try Config.empty;
     defer config.deinit();
 

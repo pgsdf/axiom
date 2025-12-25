@@ -794,7 +794,7 @@ pub const SystemUpgradeManager = struct {
 
 // Tests
 test "HealthStatus.init" {
-    const allocator = std.testing.allocator;
+    const _ = std.testing.allocator;
     var status = HealthStatus.empty;
     defer status.deinit();
 

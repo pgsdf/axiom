@@ -310,7 +310,7 @@ pub const DependencyExplanation = struct {
 
     /// Format explanation for display
     pub fn format(self: *DependencyExplanation, writer: anytype) !void {
-        try writer.print("Package {s} {} is required because:\n", .{
+        try writer.print("Package {s} {f} is required because:\n", .{
             self.target.name,
             self.target.version,
         });
@@ -320,22 +320,22 @@ pub const DependencyExplanation = struct {
             for (path.items, 0..) |step, j| {
                 const indent = "    " ** (j + 1);
                 switch (step.reason) {
-                    .direct => try writer.print("{s}{s} {} (directly requested)\n", .{
+                    .direct => try writer.print("{s}{s} {f} (directly requested)\n", .{
                         indent,
                         step.package.name,
                         step.package.version,
                     }),
-                    .dependency => try writer.print("{s}{s} {} (dependency of previous)\n", .{
+                    .dependency => try writer.print("{s}{s} {f} (dependency of previous)\n", .{
                         indent,
                         step.package.name,
                         step.package.version,
                     }),
-                    .virtual => try writer.print("{s}{s} {} (provides virtual)\n", .{
+                    .virtual => try writer.print("{s}{s} {f} (provides virtual)\n", .{
                         indent,
                         step.package.name,
                         step.package.version,
                     }),
-                    .feature => try writer.print("{s}{s} {} (required by feature)\n", .{
+                    .feature => try writer.print("{s}{s} {f} (required by feature)\n", .{
                         indent,
                         step.package.name,
                         step.package.version,
@@ -553,7 +553,7 @@ test "PreferenceHandler.matchesPattern" {
 }
 
 test "VirtualProviderIndex" {
-    const allocator = std.testing.allocator;
+    const _allocator = std.testing.allocator;
     var index = VirtualProviderIndex.empty;
     defer index.deinit();
 
@@ -576,7 +576,7 @@ test "VirtualProviderIndex" {
 }
 
 test "FeatureResolver.basic" {
-    const allocator = std.testing.allocator;
+    const _allocator = std.testing.allocator;
     var resolver = FeatureResolver.empty;
     defer resolver.deinit();
 

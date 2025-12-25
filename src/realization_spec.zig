@@ -535,7 +535,7 @@ pub const EnvironmentMetadata = struct {
     abi_verified: bool = false,
 
     /// Serialize to YAML format
-    pub fn toYaml(self: *const EnvironmentMetadata, allocator: Allocator) ![]u8 {
+    pub fn toYaml(self: *const EnvironmentMetadata, _: Allocator) ![]u8 {
         var buffer = std.ArrayList(u8).empty;
         const writer = buffer.writer();
 

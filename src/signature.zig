@@ -401,9 +401,9 @@ pub const Signature = struct {
     }
 
     /// Serialize signature to YAML
-    pub fn toYaml(self: Signature, allocator: std.mem.Allocator) ![]u8 {
+    pub fn toYaml(self: Signature, _: std.mem.Allocator) ![]u8 {
         var result = std.ArrayList(u8).empty;
-        defer result.deinit(allocator);
+        defer result.deinit();
         const writer = result.writer();
 
         try writer.writeAll("# Axiom Package Signature\n");
@@ -643,16 +643,16 @@ pub const TrustStore = struct {
     }
 
     /// List all keys
-    pub fn listKeys(self: *TrustStore, allocator: std.mem.Allocator) ![]PublicKey {
+    pub fn listKeys(self: *TrustStore, _: std.mem.Allocator) ![]PublicKey {
         var list = std.ArrayList(PublicKey).empty;
-        defer list.deinit(allocator);
+        defer list.deinit();
 
         var iter = self.keys.valueIterator();
         while (iter.next()) |key| {
-            try list.append(allocator, key.*);
+            try list.append(key.*);
         }
 
-        return list.toOwnedSlice(allocator);
+        return list.toOwnedSlice();
     }
 
     /// Save trust store to disk
@@ -1466,9 +1466,9 @@ pub const MultiSignatureConfig = struct {
     }
 
     /// Serialize config to YAML
-    pub fn toYaml(self: MultiSignatureConfig, allocator: std.mem.Allocator) ![]u8 {
+    pub fn toYaml(self: MultiSignatureConfig, _: std.mem.Allocator) ![]u8 {
         var result = std.ArrayList(u8).empty;
-        defer result.deinit(allocator);
+        defer result.deinit();
         const writer = result.writer();
 
         try writer.writeAll("# Multi-Party Signing Policy\n");
@@ -1541,9 +1541,9 @@ pub const MultiSignature = struct {
     }
 
     /// Serialize to YAML format
-    pub fn toYaml(self: MultiSignature, allocator: std.mem.Allocator) ![]u8 {
+    pub fn toYaml(self: MultiSignature, _: std.mem.Allocator) ![]u8 {
         var result = std.ArrayList(u8).empty;
-        defer result.deinit(allocator);
+        defer result.deinit();
         const writer = result.writer();
 
         try writer.writeAll("# Axiom Multi-Party Signature\n");
@@ -1685,13 +1685,13 @@ pub const MultiSignature = struct {
     }
 
     /// Get list of signers
-    pub fn getSignerKeyIds(self: MultiSignature, allocator: std.mem.Allocator) ![][]const u8 {
+    pub fn getSignerKeyIds(self: MultiSignature, _: std.mem.Allocator) ![][]const u8 {
         var result = std.ArrayList([]const u8).empty;
-        defer result.deinit(allocator);
+        defer result.deinit();
         for (self.signatures) |sig| {
-            try result.append(allocator, sig.key_id);
+            try result.append(sig.key_id);
         }
-        return result.toOwnedSlice(allocator);
+        return result.toOwnedSlice();
     }
 };
 

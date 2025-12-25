@@ -219,9 +219,9 @@ pub const ServiceConfig = struct {
     }
 
     /// Generate rc.conf.d file content
-    pub fn toRcConf(self: ServiceConfig, allocator: std.mem.Allocator) ![]u8 {
+    pub fn toRcConf(self: ServiceConfig, _: std.mem.Allocator) ![]u8 {
         var result = std.ArrayList(u8).empty;
-        defer result.deinit(allocator);
+        defer result.deinit();
         const writer = result.writer();
 
         try writer.print("# Axiom-managed service configuration for {s}\n", .{self.name});

@@ -223,15 +223,15 @@ pub const Profile = struct {
             try writer.print("  - name: {s}\n", .{pkg.name});
             switch (pkg.constraint) {
                 .exact => |v| {
-                    try writer.print("    version: \"{}\"\n", .{v});
+                    try writer.print("    version: \"{f}\"\n", .{v});
                     try writer.writeAll("    constraint: exact\n");
                 },
                 .tilde => |v| {
-                    try writer.print("    version: \"~{}\"\n", .{v});
+                    try writer.print("    version: \"~{f}\"\n", .{v});
                     try writer.writeAll("    constraint: tilde\n");
                 },
                 .caret => |v| {
-                    try writer.print("    version: \"^{}\"\n", .{v});
+                    try writer.print("    version: \"^{f}\"\n", .{v});
                     try writer.writeAll("    constraint: caret\n");
                 },
                 .any => {
@@ -313,7 +313,7 @@ pub const ProfileLock = struct {
         };
 
         var lines = std.mem.splitScalar(u8, yaml_content, '\n');
-        var resolved = std.ArrayList(ResolvedPackage).empty;
+        var resolved: std.ArrayList(ResolvedPackage) = .empty;
         defer resolved.deinit(allocator);
 
         var current_pkg: ?struct {
@@ -414,7 +414,7 @@ pub const ProfileLock = struct {
 
         for (self.resolved) |pkg| {
             try writer.print("  - name: {s}\n", .{pkg.id.name});
-            try writer.print("    version: \"{}\"\n", .{pkg.id.version});
+            try writer.print("    version: \"{f}\"\n", .{pkg.id.version});
             try writer.print("    revision: {d}\n", .{pkg.id.revision});
             try writer.print("    build_id: {s}\n", .{pkg.id.build_id});
             try writer.print("    requested: {}\n", .{pkg.requested});
@@ -562,7 +562,7 @@ pub const ProfileManager = struct {
         // Build content in memory first
         var content: std.ArrayList(u8) = .empty;
         defer content.deinit(self.allocator);
-        try profile.write(content.writer());
+        try profile.write(content.writer(self.allocator));
 
         // Atomically write to file
         try self.atomicWriteFile(profile_path, content.items);
@@ -618,7 +618,7 @@ pub const ProfileManager = struct {
         // Build content in memory first
         var content: std.ArrayList(u8) = .empty;
         defer content.deinit(self.allocator);
-        try profile.write(content.writer());
+        try profile.write(content.writer(self.allocator));
 
         // Atomically write to file
         try self.atomicWriteFile(profile_path, content.items);
@@ -698,7 +698,7 @@ pub const ProfileManager = struct {
         // Build content in memory first
         var content: std.ArrayList(u8) = .empty;
         defer content.deinit(self.allocator);
-        try lock.write(content.writer());
+        try lock.write(content.writer(self.allocator));
 
         // Atomically write to file
         try self.atomicWriteFile(lock_path, content.items);

@@ -104,7 +104,7 @@ pub const Assignment = struct {
             .values = std.AutoHashMap(u32, bool).init(allocator),
             .decision_levels = std.AutoHashMap(u32, u32).init(allocator),
             .antecedents = std.AutoHashMap(u32, ?*Clause).init(allocator),
-            .trail = std.ArrayList(u32).empty,
+            .trail: std.ArrayList(u32) = .empty,
             .current_level = 0,
         };
     }
@@ -176,7 +176,7 @@ pub const Solver = struct {
     pub fn init(allocator: std.mem.Allocator) Solver {
         return .{
             .allocator = allocator,
-            .clauses = std.ArrayList(Clause).empty,
+            .clauses: std.ArrayList(Clause) = .empty,
             .num_variables = 0,
             .assignment = Assignment.init(allocator),
             .variable_activity = std.AutoHashMap(u32, f64).init(allocator),
@@ -498,7 +498,7 @@ pub const Optimizer = struct {
         return .{
             .solver = solver,
             .allocator = allocator,
-            .soft_clauses = std.ArrayList(SoftClause).empty,
+            .soft_clauses: std.ArrayList(SoftClause) = .empty,
         };
     }
 

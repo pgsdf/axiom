@@ -44,7 +44,7 @@ pub const ConflictExplanation = struct {
     pub fn format(self: ConflictExplanation, writer: anytype) !void {
         switch (self.reason) {
             .version_conflict => {
-                try writer.print("Version conflict: {s} {} conflicts with {s} {}", .{
+                try writer.print("Version conflict: {s} {f} conflicts with {s} {f}", .{
                     self.package_a,
                     self.version_a,
                     self.package_b,
@@ -372,7 +372,7 @@ pub fn buildResolverFromStore(
     allocator: std.mem.Allocator,
     pkg_store: *PackageStore,
 ) !SATResolver {
-    var resolver = SATResolver.empty;
+    var resolver = SATResolver.init(allocator);
     errdefer resolver.deinit();
 
     // Get all packages from store
@@ -424,7 +424,7 @@ pub fn buildResolverFromStore(
 test "SATResolver basic resolution" {
     const allocator = std.testing.allocator;
 
-    var resolver = SATResolver.empty;
+    var resolver = SATResolver.init(allocator);
     defer resolver.deinit();
 
     // Register package A version 1.0.0
@@ -471,9 +471,9 @@ test "SATResolver basic resolution" {
 }
 
 test "SATResolver conflict detection" {
-    const allocator = std.testing.allocator;
+    const _allocator = std.testing.allocator;
 
-    var resolver = SATResolver.empty;
+    var resolver = SATResolver.init(_allocator);
     defer resolver.deinit();
 
     // Register package A that conflicts with B

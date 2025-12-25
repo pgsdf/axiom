@@ -802,7 +802,7 @@ pub const CacheIndexManager = struct {
 
 // Tests
 test "CacheIndex.init" {
-    const allocator = std.testing.allocator;
+    const _ = std.testing.allocator;
     var index = CacheIndex.empty;
     defer index.deinit();
 
@@ -810,7 +810,7 @@ test "CacheIndex.init" {
 }
 
 test "ConflictResolver.resolve" {
-    const allocator = std.testing.allocator;
+    const _ = std.testing.allocator;
     var resolver = ConflictResolver.empty;
 
     // Test no conflict when one is null
@@ -819,7 +819,7 @@ test "ConflictResolver.resolve" {
 }
 
 test "EvictionPlan.totalBytesToFree" {
-    const allocator = std.testing.allocator;
+    const _ = std.testing.allocator;
     var plan = EvictionPlan.empty;
     defer plan.deinit();
 

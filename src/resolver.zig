@@ -478,7 +478,7 @@ pub const VirtualPackageIndex = struct {
     pub fn init(allocator: std.mem.Allocator) VirtualPackageIndex {
         return VirtualPackageIndex{
             .allocator = allocator,
-            .providers = std.StringHashMap(std.ArrayList([]const u8)).empty,
+            .providers = std.StringHashMap(std.ArrayList([]const u8)).init(allocator),
         };
     }
 
@@ -543,11 +543,11 @@ pub const ResolutionContext = struct {
         return ResolutionContext{
             .allocator = allocator,
             .store = store_ptr,
-            .constraints = std.StringHashMap(std.ArrayList(VersionConstraint)).empty,
+            .constraints = std.StringHashMap(std.ArrayList(VersionConstraint)).init(allocator),
             .resolved = std.StringHashMap(PackageId).init(allocator),
             .requested = std.StringHashMap(bool).init(allocator),
             .resolving = std.StringHashMap(bool).init(allocator),
-            .virtual_index = VirtualPackageIndex.empty,
+            .virtual_index = VirtualPackageIndex.init(allocator),
             .conflicts = std.ArrayList(ConflictInfo).empty,
             .resolved_candidates = std.StringHashMap(Candidate).init(allocator),
         };
@@ -1718,9 +1718,9 @@ test "Resolver.version_comparison" {
 }
 
 test "VirtualPackageIndex.basic_operations" {
-    const allocator = std.testing.allocator;
+    const _allocator = std.testing.allocator;
 
-    var index = VirtualPackageIndex.empty;
+    var index = VirtualPackageIndex.init(_allocator);
     defer index.deinit();
 
     // Add providers for virtual packages

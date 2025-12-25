@@ -61,7 +61,7 @@ pub const DatasetPaths = struct {
 
         // Convert version to string for validation
         var version_buf: [64]u8 = undefined;
-        const version_str = std.fmt.bufPrint(&version_buf, "{}", .{pkg.version}) catch {
+        const version_str = std.fmt.bufPrint(&version_buf, "{f}", .{pkg.version}) catch {
             return StoreError.InvalidPathComponent;
         };
 
@@ -682,11 +682,11 @@ pub const PackageStore = struct {
         // Build content in memory first
         var content: std.ArrayList(u8) = .empty;
         defer content.deinit(self.allocator);
-        const writer = content.writer();
+        const writer = content.writer(self.allocator);
 
         // Write manifest in YAML format
         try writer.print("name: {s}\n", .{mani.name});
-        try writer.print("version: {}\n", .{mani.version});
+        try writer.print("version: {f}\n", .{mani.version});
         try writer.print("revision: {d}\n", .{mani.revision});
 
         if (mani.description) |desc| {
@@ -733,7 +733,7 @@ pub const PackageStore = struct {
         // Build content in memory first
         var content: std.ArrayList(u8) = .empty;
         defer content.deinit(self.allocator);
-        const writer = content.writer();
+        const writer = content.writer(self.allocator);
 
         try writer.writeAll("dependencies:\n");
         for (deps.dependencies) |dep| {
@@ -741,15 +741,15 @@ pub const PackageStore = struct {
 
             switch (dep.constraint) {
                 .exact => |v| {
-                    try writer.print("    version: \"{}\"\n", .{v});
+                    try writer.print("    version: \"{f}\"\n", .{v});
                     try writer.writeAll("    constraint: exact\n");
                 },
                 .tilde => |v| {
-                    try writer.print("    version: \"~{}\"\n", .{v});
+                    try writer.print("    version: \"~{f}\"\n", .{v});
                     try writer.writeAll("    constraint: tilde\n");
                 },
                 .caret => |v| {
-                    try writer.print("    version: \"^{}\"\n", .{v});
+                    try writer.print("    version: \"^{f}\"\n", .{v});
                     try writer.writeAll("    constraint: caret\n");
                 },
                 .any => {
@@ -802,7 +802,7 @@ pub const PackageStore = struct {
         // Build content in memory first
         var content: std.ArrayList(u8) = .empty;
         defer content.deinit(self.allocator);
-        const writer = content.writer();
+        const writer = content.writer(self.allocator);
 
         try writer.print("build_time: {d}\n", .{prov.build_time});
         try writer.print("builder: {s}\n", .{prov.builder});

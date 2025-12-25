@@ -291,7 +291,7 @@ pub const UrlValidator = struct {
 // ============================================================================
 
 /// Escape a string for safe inclusion in JSON
-pub fn escapeJsonString(allocator: Allocator, input: []const u8) ![]const u8 {
+pub fn escapeJsonString(_: Allocator, input: []const u8) ![]const u8 {
     var result = std.ArrayList(u8).empty;
     errdefer result.deinit();
 
@@ -669,7 +669,7 @@ pub fn yamlNeedsQuoting(value: []const u8) bool {
 }
 
 /// Escape a string for YAML (double-quoted style)
-pub fn escapeYamlString(allocator: Allocator, input: []const u8) ![]const u8 {
+pub fn escapeYamlString(_: Allocator, input: []const u8) ![]const u8 {
     var result = std.ArrayList(u8).empty;
     errdefer result.deinit();
 

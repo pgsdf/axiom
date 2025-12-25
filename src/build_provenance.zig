@@ -816,7 +816,7 @@ test "Provenance.computeHash" {
 }
 
 test "ProvenanceVerifier.init" {
-    const allocator = std.testing.allocator;
+    const _ = std.testing.allocator;
     var verifier = ProvenanceVerifier.empty;
     defer verifier.deinit();
 

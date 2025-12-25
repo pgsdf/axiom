@@ -757,7 +757,7 @@ pub const TestFixture = struct {
 
 // Built-in tests
 test "MockZfs.create" {
-    const allocator = std.testing.allocator;
+    const _allocator = std.testing.allocator;
     var mock = MockZfs.empty;
     defer mock.deinit();
 
@@ -766,7 +766,7 @@ test "MockZfs.create" {
 }
 
 test "MockZfs.destroy" {
-    const allocator = std.testing.allocator;
+    const _allocator = std.testing.allocator;
     var mock = MockZfs.empty;
     defer mock.deinit();
 
@@ -776,7 +776,7 @@ test "MockZfs.destroy" {
 }
 
 test "MockZfs.failure_injection" {
-    const allocator = std.testing.allocator;
+    const _allocator = std.testing.allocator;
     var mock = MockZfs.empty;
     defer mock.deinit();
 
