@@ -434,7 +434,7 @@ pub const Signature = struct {
             .files = undefined,
         };
 
-        var files = .empty;
+        var files: std.ArrayList(FileHash) = .empty;
         defer files.deinit(allocator);
 
         var current_file_path: ?[]const u8 = null;
@@ -1597,9 +1597,9 @@ pub const MultiSignature = struct {
             .signatures = undefined,
         };
 
-        var files = .empty;
+        var files: std.ArrayList(FileHash) = .empty;
         defer files.deinit(allocator);
-        var signatures = .empty;
+        var signatures: std.ArrayList(SignatureEntry) = .empty;
         defer signatures.deinit(allocator);
 
         var current_file_path: ?[]const u8 = null;

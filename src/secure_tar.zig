@@ -161,9 +161,49 @@ pub const SecureTarExtractor = struct {
 
     /// Extract gzip-compressed tar
     fn extractGzip(self: *SecureTarExtractor, file: std.fs.File) !void {
-        // Use zlib decompressor with gzip_or_zlib format in Zig 0.15
+        // In Zig 0.15, use flate.Decompressor for gzip format
+        // Gzip uses deflate compression with a header/trailer
         var read_buf: [4096]u8 = undefined;
-        var decompress = std.compress.zlib.decompressor(.gzip_or_zlib, file.reader(&read_buf));
+        const reader = file.reader(&read_buf);
+
+        // Skip gzip header (10 bytes minimum)
+        // Magic: 1f 8b, Method: 08 (deflate), Flags, Mtime (4), XFL, OS
+        var header: [10]u8 = undefined;
+        _ = reader.readAll(&header) catch {
+            return ExtractionError.MalformedArchive;
+        };
+
+        // Verify gzip magic
+        if (header[0] != 0x1f or header[1] != 0x8b) {
+            return ExtractionError.MalformedArchive;
+        }
+
+        // Handle optional gzip header fields based on flags
+        const flags = header[3];
+        if (flags & 0x04 != 0) { // FEXTRA
+            var len_buf: [2]u8 = undefined;
+            _ = reader.readAll(&len_buf) catch return ExtractionError.MalformedArchive;
+            const extra_len = std.mem.readInt(u16, &len_buf, .little);
+            reader.skipBytes(extra_len, .{}) catch return ExtractionError.MalformedArchive;
+        }
+        if (flags & 0x08 != 0) { // FNAME - skip null-terminated string
+            while (true) {
+                const b = reader.readByte() catch return ExtractionError.MalformedArchive;
+                if (b == 0) break;
+            }
+        }
+        if (flags & 0x10 != 0) { // FCOMMENT - skip null-terminated string
+            while (true) {
+                const b = reader.readByte() catch return ExtractionError.MalformedArchive;
+                if (b == 0) break;
+            }
+        }
+        if (flags & 0x02 != 0) { // FHCRC
+            reader.skipBytes(2, .{}) catch return ExtractionError.MalformedArchive;
+        }
+
+        // Now decompress the deflate stream
+        var decompress = std.compress.flate.decompressor(.raw, reader);
         try self.extractTar(decompress.reader());
     }
 
