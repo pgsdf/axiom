@@ -337,9 +337,9 @@ pub const KeyPair = struct {
 
     /// Get key ID (first 8 bytes of public key as hex)
     pub fn keyId(self: KeyPair, allocator: std.mem.Allocator) ![]u8 {
-        return std.fmt.allocPrint(allocator, "{s}", .{
-            std.fmt.fmtSliceHexUpper(self.public_key[0..8]),
-        });
+        var hex_buf: [16]u8 = undefined;
+        _ = std.fmt.bufPrint(&hex_buf, "{X:0>16}", .{std.mem.readInt(u64, self.public_key[0..8], .big)}) catch unreachable;
+        return try allocator.dupe(u8, &hex_buf);
     }
 };
 

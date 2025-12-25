@@ -80,13 +80,13 @@ fn runMockTest(allocator: std.mem.Allocator) !void {
     // Simulate package scanning
     std.debug.print("Phase 1: Scanning package store...\n", .{});
     
-    var all_packages = std.ArrayList(types.PackageId).empty;
+    var all_packages: std.ArrayList(types.PackageId) = .empty;
     defer {
         for (all_packages.items) |pkg| {
             allocator.free(pkg.name);
             allocator.free(pkg.build_id);
         }
-        all_packages.deinit();
+        all_packages.deinit(allocator);
     }
 
     // Create mock packages
@@ -100,21 +100,21 @@ fn runMockTest(allocator: std.mem.Allocator) !void {
 
     for (mock_packages) |pkg_info| {
         const pkg = try gc.createMockPackage(allocator, pkg_info.name, pkg_info.version);
-        try all_packages.append(pkg);
+        try all_packages.append(allocator, pkg);
     }
 
     std.debug.print("  Found {d} packages in store\n", .{all_packages.items.len});
 
     // Simulate profile references
     std.debug.print("\nPhase 2: Finding references...\n", .{});
-    
+
     var referenced = std.StringHashMap(bool).init(allocator);
     defer {
         var key_iter = referenced.keyIterator();
         while (key_iter.next()) |key| {
             allocator.free(key.*);
         }
-        referenced.deinit();
+        referenced.deinit(allocator);
     }
 
     // Mock: bash 5.2.0 and git 2.43.0 are referenced
@@ -140,9 +140,9 @@ fn runMockTest(allocator: std.mem.Allocator) !void {
 
     // Identify unreferenced
     std.debug.print("\nPhase 3: Identifying unreferenced packages...\n", .{});
-    
-    var unreferenced = std.ArrayList(types.PackageId).empty;
-    defer unreferenced.deinit();
+
+    var unreferenced: std.ArrayList(types.PackageId) = .empty;
+    defer unreferenced.deinit(allocator);
 
     for (all_packages.items) |pkg| {
         const key = try std.fmt.allocPrint(allocator, "{s}/{}/{d}/{s}", .{
@@ -152,9 +152,9 @@ fn runMockTest(allocator: std.mem.Allocator) !void {
             pkg.build_id,
         });
         defer allocator.free(key);
-        
+
         if (!referenced.contains(key)) {
-            try unreferenced.append(pkg);
+            try unreferenced.append(allocator, pkg);
         }
     }
 
