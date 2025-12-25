@@ -80,7 +80,7 @@ pub const Config = struct {
     pub fn init(allocator: std.mem.Allocator) !Config {
         var config: Config = undefined;
         config.allocator = allocator;
-        config.allocated_strings = std.ArrayList([]const u8).init(allocator);
+        config.allocated_strings = std.ArrayList([]const u8).empty;
 
         // Get base values from environment or use defaults
         const pool = getEnvOrDefault("AXIOM_POOL", DEFAULT_POOL);
@@ -127,7 +127,7 @@ pub const Config = struct {
     ) !Config {
         var config: Config = undefined;
         config.allocator = allocator;
-        config.allocated_strings = std.ArrayList([]const u8).init(allocator);
+        config.allocated_strings = std.ArrayList([]const u8).empty;
 
         config.pool = pool;
         config.mountpoint = mountpoint;
@@ -320,7 +320,7 @@ pub fn resetGlobalConfig() void {
 
 test "Config.init uses defaults" {
     const allocator = std.testing.allocator;
-    var config = try Config.init(allocator);
+    var config = try Config.empty;
     defer config.deinit();
 
     // Check default dataset paths
@@ -353,7 +353,7 @@ test "Config.initWithValues uses custom values" {
 
 test "Config.getPackagePath" {
     const allocator = std.testing.allocator;
-    var config = try Config.init(allocator);
+    var config = try Config.empty;
     defer config.deinit();
 
     const path = try config.getPackagePath(allocator, "bash");

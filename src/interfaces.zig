@@ -204,27 +204,33 @@ pub const Output = struct {
 
 /// Standard output implementation using stdout/stderr
 pub const StdOutput = struct {
-    stdout: std.fs.File.Writer,
-    stderr: std.fs.File.Writer,
+    stdout_file: std.fs.File,
+    stderr_file: std.fs.File,
+    stdout_buf: [4096]u8 = undefined,
+    stderr_buf: [4096]u8 = undefined,
 
     pub fn init() StdOutput {
         return .{
-            .stdout = std.io.getStdOut().writer(),
-            .stderr = std.io.getStdErr().writer(),
+            .stdout_file = std.fs.File.stdout(),
+            .stderr_file = std.fs.File.stderr(),
         };
     }
 
     pub fn writeLine(ctx: *anyopaque, line: []const u8) !void {
         const self: *StdOutput = @ptrCast(@alignCast(ctx));
-        try self.stdout.writeAll(line);
-        try self.stdout.writeAll("\n");
+        var writer = self.stdout_file.writer(&self.stdout_buf);
+        try writer.writeAll(line);
+        try writer.writeAll("\n");
+        try writer.flush();
     }
 
     pub fn writeError(ctx: *anyopaque, msg: []const u8) !void {
         const self: *StdOutput = @ptrCast(@alignCast(ctx));
-        try self.stderr.writeAll("error: ");
-        try self.stderr.writeAll(msg);
-        try self.stderr.writeAll("\n");
+        var writer = self.stderr_file.writer(&self.stderr_buf);
+        try writer.writeAll("error: ");
+        try writer.writeAll(msg);
+        try writer.writeAll("\n");
+        try writer.flush();
     }
 
     pub fn asInterface(self: *StdOutput) Output {
@@ -252,7 +258,7 @@ pub const MockPackageStore = struct {
 
     pub fn init(allocator: std.mem.Allocator) MockPackageStore {
         return .{
-            .packages = std.StringHashMap(PackageStore.PackageInfo).init(allocator),
+            .packages = std.StringHashMap(PackageStore.PackageInfo).empty,
             .store_path = "/mock/store",
         };
     }
@@ -272,7 +278,7 @@ pub const MockPackageStore = struct {
 
     fn listPackages(ctx: *anyopaque, allocator: std.mem.Allocator) anyerror![]PackageId {
         const self: *MockPackageStore = @ptrCast(@alignCast(ctx));
-        var result = std.ArrayList(PackageId).init(allocator);
+        var result = std.ArrayList(PackageId).empty;
         var iter = self.packages.iterator();
         while (iter.next()) |entry| {
             try result.append(entry.value_ptr.id);
@@ -313,8 +319,8 @@ pub const BufferedOutput = struct {
 
     pub fn init(allocator: std.mem.Allocator) BufferedOutput {
         return .{
-            .lines = std.ArrayList([]const u8).init(allocator),
-            .errors = std.ArrayList([]const u8).init(allocator),
+            .lines = std.ArrayList([]const u8).empty,
+            .errors = std.ArrayList([]const u8).empty,
             .allocator = allocator,
         };
     }

@@ -66,7 +66,7 @@ pub const HealthStatus = struct {
     pub fn init(allocator: Allocator) HealthStatus {
         return .{
             .allocator = allocator,
-            .results = std.ArrayList(HealthCheckResult).init(allocator),
+            .results = std.ArrayList(HealthCheckResult).empty,
             .all_passed = true,
             .required_passed = true,
         };
@@ -110,7 +110,7 @@ pub const RollbackPolicy = struct {
 
     pub fn init(allocator: Allocator) RollbackPolicy {
         return .{
-            .health_checks = std.ArrayList(HealthCheck).init(allocator),
+            .health_checks = std.ArrayList(HealthCheck).empty,
         };
     }
 
@@ -211,7 +211,7 @@ pub const ProfileDiff = struct {
     pub fn init(allocator: Allocator, be_a: []const u8, be_b: []const u8) !ProfileDiff {
         return .{
             .allocator = allocator,
-            .entries = std.ArrayList(ProfileDiffEntry).init(allocator),
+            .entries = std.ArrayList(ProfileDiffEntry).empty,
             .be_a = try allocator.dupe(u8, be_a),
             .be_b = try allocator.dupe(u8, be_b),
         };
@@ -492,8 +492,8 @@ pub const BootloaderIntegration = struct {
             .allocator = allocator,
             .zfs_handle = zfs_handle,
             .bootloader_type = .freebsd,
-            .hooks = std.ArrayList(ActivationHook).init(allocator),
-            .rollback_policy = RollbackPolicy.init(allocator),
+            .hooks = std.ArrayList(ActivationHook).empty,
+            .rollback_policy = RollbackPolicy.empty,
         };
     }
 
@@ -795,7 +795,7 @@ pub const SystemUpgradeManager = struct {
 // Tests
 test "HealthStatus.init" {
     const allocator = std.testing.allocator;
-    var status = HealthStatus.init(allocator);
+    var status = HealthStatus.empty;
     defer status.deinit();
 
     try std.testing.expect(status.all_passed);
@@ -813,7 +813,7 @@ test "ProfileDiff.init" {
 
 test "RollbackPolicy.init" {
     const allocator = std.testing.allocator;
-    var policy = RollbackPolicy.init(allocator);
+    var policy = RollbackPolicy.empty;
     defer policy.deinit(allocator);
 
     try std.testing.expect(policy.auto_rollback_enabled);

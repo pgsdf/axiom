@@ -132,7 +132,7 @@ pub const Profile = struct {
         };
 
         var lines = std.mem.splitScalar(u8, yaml_content, '\n');
-        var packages = std.ArrayList(PackageRequest).init(allocator);
+        var packages = std.ArrayList(PackageRequest).empty;
         defer packages.deinit();
 
         var current_pkg: ?struct {
@@ -313,7 +313,7 @@ pub const ProfileLock = struct {
         };
 
         var lines = std.mem.splitScalar(u8, yaml_content, '\n');
-        var resolved = std.ArrayList(ResolvedPackage).init(allocator);
+        var resolved = std.ArrayList(ResolvedPackage).empty;
         defer resolved.deinit();
 
         var current_pkg: ?struct {

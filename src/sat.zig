@@ -99,10 +99,10 @@ pub const Assignment = struct {
 
     pub fn init(allocator: std.mem.Allocator) Assignment {
         return .{
-            .values = std.AutoHashMap(u32, bool).init(allocator),
-            .decision_levels = std.AutoHashMap(u32, u32).init(allocator),
-            .antecedents = std.AutoHashMap(u32, ?*Clause).init(allocator),
-            .trail = std.ArrayList(u32).init(allocator),
+            .values = std.AutoHashMap(u32, bool).empty,
+            .decision_levels = std.AutoHashMap(u32, u32).empty,
+            .antecedents = std.AutoHashMap(u32, ?*Clause).empty,
+            .trail = std.ArrayList(u32).empty,
             .current_level = 0,
         };
     }
@@ -174,10 +174,10 @@ pub const Solver = struct {
     pub fn init(allocator: std.mem.Allocator) Solver {
         return .{
             .allocator = allocator,
-            .clauses = std.ArrayList(Clause).init(allocator),
+            .clauses = std.ArrayList(Clause).empty,
             .num_variables = 0,
-            .assignment = Assignment.init(allocator),
-            .variable_activity = std.AutoHashMap(u32, f64).init(allocator),
+            .assignment = Assignment.empty,
+            .variable_activity = std.AutoHashMap(u32, f64).empty,
             .activity_increment = 1.0,
             .activity_decay = 0.95,
         };
@@ -496,7 +496,7 @@ pub const Optimizer = struct {
         return .{
             .solver = solver,
             .allocator = allocator,
-            .soft_clauses = std.ArrayList(SoftClause).init(allocator),
+            .soft_clauses = std.ArrayList(SoftClause).empty,
         };
     }
 
@@ -577,7 +577,7 @@ pub const Optimizer = struct {
 test "Solver basic satisfiability" {
     const allocator = std.testing.allocator;
 
-    var solver = Solver.init(allocator);
+    var solver = Solver.empty;
     defer solver.deinit();
 
     // Create variables
@@ -607,7 +607,7 @@ test "Solver basic satisfiability" {
 test "Solver unsatisfiable" {
     const allocator = std.testing.allocator;
 
-    var solver = Solver.init(allocator);
+    var solver = Solver.empty;
     defer solver.deinit();
 
     const a = try solver.newVariable();
@@ -631,7 +631,7 @@ test "Solver unsatisfiable" {
 test "Solver exactly one constraint" {
     const allocator = std.testing.allocator;
 
-    var solver = Solver.init(allocator);
+    var solver = Solver.empty;
     defer solver.deinit();
 
     const a = try solver.newVariable();

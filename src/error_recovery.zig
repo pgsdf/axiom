@@ -242,10 +242,10 @@ pub const RecoveryPlan = struct {
     pub fn init(allocator: Allocator) Self {
         return .{
             .allocator = allocator,
-            .interrupted_imports = std.ArrayList(ImportRecovery).init(allocator),
-            .interrupted_realizations = std.ArrayList(RealizationRecovery).init(allocator),
-            .orphaned_datasets = std.ArrayList([]const u8).init(allocator),
-            .corrupted_packages = std.ArrayList(PackageRecovery).init(allocator),
+            .interrupted_imports = std.ArrayList(ImportRecovery).empty,
+            .interrupted_realizations = std.ArrayList(RealizationRecovery).empty,
+            .orphaned_datasets = std.ArrayList([]const u8).empty,
+            .corrupted_packages = std.ArrayList(PackageRecovery).empty,
             .scan_time = std.time.timestamp(),
         };
     }
@@ -312,7 +312,7 @@ pub const RecoveryResult = struct {
             .actions_taken = 0,
             .actions_failed = 0,
             .actions_skipped = 0,
-            .messages = std.ArrayList([]const u8).init(allocator),
+            .messages = std.ArrayList([]const u8).empty,
         };
     }
 
@@ -406,7 +406,7 @@ pub const VerificationResult = struct {
                 .invalid_count = 0,
                 .details = null,
             },
-            .recommendations = std.ArrayList([]const u8).init(allocator),
+            .recommendations = std.ArrayList([]const u8).empty,
         };
     }
 
@@ -995,7 +995,7 @@ pub const TransactionLog = struct {
 // Tests
 test "RecoveryPlan.isEmpty" {
     const allocator = std.testing.allocator;
-    var plan = RecoveryPlan.init(allocator);
+    var plan = RecoveryPlan.empty;
     defer plan.deinit();
 
     try std.testing.expect(plan.isEmpty());
@@ -1003,7 +1003,7 @@ test "RecoveryPlan.isEmpty" {
 
 test "VerificationResult.overallStatus" {
     const allocator = std.testing.allocator;
-    var result = VerificationResult.init(allocator);
+    var result = VerificationResult.empty;
     defer result.deinit();
 
     try std.testing.expectEqual(VerificationStatus.ok, result.overallStatus());

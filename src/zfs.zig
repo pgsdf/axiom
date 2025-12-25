@@ -328,11 +328,11 @@ pub const ZfsHandle = struct {
         }
 
         // Build argument list for direct execve (no shell)
-        var args = std.ArrayList([]const u8).init(allocator);
+        var args = std.ArrayList([]const u8).empty;
         defer args.deinit();
 
         // Track allocated strings that need to be freed after execution
-        var allocated_args = std.ArrayList([]const u8).init(allocator);
+        var allocated_args = std.ArrayList([]const u8).empty;
         defer {
             for (allocated_args.items) |s| allocator.free(s);
             allocated_args.deinit();
@@ -857,7 +857,7 @@ pub const ZfsHandle = struct {
 
         // Parse output - each line is a dataset name
         // Skip the first line (parent dataset) - equivalent to tail -n +2
-        var datasets = std.ArrayList([]const u8).init(allocator);
+        var datasets = std.ArrayList([]const u8).empty;
         errdefer {
             for (datasets.items) |item| {
                 allocator.free(item);
@@ -1563,7 +1563,7 @@ pub const ThreadSafeZfs = struct {
     /// Initialize the thread-safe ZFS wrapper
     pub fn init(allocator: std.mem.Allocator) ThreadSafeZfs {
         return .{
-            .error_contexts = std.AutoHashMap(std.Thread.Id, ZfsErrorContext).init(allocator),
+            .error_contexts = std.AutoHashMap(std.Thread.Id, ZfsErrorContext).empty,
         };
     }
 
@@ -2023,7 +2023,7 @@ pub fn getGlobalThreadSafeZfs(allocator: std.mem.Allocator) !*ThreadSafeZfs {
 
     // Allocate and initialize
     const zfs = try allocator.create(ThreadSafeZfs);
-    zfs.* = ThreadSafeZfs.init(allocator);
+    zfs.* = ThreadSafeZfs.empty;
 
     // Release semantics ensure all initialization is visible before the pointer
     global_thread_safe_zfs.store(zfs, .release);
@@ -2052,7 +2052,7 @@ pub fn deinitGlobalThreadSafeZfs(allocator: std.mem.Allocator) void {
 test "ThreadSafeZfs basic initialization" {
     const allocator = std.testing.allocator;
 
-    var zfs = ThreadSafeZfs.init(allocator);
+    var zfs = ThreadSafeZfs.empty;
     defer zfs.deinit();
 
     // Should start with no references
@@ -2069,7 +2069,7 @@ test "ThreadSafeZfs basic initialization" {
 test "ScopedOperation lifecycle" {
     const allocator = std.testing.allocator;
 
-    var zfs = ThreadSafeZfs.init(allocator);
+    var zfs = ThreadSafeZfs.empty;
     defer zfs.deinit();
 
     // Create scoped operation
@@ -2115,7 +2115,7 @@ test "ZfsErrorContext operations" {
 test "concurrent reference counting" {
     const allocator = std.testing.allocator;
 
-    var zfs = ThreadSafeZfs.init(allocator);
+    var zfs = ThreadSafeZfs.empty;
     defer zfs.deinit();
 
     const num_threads = 10;

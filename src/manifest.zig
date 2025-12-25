@@ -244,20 +244,20 @@ pub const Manifest = struct {
         };
 
         var lines = std.mem.splitScalar(u8, yaml_content, '\n');
-        var tags = std.ArrayList([]const u8).init(allocator);
-        defer tags.deinit();
-        var provides_list = std.ArrayList([]const u8).init(allocator);
-        defer provides_list.deinit();
-        var conflicts_list = std.ArrayList(VirtualPackage).init(allocator);
-        defer conflicts_list.deinit();
-        var replaces_list = std.ArrayList(VirtualPackage).init(allocator);
-        defer replaces_list.deinit();
+        var tags: std.ArrayList([]const u8) = .empty;
+        defer tags.deinit(allocator);
+        var provides_list: std.ArrayList([]const u8) = .empty;
+        defer provides_list.deinit(allocator);
+        var conflicts_list: std.ArrayList(VirtualPackage) = .empty;
+        defer conflicts_list.deinit(allocator);
+        var replaces_list: std.ArrayList(VirtualPackage) = .empty;
+        defer replaces_list.deinit(allocator);
 
         // Kernel compatibility fields
-        var kernel_idents = std.ArrayList([]const u8).init(allocator);
-        defer kernel_idents.deinit();
-        var kld_names = std.ArrayList([]const u8).init(allocator);
-        defer kld_names.deinit();
+        var kernel_idents: std.ArrayList([]const u8) = .empty;
+        defer kernel_idents.deinit(allocator);
+        var kld_names: std.ArrayList([]const u8) = .empty;
+        defer kld_names.deinit(allocator);
         var kernel_compat: ?KernelCompat = null;
         var in_kernel_section = false;
 
@@ -281,18 +281,18 @@ pub const Manifest = struct {
                 // List item
                 const item = std.mem.trim(u8, trimmed[2..], " \t");
                 switch (list_context) {
-                    .tags => try tags.append(try allocator.dupe(u8, item)),
-                    .provides => try provides_list.append(try allocator.dupe(u8, item)),
+                    .tags => try tags.append(allocator, try allocator.dupe(u8, item)),
+                    .provides => try provides_list.append(allocator, try allocator.dupe(u8, item)),
                     .conflicts => {
                         const vpkg = try parseVirtualPackage(allocator, item);
-                        try conflicts_list.append(vpkg);
+                        try conflicts_list.append(allocator, vpkg);
                     },
                     .replaces => {
                         const vpkg = try parseVirtualPackage(allocator, item);
-                        try replaces_list.append(vpkg);
+                        try replaces_list.append(allocator, vpkg);
                     },
-                    .kernel_idents => try kernel_idents.append(try allocator.dupe(u8, item)),
-                    .kld_names => try kld_names.append(try allocator.dupe(u8, item)),
+                    .kernel_idents => try kernel_idents.append(allocator, try allocator.dupe(u8, item)),
+                    .kld_names => try kld_names.append(allocator, try allocator.dupe(u8, item)),
                     .none => {},
                 }
                 continue;
@@ -362,15 +362,15 @@ pub const Manifest = struct {
             }
         }
 
-        manifest.tags = try tags.toOwnedSlice();
-        manifest.provides = try provides_list.toOwnedSlice();
-        manifest.conflicts = try conflicts_list.toOwnedSlice();
-        manifest.replaces = try replaces_list.toOwnedSlice();
+        manifest.tags = try tags.toOwnedSlice(allocator);
+        manifest.provides = try provides_list.toOwnedSlice(allocator);
+        manifest.conflicts = try conflicts_list.toOwnedSlice(allocator);
+        manifest.replaces = try replaces_list.toOwnedSlice(allocator);
 
         // Finalize kernel compat if present
         if (kernel_compat) |*kc| {
-            kc.kernel_idents = try kernel_idents.toOwnedSlice();
-            kc.kld_names = try kld_names.toOwnedSlice();
+            kc.kernel_idents = try kernel_idents.toOwnedSlice(allocator);
+            kc.kld_names = try kld_names.toOwnedSlice(allocator);
             manifest.kernel = kc.*;
         }
 
@@ -485,9 +485,9 @@ pub const Manifest = struct {
 
     /// Serialize manifest to YAML
     pub fn serialize(self: Manifest, allocator: std.mem.Allocator) ![]const u8 {
-        var result = std.ArrayList(u8).init(allocator);
-        defer result.deinit();
-        const writer = result.writer();
+        var result: std.ArrayList(u8) = .empty;
+        defer result.deinit(allocator);
+        const writer = result.writer(allocator);
 
         try writer.print("name: {s}\n", .{self.name});
         try writer.print("version: {}.{}.{}\n", .{ self.version.major, self.version.minor, self.version.patch });
@@ -562,7 +562,7 @@ pub const Manifest = struct {
             }
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(allocator);
     }
 
     /// Check if this package is kernel-bound (installs kernel modules)
@@ -580,8 +580,8 @@ pub const DependencyManifest = struct {
 
     /// Parse dependency manifest from YAML content
     pub fn parse(allocator: std.mem.Allocator, yaml_content: []const u8) !DependencyManifest {
-        var deps = std.ArrayList(Dependency).init(allocator);
-        defer deps.deinit();
+        var deps: std.ArrayList(Dependency) = .empty;
+        defer deps.deinit(allocator);
 
         var lines = std.mem.splitScalar(u8, yaml_content, '\n');
         
@@ -605,7 +605,7 @@ pub const DependencyManifest = struct {
                             dep.version orelse "*",
                             dep.constraint_type orelse "any",
                         );
-                        try deps.append(.{
+                        try deps.append(allocator, .{
                             .name = try allocator.dupe(u8, name),
                             .constraint = constraint,
                         });
@@ -654,7 +654,7 @@ pub const DependencyManifest = struct {
                     dep.version orelse "*",
                     dep.constraint_type orelse "any",
                 );
-                try deps.append(.{
+                try deps.append(allocator, .{
                     .name = try allocator.dupe(u8, name),
                     .constraint = constraint,
                 });
@@ -662,7 +662,7 @@ pub const DependencyManifest = struct {
         }
 
         return DependencyManifest{
-            .dependencies = try deps.toOwnedSlice(),
+            .dependencies = try deps.toOwnedSlice(allocator),
         };
     }
 
@@ -694,8 +694,8 @@ pub const Provenance = struct {
         };
 
         var lines = std.mem.splitScalar(u8, yaml_content, '\n');
-        var flags = std.ArrayList([]const u8).init(allocator);
-        defer flags.deinit();
+        var flags: std.ArrayList([]const u8) = .empty;
+        defer flags.deinit(allocator);
 
         var in_flags = false;
 
@@ -707,7 +707,7 @@ pub const Provenance = struct {
             if (std.mem.startsWith(u8, trimmed, "- ")) {
                 if (in_flags) {
                     const flag = std.mem.trim(u8, trimmed[2..], " \t");
-                    try flags.append(try allocator.dupe(u8, flag));
+                    try flags.append(allocator, try allocator.dupe(u8, flag));
                 }
                 continue;
             }
@@ -737,7 +737,7 @@ pub const Provenance = struct {
             }
         }
 
-        prov.build_flags = try flags.toOwnedSlice();
+        prov.build_flags = try flags.toOwnedSlice(allocator);
         return prov;
     }
 

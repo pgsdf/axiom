@@ -44,7 +44,7 @@ pub const VirtualProviderIndex = struct {
     pub fn init(allocator: Allocator) VirtualProviderIndex {
         return .{
             .allocator = allocator,
-            .providers = std.StringHashMap(std.ArrayList(VirtualProvider)).init(allocator),
+            .providers = std.StringHashMap(std.ArrayList(VirtualProvider)).empty,
         };
     }
 
@@ -130,8 +130,8 @@ pub const ResolvedFeatures = struct {
         return .{
             .allocator = allocator,
             .package_name = package_name,
-            .enabled = std.StringHashMap(void).init(allocator),
-            .feature_deps = std.ArrayList(Dependency).init(allocator),
+            .enabled = std.StringHashMap(void).empty,
+            .feature_deps = std.ArrayList(Dependency).empty,
         };
     }
 
@@ -161,7 +161,7 @@ pub const FeatureResolver = struct {
     pub fn init(allocator: Allocator) FeatureResolver {
         return .{
             .allocator = allocator,
-            .package_features = std.StringHashMap(ResolvedFeatures).init(allocator),
+            .package_features = std.StringHashMap(ResolvedFeatures).empty,
         };
     }
 
@@ -290,7 +290,7 @@ pub const DependencyExplanation = struct {
         return .{
             .allocator = allocator,
             .target = target,
-            .paths = std.ArrayList(std.ArrayList(DependencyStep)).init(allocator),
+            .paths = std.ArrayList(std.ArrayList(DependencyStep)).empty,
         };
     }
 
@@ -363,8 +363,8 @@ pub const PreferenceHandler = struct {
     pub fn init(allocator: Allocator) PreferenceHandler {
         return .{
             .allocator = allocator,
-            .pins = std.StringHashMap(Pin).init(allocator),
-            .preferences = std.StringHashMap(Preference).init(allocator),
+            .pins = std.StringHashMap(Pin).empty,
+            .preferences = std.StringHashMap(Preference).empty,
         };
     }
 
@@ -469,10 +469,10 @@ pub const AdvancedResolver = struct {
     pub fn init(allocator: Allocator, pkg_store: *PackageStore) AdvancedResolver {
         return .{
             .allocator = allocator,
-            .sat_resolver = SATResolver.init(allocator),
-            .virtual_index = VirtualProviderIndex.init(allocator),
-            .feature_resolver = FeatureResolver.init(allocator),
-            .preference_handler = PreferenceHandler.init(allocator),
+            .sat_resolver = SATResolver.empty,
+            .virtual_index = VirtualProviderIndex.empty,
+            .feature_resolver = FeatureResolver.empty,
+            .preference_handler = PreferenceHandler.empty,
             .pkg_store = pkg_store,
         };
     }
@@ -554,7 +554,7 @@ test "PreferenceHandler.matchesPattern" {
 
 test "VirtualProviderIndex" {
     const allocator = std.testing.allocator;
-    var index = VirtualProviderIndex.init(allocator);
+    var index = VirtualProviderIndex.empty;
     defer index.deinit();
 
     const pkg1 = PackageId{
@@ -577,7 +577,7 @@ test "VirtualProviderIndex" {
 
 test "FeatureResolver.basic" {
     const allocator = std.testing.allocator;
-    var resolver = FeatureResolver.init(allocator);
+    var resolver = FeatureResolver.empty;
     defer resolver.deinit();
 
     // Mock manifest with features

@@ -113,9 +113,9 @@ pub const BuildRecipe = struct {
             .name = "",
             .version = Version{ .major = 0, .minor = 0, .patch = 0 },
             .source = Source{},
-            .build_deps = std.ArrayList(Dependency).init(allocator),
-            .runtime_deps = std.ArrayList(Dependency).init(allocator),
-            .phases = std.ArrayList(BuildPhase).init(allocator),
+            .build_deps = std.ArrayList(Dependency).empty,
+            .runtime_deps = std.ArrayList(Dependency).empty,
+            .phases = std.ArrayList(BuildPhase).empty,
             .output = OutputConfig{},
         };
     }
@@ -147,7 +147,7 @@ pub const BuildRecipe = struct {
 
     /// Parse a build recipe from YAML content
     pub fn parse(allocator: std.mem.Allocator, content: []const u8) !BuildRecipe {
-        var recipe = BuildRecipe.init(allocator);
+        var recipe = BuildRecipe.empty;
         errdefer recipe.deinit();
 
         var lines = std.mem.splitSequence(u8, content, "\n");
@@ -384,7 +384,7 @@ pub const BuildSandbox = struct {
         try std.fs.cwd().makePath(output_dir);
 
         // Set up environment variables
-        var env_vars = std.StringHashMap([]const u8).init(allocator);
+        var env_vars = std.StringHashMap([]const u8).empty;
         try env_vars.put(try allocator.dupe(u8, "OUTPUT"), try allocator.dupe(u8, output_dir));
         try env_vars.put(try allocator.dupe(u8, "SRCDIR"), try allocator.dupe(u8, source_dir));
         try env_vars.put(try allocator.dupe(u8, "JOBS"), try std.fmt.allocPrint(allocator, "{d}", .{@as(u32, 4)}));
@@ -559,7 +559,7 @@ pub const SecureBuildSandbox = struct {
             .allocator = allocator,
             .zfs_handle = zfs_handle,
             .config = config,
-            .active_mounts = std.ArrayList(SandboxMount).init(allocator),
+            .active_mounts = std.ArrayList(SandboxMount).empty,
         };
     }
 

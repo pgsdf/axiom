@@ -75,7 +75,7 @@ pub const ConflictConfig = struct {
         return ConflictConfig{
             .allocator = allocator,
             .default_policy = .error_on_conflict,
-            .rules = std.ArrayList(ConflictRule).init(allocator),
+            .rules = std.ArrayList(ConflictRule).empty,
         };
     }
 
@@ -121,8 +121,8 @@ pub const ConflictTracker = struct {
     pub fn init(allocator: std.mem.Allocator, config: *ConflictConfig) ConflictTracker {
         return ConflictTracker{
             .allocator = allocator,
-            .conflicts = std.ArrayList(FileConflict).init(allocator),
-            .resolutions = std.ArrayList(ConflictRecord).init(allocator),
+            .conflicts = std.ArrayList(FileConflict).empty,
+            .resolutions = std.ArrayList(ConflictRecord).empty,
             .config = config,
         };
     }
@@ -365,7 +365,7 @@ pub fn applyRenameStrategy(
     strategy: RenameStrategy,
 ) ![]const u8 {
     // Parse the pattern and replace placeholders
-    var result = std.ArrayList(u8).init(allocator);
+    var result = std.ArrayList(u8).empty;
     defer result.deinit();
 
     // Get the base name and extension
@@ -398,7 +398,7 @@ pub fn applyRenameStrategy(
 
     // Combine with directory
     if (dirname.len > 0) {
-        var full_path = std.ArrayList(u8).init(allocator);
+        var full_path = std.ArrayList(u8).empty;
         try full_path.appendSlice(dirname);
         try full_path.append('/');
         try full_path.appendSlice(result.items);
@@ -412,7 +412,7 @@ pub fn applyRenameStrategy(
 test "ConflictConfig.findRule" {
     const allocator = std.testing.allocator;
 
-    var config = ConflictConfig.init(allocator);
+    var config = ConflictConfig.empty;
     defer config.deinit();
 
     try config.addRule(.{
@@ -465,7 +465,7 @@ test "applyRenameStrategy with extension" {
 test "ConflictSummary" {
     const allocator = std.testing.allocator;
 
-    var config = ConflictConfig.init(allocator);
+    var config = ConflictConfig.empty;
     defer config.deinit();
 
     var tracker = ConflictTracker.init(allocator, &config);

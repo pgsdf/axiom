@@ -1608,8 +1608,11 @@ pub const CLI = struct {
                     std.debug.print("\nConflicts detected:\n", .{});
                     for (failure.explanations) |exp| {
                         std.debug.print("  • ", .{});
-                        const writer = std.io.getStdErr().writer();
+                        const stderr_file = std.fs.File.stderr();
+                        var stderr_buf: [4096]u8 = undefined;
+                        const writer = stderr_file.writer(&stderr_buf);
                         exp.format(writer) catch {};
+                        writer.flush() catch {};
                         std.debug.print("\n", .{});
                     }
                 }
@@ -1833,12 +1836,14 @@ pub const CLI = struct {
 
         const env_name = args[0];
         std.debug.print("Destroying environment: {s}\n", .{env_name});
-        
+
         // Confirm
         std.debug.print("Are you sure? (y/N): ", .{});
-        
+
         var buffer: [10]u8 = undefined;
-        const stdin = std.io.getStdIn().reader();
+        const stdin_file = std.fs.File.stdin();
+        var stdin_buf: [256]u8 = undefined;
+        const stdin = stdin_file.reader(&stdin_buf);
         const input = try stdin.readUntilDelimiterOrEof(&buffer, '\n');
         
         if (input) |line| {
@@ -1936,16 +1941,16 @@ pub const CLI = struct {
         defer graph.deinit();
 
         // Output the graph
-        const stdout = std.io.getStdOut().writer();
-        var file_writer: ?std.fs.File.Writer = null;
+        const stdout_file = std.fs.File.stdout();
+        var stdout_buf: [4096]u8 = undefined;
+        var file_buf: [4096]u8 = undefined;
         var file_handle: ?std.fs.File = null;
 
         if (output_file) |path| {
             file_handle = try std.fs.cwd().createFile(path, .{});
-            file_writer = file_handle.?.writer();
         }
 
-        const writer = if (file_writer) |fw| fw else stdout;
+        const writer = if (file_handle) |fh| fh.writer(&file_buf) else stdout_file.writer(&stdout_buf);
 
         switch (format) {
             .tree => try self.outputTreeFormat(writer, graph, lock, max_depth),
@@ -2205,7 +2210,7 @@ pub const CLI = struct {
 
         fn init(allocator: std.mem.Allocator) DependencyGraph {
             return .{
-                .edges = std.StringHashMap(std.ArrayList([]const u8)).init(allocator),
+                .edges = std.StringHashMap(std.ArrayList([]const u8)).empty,
                 .allocator = allocator,
             };
         }
@@ -3664,8 +3669,11 @@ pub const CLI = struct {
             return;
         };
 
-        const stdout = std.io.getStdOut().writer();
+        const stdout_file = std.fs.File.stdout();
+        var stdout_buf: [4096]u8 = undefined;
+        const stdout = stdout_file.writer(&stdout_buf);
         try completions.generate(shell, stdout);
+        try stdout.flush();
     }
 
     // ============================================
@@ -3879,8 +3887,11 @@ pub const CLI = struct {
                     std.debug.print("\nConflicts detected:\n", .{});
                     for (failure.explanations) |exp| {
                         std.debug.print("  • ", .{});
-                        const writer = std.io.getStdErr().writer();
+                        const stderr_file = std.fs.File.stderr();
+                        var stderr_buf: [4096]u8 = undefined;
+                        const writer = stderr_file.writer(&stderr_buf);
                         exp.format(writer) catch {};
+                        writer.flush() catch {};
                         std.debug.print("\n", .{});
                     }
                 }
@@ -4137,7 +4148,9 @@ pub const CLI = struct {
         std.debug.print("Are you sure? (y/N): ", .{});
 
         var buffer: [10]u8 = undefined;
-        const stdin = std.io.getStdIn().reader();
+        const stdin_file = std.fs.File.stdin();
+        var stdin_buf: [256]u8 = undefined;
+        const stdin = stdin_file.reader(&stdin_buf);
         const input = try stdin.readUntilDelimiterOrEof(&buffer, '\n');
 
         if (input) |line| {
@@ -4236,7 +4249,9 @@ pub const CLI = struct {
         std.debug.print("Are you sure? (y/N): ", .{});
 
         var buffer: [10]u8 = undefined;
-        const stdin = std.io.getStdIn().reader();
+        const stdin_file = std.fs.File.stdin();
+        var stdin_buf: [256]u8 = undefined;
+        const stdin = stdin_file.reader(&stdin_buf);
         const input = try stdin.readUntilDelimiterOrEof(&buffer, '\n');
 
         if (input) |line| {

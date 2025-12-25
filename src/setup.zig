@@ -161,7 +161,9 @@ pub const SetupWizard = struct {
 
     /// Run the setup wizard
     pub fn run(self: *SetupWizard) !void {
-        const stdout = std.io.getStdOut().writer();
+        const stdout_file = std.fs.File.stdout();
+        var stdout_buf: [4096]u8 = undefined;
+        const stdout = stdout_file.writer(&stdout_buf);
 
         try stdout.print("\n", .{});
         try stdout.print("===========================================\n", .{});
@@ -276,7 +278,9 @@ pub const SetupWizard = struct {
 
     /// Perform the actual setup
     fn performSetup(self: *SetupWizard, status: SetupStatus) !void {
-        const stdout = std.io.getStdOut().writer();
+        const stdout_file = std.fs.File.stdout();
+        var stdout_buf: [4096]u8 = undefined;
+        const stdout = stdout_file.writer(&stdout_buf);
 
         const base = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ self.pool, self.dataset });
         defer self.allocator.free(base);
@@ -362,7 +366,9 @@ pub const SetupWizard = struct {
 
     /// Print current status
     fn printStatus(self: *SetupWizard, status: SetupStatus) !void {
-        const stdout = std.io.getStdOut().writer();
+        const stdout_file = std.fs.File.stdout();
+        var stdout_buf: [4096]u8 = undefined;
+        const stdout = stdout_file.writer(&stdout_buf);
         const check = "\xe2\x9c\x93"; // Unicode checkmark
         const cross = "\xe2\x9c\x97"; // Unicode cross
 
@@ -381,8 +387,12 @@ pub const SetupWizard = struct {
     /// Ask for user confirmation
     fn confirm(self: *SetupWizard, prompt: []const u8) !bool {
         _ = self;
-        const stdout = std.io.getStdOut().writer();
-        const stdin = std.io.getStdIn().reader();
+        const stdout_file = std.fs.File.stdout();
+        var stdout_buf: [4096]u8 = undefined;
+        const stdout = stdout_file.writer(&stdout_buf);
+        const stdin_file = std.fs.File.stdin();
+        var stdin_buf: [256]u8 = undefined;
+        const stdin = stdin_file.reader(&stdin_buf);
 
         try stdout.print("{s} [y/N]: ", .{prompt});
 
@@ -425,7 +435,9 @@ pub const SetupWizard = struct {
 
     /// List available ZFS pools
     fn listPools(self: *SetupWizard) !void {
-        const stdout = std.io.getStdOut().writer();
+        const stdout_file = std.fs.File.stdout();
+        var stdout_buf: [4096]u8 = undefined;
+        const stdout = stdout_file.writer(&stdout_buf);
 
         var child = std.process.Child.init(&[_][]const u8{ "zpool", "list", "-H", "-o", "name" }, self.allocator);
         child.stdout_behavior = .Pipe;
@@ -474,7 +486,9 @@ pub const SetupWizard = struct {
 
         const term = try child.wait();
         if (term.Exited != 0) {
-            const stdout = std.io.getStdOut().writer();
+            const stdout_file = std.fs.File.stdout();
+            var stdout_buf: [4096]u8 = undefined;
+            const stdout = stdout_file.writer(&stdout_buf);
             if (stderr_output) |stderr| {
                 try stdout.print("Error creating dataset: {s}\n", .{stderr});
             }
@@ -501,7 +515,9 @@ pub const SetupWizard = struct {
 
         const term = try child.wait();
         if (term.Exited != 0) {
-            const stdout = std.io.getStdOut().writer();
+            const stdout_file = std.fs.File.stdout();
+            var stdout_buf: [4096]u8 = undefined;
+            const stdout = stdout_file.writer(&stdout_buf);
             if (stderr_output) |stderr| {
                 try stdout.print("Error setting property: {s}\n", .{stderr});
             }

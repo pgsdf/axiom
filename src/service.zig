@@ -196,7 +196,7 @@ pub const ServiceConfig = struct {
         return ServiceConfig{
             .name = name,
             .enable = false,
-            .variables = std.StringHashMap([]const u8).init(allocator),
+            .variables = std.StringHashMap([]const u8).empty,
             .allocator = allocator,
         };
     }
@@ -220,7 +220,7 @@ pub const ServiceConfig = struct {
 
     /// Generate rc.conf.d file content
     pub fn toRcConf(self: ServiceConfig, allocator: std.mem.Allocator) ![]u8 {
-        var result = std.ArrayList(u8).init(allocator);
+        var result = std.ArrayList(u8).empty;
         defer result.deinit();
         const writer = result.writer();
 
@@ -586,7 +586,7 @@ pub const ServiceManager = struct {
 
 /// Parse service declarations from manifest YAML
 pub fn parseServiceDeclarations(allocator: std.mem.Allocator, yaml_content: []const u8) ![]ServiceDeclaration {
-    var services = std.ArrayList(ServiceDeclaration).init(allocator);
+    var services = std.ArrayList(ServiceDeclaration).empty;
     defer services.deinit();
 
     var current_service: ?ServiceDeclaration = null;
@@ -595,11 +595,11 @@ pub fn parseServiceDeclarations(allocator: std.mem.Allocator, yaml_content: []co
     var in_conflicts = false;
     var in_ports = false;
 
-    var deps_list = std.ArrayList([]const u8).init(allocator);
+    var deps_list = std.ArrayList([]const u8).empty;
     defer deps_list.deinit();
-    var conflicts_list = std.ArrayList([]const u8).init(allocator);
+    var conflicts_list = std.ArrayList([]const u8).empty;
     defer conflicts_list.deinit();
-    var ports_list = std.ArrayList(u16).init(allocator);
+    var ports_list = std.ArrayList(u16).empty;
     defer ports_list.deinit();
 
     var lines = std.mem.splitSequence(u8, yaml_content, "\n");
@@ -625,9 +625,9 @@ pub fn parseServiceDeclarations(allocator: std.mem.Allocator, yaml_content: []co
                 svc.conflicts = try toOwnedSliceOrCleanupStrings(allocator, &conflicts_list);
                 svc.ports = try toOwnedSliceOrCleanupU16(&ports_list);
                 try services.append(svc.*);
-                deps_list = std.ArrayList([]const u8).init(allocator);
-                conflicts_list = std.ArrayList([]const u8).init(allocator);
-                ports_list = std.ArrayList(u16).init(allocator);
+                deps_list = std.ArrayList([]const u8).empty;
+                conflicts_list = std.ArrayList([]const u8).empty;
+                ports_list = std.ArrayList(u16).empty;
             }
 
             var value = std.mem.trim(u8, trimmed[7..], " \t");

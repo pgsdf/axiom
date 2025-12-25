@@ -36,7 +36,7 @@ pub const CacheInfo = struct {
     features: []const []const u8,
 
     pub fn toJson(self: *const CacheInfo, allocator: Allocator) ![]const u8 {
-        var buffer = std.ArrayList(u8).init(allocator);
+        var buffer = std.ArrayList(u8).empty;
         errdefer buffer.deinit();
 
         const writer = buffer.writer();
@@ -125,7 +125,7 @@ pub const PackageMeta = struct {
     }
 
     pub fn toJson(self: *const PackageMeta, allocator: Allocator) ![]const u8 {
-        var buffer = std.ArrayList(u8).init(allocator);
+        var buffer = std.ArrayList(u8).empty;
         errdefer buffer.deinit();
 
         const writer = buffer.writer();
@@ -233,7 +233,7 @@ pub const CacheConfig = struct {
 
     /// Parse YAML configuration
     fn parseYaml(allocator: Allocator, content: []const u8) !CacheConfig {
-        var sources = std.ArrayList(CacheSource).init(allocator);
+        var sources = std.ArrayList(CacheSource).empty;
         errdefer {
             for (sources.items) |*s| s.deinit(allocator);
             sources.deinit();
@@ -951,7 +951,7 @@ fn parseHttpRequest(allocator: Allocator, data: []const u8) !CacheRequest {
     else
         .GET;
 
-    var headers = std.StringHashMap([]const u8).init(allocator);
+    var headers = std.StringHashMap([]const u8).empty;
     errdefer headers.deinit();
 
     // Parse headers

@@ -275,7 +275,7 @@ pub const ResourceStats = struct {
     pub fn init(allocator: std.mem.Allocator) ResourceStats {
         return .{
             .start_time_ms = std.time.milliTimestamp(),
-            .candidates_per_package = std.StringHashMap(u32).init(allocator),
+            .candidates_per_package = std.StringHashMap(u32).empty,
         };
     }
 
@@ -478,7 +478,7 @@ pub const VirtualPackageIndex = struct {
     pub fn init(allocator: std.mem.Allocator) VirtualPackageIndex {
         return VirtualPackageIndex{
             .allocator = allocator,
-            .providers = std.StringHashMap(std.ArrayList([]const u8)).init(allocator),
+            .providers = std.StringHashMap(std.ArrayList([]const u8)).empty,
         };
     }
 
@@ -543,13 +543,13 @@ pub const ResolutionContext = struct {
         return ResolutionContext{
             .allocator = allocator,
             .store = store_ptr,
-            .constraints = std.StringHashMap(std.ArrayList(VersionConstraint)).init(allocator),
-            .resolved = std.StringHashMap(PackageId).init(allocator),
-            .requested = std.StringHashMap(bool).init(allocator),
-            .resolving = std.StringHashMap(bool).init(allocator),
-            .virtual_index = VirtualPackageIndex.init(allocator),
-            .conflicts = std.ArrayList(ConflictInfo).init(allocator),
-            .resolved_candidates = std.StringHashMap(Candidate).init(allocator),
+            .constraints = std.StringHashMap(std.ArrayList(VersionConstraint)).empty,
+            .resolved = std.StringHashMap(PackageId).empty,
+            .requested = std.StringHashMap(bool).empty,
+            .resolving = std.StringHashMap(bool).empty,
+            .virtual_index = VirtualPackageIndex.empty,
+            .conflicts = std.ArrayList(ConflictInfo).empty,
+            .resolved_candidates = std.StringHashMap(Candidate).empty,
         };
     }
 
@@ -1720,7 +1720,7 @@ test "Resolver.version_comparison" {
 test "VirtualPackageIndex.basic_operations" {
     const allocator = std.testing.allocator;
 
-    var index = VirtualPackageIndex.init(allocator);
+    var index = VirtualPackageIndex.empty;
     defer index.deinit();
 
     // Add providers for virtual packages

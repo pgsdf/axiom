@@ -260,7 +260,7 @@ pub const AuditLog = struct {
         return AuditLog{
             .allocator = allocator,
             .log_path = log_path,
-            .entries = std.ArrayList(AuditEntry).init(allocator),
+            .entries = std.ArrayList(AuditEntry).empty,
         };
     }
 
@@ -401,7 +401,7 @@ pub const Signature = struct {
 
     /// Serialize signature to YAML
     pub fn toYaml(self: Signature, allocator: std.mem.Allocator) ![]u8 {
-        var result = std.ArrayList(u8).init(allocator);
+        var result = std.ArrayList(u8).empty;
         defer result.deinit();
         const writer = result.writer();
 
@@ -433,7 +433,7 @@ pub const Signature = struct {
             .files = undefined,
         };
 
-        var files = std.ArrayList(FileHash).init(allocator);
+        var files = std.ArrayList(FileHash).empty;
         defer files.deinit();
 
         var current_file_path: ?[]const u8 = null;
@@ -529,8 +529,8 @@ pub const TrustStore = struct {
     pub fn init(allocator: std.mem.Allocator, store_path: []const u8) TrustStore {
         return TrustStore{
             .allocator = allocator,
-            .keys = std.StringHashMap(PublicKey).init(allocator),
-            .trusted = std.StringHashMap(bool).init(allocator),
+            .keys = std.StringHashMap(PublicKey).empty,
+            .trusted = std.StringHashMap(bool).empty,
             .store_path = store_path,
         };
     }
@@ -643,7 +643,7 @@ pub const TrustStore = struct {
 
     /// List all keys
     pub fn listKeys(self: *TrustStore, allocator: std.mem.Allocator) ![]PublicKey {
-        var list = std.ArrayList(PublicKey).init(allocator);
+        var list = std.ArrayList(PublicKey).empty;
         defer list.deinit();
 
         var iter = self.keys.valueIterator();
@@ -1411,9 +1411,9 @@ pub const MultiSignatureConfig = struct {
             .policy_name = null,
         };
 
-        var authorized = std.ArrayList([]const u8).init(allocator);
+        var authorized = std.ArrayList([]const u8).empty;
         defer authorized.deinit();
-        var required = std.ArrayList([]const u8).init(allocator);
+        var required = std.ArrayList([]const u8).empty;
         defer required.deinit();
 
         var in_signers = false;
@@ -1464,7 +1464,7 @@ pub const MultiSignatureConfig = struct {
 
     /// Serialize config to YAML
     pub fn toYaml(self: MultiSignatureConfig, allocator: std.mem.Allocator) ![]u8 {
-        var result = std.ArrayList(u8).init(allocator);
+        var result = std.ArrayList(u8).empty;
         defer result.deinit();
         const writer = result.writer();
 
@@ -1539,7 +1539,7 @@ pub const MultiSignature = struct {
 
     /// Serialize to YAML format
     pub fn toYaml(self: MultiSignature, allocator: std.mem.Allocator) ![]u8 {
-        var result = std.ArrayList(u8).init(allocator);
+        var result = std.ArrayList(u8).empty;
         defer result.deinit();
         const writer = result.writer();
 
@@ -1574,9 +1574,9 @@ pub const MultiSignature = struct {
             .signatures = undefined,
         };
 
-        var files = std.ArrayList(FileHash).init(allocator);
+        var files = std.ArrayList(FileHash).empty;
         defer files.deinit();
-        var signatures = std.ArrayList(SignatureEntry).init(allocator);
+        var signatures = std.ArrayList(SignatureEntry).empty;
         defer signatures.deinit();
 
         var current_file_path: ?[]const u8 = null;
@@ -1683,7 +1683,7 @@ pub const MultiSignature = struct {
 
     /// Get list of signers
     pub fn getSignerKeyIds(self: MultiSignature, allocator: std.mem.Allocator) ![][]const u8 {
-        var result = std.ArrayList([]const u8).init(allocator);
+        var result = std.ArrayList([]const u8).empty;
         defer result.deinit();
         for (self.signatures) |sig| {
             try result.append(sig.key_id);

@@ -312,7 +312,9 @@ pub fn logLoggingError(
     operation: []const u8,
 ) void {
     // Use stderr directly to avoid potential recursion
-    const stderr = std.io.getStdErr().writer();
+    const stderr_file = std.fs.File.stderr();
+    var stderr_buf: [4096]u8 = undefined;
+    const stderr = stderr_file.writer(&stderr_buf);
     stderr.print("[WARN] {s}:{d} in {s}: {s}: {}\n", .{
         src.file,
         src.line,

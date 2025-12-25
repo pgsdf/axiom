@@ -122,14 +122,14 @@ pub const SATResolver = struct {
     const DIRECT_DEPENDENCY_WEIGHT: u32 = 50;
 
     pub fn init(allocator: std.mem.Allocator) SATResolver {
-        var solver = Solver.init(allocator);
+        var solver = Solver.empty;
         return .{
             .allocator = allocator,
             .solver = solver,
             .optimizer = Optimizer.init(allocator, &solver),
-            .pkg_to_var = std.StringHashMap(std.ArrayList(PackageCandidate)).init(allocator),
-            .var_to_pkg = std.AutoHashMap(u32, PackageCandidate).init(allocator),
-            .available_packages = std.StringHashMap(std.ArrayList(PackageId)).init(allocator),
+            .pkg_to_var = std.StringHashMap(std.ArrayList(PackageCandidate)).empty,
+            .var_to_pkg = std.AutoHashMap(u32, PackageCandidate).empty,
+            .available_packages = std.StringHashMap(std.ArrayList(PackageId)).empty,
         };
     }
 
@@ -372,7 +372,7 @@ pub fn buildResolverFromStore(
     allocator: std.mem.Allocator,
     pkg_store: *PackageStore,
 ) !SATResolver {
-    var resolver = SATResolver.init(allocator);
+    var resolver = SATResolver.empty;
     errdefer resolver.deinit();
 
     // Get all packages from store
@@ -392,7 +392,7 @@ pub fn buildResolverFromStore(
         defer manifest.freeManifest(pkg_manifest, allocator);
 
         // Convert dependencies
-        var deps = std.ArrayList(PackageCandidate.Dependency).init(allocator);
+        var deps = std.ArrayList(PackageCandidate.Dependency).empty;
         defer deps.deinit();
 
         for (pkg_manifest.dependencies) |dep| {
@@ -403,7 +403,7 @@ pub fn buildResolverFromStore(
         }
 
         // Convert conflicts
-        var conflicts = std.ArrayList([]const u8).init(allocator);
+        var conflicts = std.ArrayList([]const u8).empty;
         defer conflicts.deinit();
 
         for (pkg_manifest.conflicts) |conflict| {
@@ -424,7 +424,7 @@ pub fn buildResolverFromStore(
 test "SATResolver basic resolution" {
     const allocator = std.testing.allocator;
 
-    var resolver = SATResolver.init(allocator);
+    var resolver = SATResolver.empty;
     defer resolver.deinit();
 
     // Register package A version 1.0.0
@@ -473,7 +473,7 @@ test "SATResolver basic resolution" {
 test "SATResolver conflict detection" {
     const allocator = std.testing.allocator;
 
-    var resolver = SATResolver.init(allocator);
+    var resolver = SATResolver.empty;
     defer resolver.deinit();
 
     // Register package A that conflicts with B

@@ -60,7 +60,7 @@ pub const TestResults = struct {
     pub fn init(allocator: Allocator) Self {
         return .{
             .allocator = allocator,
-            .cases = std.ArrayList(TestCase).init(allocator),
+            .cases = std.ArrayList(TestCase).empty,
             .passed = 0,
             .failed = 0,
             .skipped = 0,
@@ -247,8 +247,8 @@ pub const MockZfs = struct {
     pub fn init(allocator: Allocator) Self {
         return .{
             .allocator = allocator,
-            .datasets = std.StringHashMap(MockDataset).init(allocator),
-            .snapshots = std.StringHashMap(MockSnapshot).init(allocator),
+            .datasets = std.StringHashMap(MockDataset).empty,
+            .snapshots = std.StringHashMap(MockSnapshot).empty,
             .failure_injection = null,
         };
     }
@@ -698,7 +698,7 @@ pub const CoverageTracker = struct {
     pub fn init(allocator: Allocator) Self {
         return .{
             .allocator = allocator,
-            .hit_lines = std.AutoHashMap(u64, bool).init(allocator),
+            .hit_lines = std.AutoHashMap(u64, bool).empty,
             .total_lines = 0,
         };
     }
@@ -730,7 +730,7 @@ pub const TestFixture = struct {
     pub fn init(allocator: Allocator) Self {
         return .{
             .allocator = allocator,
-            .mock_zfs = MockZfs.init(allocator),
+            .mock_zfs = MockZfs.empty,
             .temp_dir = null,
         };
     }
@@ -758,7 +758,7 @@ pub const TestFixture = struct {
 // Built-in tests
 test "MockZfs.create" {
     const allocator = std.testing.allocator;
-    var mock = MockZfs.init(allocator);
+    var mock = MockZfs.empty;
     defer mock.deinit();
 
     try mock.create("pool/test");
@@ -767,7 +767,7 @@ test "MockZfs.create" {
 
 test "MockZfs.destroy" {
     const allocator = std.testing.allocator;
-    var mock = MockZfs.init(allocator);
+    var mock = MockZfs.empty;
     defer mock.deinit();
 
     try mock.create("pool/test");
@@ -777,7 +777,7 @@ test "MockZfs.destroy" {
 
 test "MockZfs.failure_injection" {
     const allocator = std.testing.allocator;
-    var mock = MockZfs.init(allocator);
+    var mock = MockZfs.empty;
     defer mock.deinit();
 
     mock.injectFailure(.create, error.OutOfMemory);
@@ -788,7 +788,7 @@ test "MockZfs.failure_injection" {
 
 test "TestResults.tracking" {
     const allocator = std.testing.allocator;
-    var results = TestResults.init(allocator);
+    var results = TestResults.empty;
     defer results.deinit();
 
     try results.addCase(.{

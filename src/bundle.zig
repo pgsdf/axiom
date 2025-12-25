@@ -121,7 +121,7 @@ pub const BundleManifest = struct {
     provenance: ?Provenance = null,
 
     pub fn serialize(self: BundleManifest, allocator: std.mem.Allocator) ![]const u8 {
-        var output = std.ArrayList(u8).init(allocator);
+        var output = std.ArrayList(u8).empty;
         defer output.deinit();
 
         const writer = output.writer();
@@ -844,7 +844,7 @@ pub const SecureBundleManifest = struct {
         };
 
         var lines = std.mem.splitScalar(u8, data, '\n');
-        var packages_list = std.ArrayList(PackageId).init(allocator);
+        var packages_list = std.ArrayList(PackageId).empty;
         defer packages_list.deinit();
 
         var in_packages = false;
@@ -1006,7 +1006,7 @@ pub const SecureBundleLauncher = struct {
             .trust_store_path = config.trust_store_path,
             .require_signature = config.require_signature,
             .allow_untrusted = config.allow_untrusted,
-            .verification_cache = std.StringHashMap(BundleVerificationResult).init(allocator),
+            .verification_cache = std.StringHashMap(BundleVerificationResult).empty,
         };
     }
 

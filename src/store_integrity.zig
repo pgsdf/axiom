@@ -110,11 +110,11 @@ pub const IntegrityReport = struct {
 
     pub fn init(allocator: Allocator) IntegrityReport {
         return .{
-            .orphaned_datasets = std.ArrayList([]const u8).init(allocator),
-            .missing_manifests = std.ArrayList([]const u8).init(allocator),
-            .hash_mismatches = std.ArrayList(HashMismatch).init(allocator),
-            .broken_references = std.ArrayList(BrokenRef).init(allocator),
-            .partial_imports = std.ArrayList([]const u8).init(allocator),
+            .orphaned_datasets = std.ArrayList([]const u8).empty,
+            .missing_manifests = std.ArrayList([]const u8).empty,
+            .hash_mismatches = std.ArrayList(HashMismatch).empty,
+            .broken_references = std.ArrayList(BrokenRef).empty,
+            .partial_imports = std.ArrayList([]const u8).empty,
             .allocator = allocator,
         };
     }
@@ -998,7 +998,7 @@ pub const TransactionLog = struct {
 // Tests
 test "IntegrityReport.hasIssues" {
     const allocator = std.testing.allocator;
-    var report = IntegrityReport.init(allocator);
+    var report = IntegrityReport.empty;
     defer report.deinit();
 
     try std.testing.expect(!report.hasIssues());
