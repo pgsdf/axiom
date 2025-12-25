@@ -140,12 +140,12 @@ pub const CacheIndex = struct {
         hasher.update(self.updated_at);
 
         // Hash packages in sorted order for determinism
-        var pkg_names = std.ArrayList([]const u8).init(self.allocator);
-        defer pkg_names.deinit();
+        var pkg_names: std.ArrayList([]const u8) = .empty;
+        defer pkg_names.deinit(self.allocator);
 
         var pkg_iter = self.packages.iterator();
         while (pkg_iter.next()) |entry| {
-            try pkg_names.append(entry.key_ptr.*);
+            try pkg_names.append(self.allocator, entry.key_ptr.*);
         }
 
         std.mem.sort([]const u8, pkg_names.items, {}, struct {
@@ -376,7 +376,7 @@ pub const CacheEvictionEngine = struct {
 
                 // If we have more versions than policy allows and not protected
                 if (!is_protected and version_count > self.policy.keep_latest_versions) {
-                    try plan.candidates.append(.{
+                    try plan.candidates.append(self.allocator, .{
                         .package_name = pkg_name,
                         .version = ver_entry.key_ptr.*,
                         .size = ver_entry.value_ptr.size,
@@ -452,7 +452,7 @@ pub const EvictionPlan = struct {
     }
 
     pub fn deinit(self: *EvictionPlan) void {
-        self.candidates.deinit();
+        self.candidates.deinit(self.allocator);
     }
 
     pub fn totalBytesToFree(self: *const EvictionPlan) u64 {
@@ -586,7 +586,7 @@ pub const ConflictResolver = struct {
         local: *const CacheIndex,
         remote: *const CacheIndex,
     ) ![]ConflictInfo {
-        var conflicts = std.ArrayList(ConflictInfo).init(self.allocator);
+        var conflicts: std.ArrayList(ConflictInfo) = .empty;
 
         var remote_iter = remote.packages.iterator();
         while (remote_iter.next()) |entry| {
@@ -619,7 +619,7 @@ pub const ConflictResolver = struct {
 
                             const resolution = self.resolve(local_pkg, remote_pkg);
 
-                            try conflicts.append(.{
+                            try conflicts.append(self.allocator, .{
                                 .package_name = pkg_name,
                                 .version = version,
                                 .local_hash = local_meta.hash,
@@ -632,7 +632,7 @@ pub const ConflictResolver = struct {
             }
         }
 
-        return conflicts.toOwnedSlice();
+        return conflicts.toOwnedSlice(self.allocator);
     }
 };
 
@@ -663,7 +663,7 @@ pub const CacheIndexManager = struct {
         for (self.remote_indices.items) |*idx| {
             idx.deinit();
         }
-        self.remote_indices.deinit();
+        self.remote_indices.deinit(self.allocator);
     }
 
     pub fn setTrustStore(self: *Self, store: *TrustStore) void {
@@ -694,7 +694,7 @@ pub const CacheIndexManager = struct {
 
     /// Add a remote cache index
     pub fn addRemoteIndex(self: *Self, index: CacheIndex) !void {
-        try self.remote_indices.append(index);
+        try self.remote_indices.append(self.allocator, index);
     }
 
     /// Update local index from all remotes
@@ -767,7 +767,7 @@ pub const CacheIndexManager = struct {
 
     /// Serialize index to YAML content
     fn serializeIndex(self: *Self, index: *const CacheIndex) ![]u8 {
-        var buffer = std.ArrayList(u8).init(self.allocator);
+        var buffer: std.ArrayList(u8) = .empty;
         const writer = buffer.writer();
 
         try writer.print("format_version: \"{s}\"\n", .{index.format_version});
@@ -796,7 +796,7 @@ pub const CacheIndexManager = struct {
             try writer.print("  value: \"{s}\"\n", .{sig.value});
         }
 
-        return buffer.toOwnedSlice();
+        return buffer.toOwnedSlice(self.allocator);
     }
 };
 

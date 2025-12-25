@@ -290,8 +290,8 @@ pub const ProvenanceVerifier = struct {
 
     /// Verify provenance for a package
     pub fn verify(self: *Self, pkg_path: []const u8) !ProvenanceReport {
-        var violations = std.ArrayList(PolicyViolation).init(self.allocator);
-        defer violations.deinit();
+        var violations: std.ArrayList(PolicyViolation) = .empty;
+        defer violations.deinit(self.allocator);
 
         // Try to load provenance file
         const provenance_path = try std.fs.path.join(self.allocator, &.{ pkg_path, "provenance.yaml" });
@@ -300,7 +300,7 @@ pub const ProvenanceVerifier = struct {
         const provenance = self.loadProvenance(provenance_path) catch |err| {
             if (err == error.FileNotFound) {
                 if (self.policy.require_provenance) {
-                    try violations.append(.missing_provenance);
+                    try violations.append(self.allocator, .missing_provenance);
                 }
                 return ProvenanceReport{
                     .has_provenance = false,
@@ -308,7 +308,7 @@ pub const ProvenanceVerifier = struct {
                     .signature_valid = false,
                     .signer_trusted = false,
                     .build_age_days = 0,
-                    .policy_violations = try violations.toOwnedSlice(),
+                    .policy_violations = try violations.toOwnedSlice(self.allocator),
                 };
             }
             return err;
@@ -320,7 +320,7 @@ pub const ProvenanceVerifier = struct {
 
         // Check format version
         if (!std.mem.eql(u8, provenance.format_version, FORMAT_VERSION)) {
-            try violations.append(.format_version_unsupported);
+            try violations.append(self.allocator, .format_version_unsupported);
         }
 
         // Check signature
@@ -342,21 +342,21 @@ pub const ProvenanceVerifier = struct {
                     signature_valid = true;
                 } else {
                     signature_valid = false;
-                    try violations.append(.signature_invalid);
+                    try violations.append(self.allocator, .signature_invalid);
                 }
 
                 if (!signer_trusted) {
-                    try violations.append(.untrusted_signer);
+                    try violations.append(self.allocator, .untrusted_signer);
                 }
             } else {
                 // No trust store, assume valid but untrusted
                 signature_valid = sig.value.len > 0;
                 signer_trusted = false;
-                try violations.append(.untrusted_signer);
+                try violations.append(self.allocator, .untrusted_signer);
             }
         } else {
             if (self.policy.require_signature) {
-                try violations.append(.missing_signature);
+                try violations.append(self.allocator, .missing_signature);
             }
         }
 
@@ -369,25 +369,25 @@ pub const ProvenanceVerifier = struct {
             }
         }
         if (!builder_trusted and self.policy.trusted_builders.len > 0) {
-            try violations.append(.untrusted_builder);
+            try violations.append(self.allocator, .untrusted_builder);
         }
 
         // Verify source hash
         const source_verified = try self.verifySourceHash(pkg_path, provenance.source.sha256);
         if (!source_verified) {
-            try violations.append(.source_hash_mismatch);
+            try violations.append(self.allocator, .source_hash_mismatch);
         }
 
         // Verify output hash
         const output_verified = try self.verifyOutputHash(pkg_path, provenance.output.hash);
         if (!output_verified) {
-            try violations.append(.output_hash_mismatch);
+            try violations.append(self.allocator, .output_hash_mismatch);
         }
 
         // Calculate build age
         const build_age_days = try self.calculateBuildAge(provenance.build.completed_at);
         if (build_age_days > self.policy.max_age_days) {
-            try violations.append(.expired_build);
+            try violations.append(self.allocator, .expired_build);
         }
 
         return ProvenanceReport{
@@ -396,7 +396,7 @@ pub const ProvenanceVerifier = struct {
             .signature_valid = signature_valid,
             .signer_trusted = signer_trusted,
             .build_age_days = build_age_days,
-            .policy_violations = try violations.toOwnedSlice(),
+            .policy_violations = try violations.toOwnedSlice(self.allocator),
             .builder_name = try self.allocator.dupe(u8, provenance.builder.name),
             .signer_key_id = signer_key_id,
         };
@@ -673,7 +673,7 @@ pub const PolicyChecker = struct {
         }
 
         // Parse trusted_builders list
-        var builders = std.ArrayList([]const u8).init(self.allocator);
+        var builders: std.ArrayList([]const u8) = .empty;
         var search_pos: usize = 0;
         while (std.mem.indexOfPos(u8, content, search_pos, "- \"")) |pos| {
             const start = pos + 3;
@@ -681,14 +681,14 @@ pub const PolicyChecker = struct {
                 // Check if this is in trusted_builders section
                 if (std.mem.lastIndexOf(u8, content[0..pos], "trusted_builders:")) |_| {
                     const builder = try self.allocator.dupe(u8, content[start..end]);
-                    try builders.append(builder);
+                    try builders.append(self.allocator, builder);
                 }
                 search_pos = end + 1;
             } else {
                 break;
             }
         }
-        policy.trusted_builders = try builders.toOwnedSlice();
+        policy.trusted_builders = try builders.toOwnedSlice(self.allocator);
 
         return policy;
     }
@@ -747,8 +747,8 @@ pub fn createProvenance(
 
 /// Serialize provenance to YAML format
 pub fn serializeProvenance(allocator: Allocator, provenance: *const Provenance) ![]u8 {
-    var buffer = std.ArrayList(u8).empty;
-    const writer = buffer.writer();
+    var buffer: std.ArrayList(u8) = .empty;
+    const writer = buffer.writer(allocator);
 
     try writer.print("format_version: \"{s}\"\n\n", .{provenance.format_version});
 
@@ -792,7 +792,7 @@ pub fn serializeProvenance(allocator: Allocator, provenance: *const Provenance) 
         try writer.print("  value: \"{s}\"\n", .{sig.value});
     }
 
-    return buffer.toOwnedSlice();
+    return buffer.toOwnedSlice(allocator);
 }
 
 // Tests

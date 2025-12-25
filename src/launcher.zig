@@ -199,12 +199,12 @@ pub const Launcher = struct {
         env_map.put("AXIOM_PACKAGE_ROOT", pkg_meta.dataset_path) catch {};
 
         // 5. Spawn process
-        var argv = std.ArrayList([]const u8).init(self.allocator);
-        defer argv.deinit();
+        var argv: std.ArrayList([]const u8) = .empty;
+        defer argv.deinit(self.allocator);
 
-        argv.append(exec_path) catch return LaunchError.OutOfMemory;
+        argv.append(self.allocator, exec_path) catch return LaunchError.OutOfMemory;
         for (config.args) |arg| {
-            argv.append(arg) catch return LaunchError.OutOfMemory;
+            argv.append(self.allocator, arg) catch return LaunchError.OutOfMemory;
         }
 
         var child = std.process.Child.init(argv.items, self.allocator);
@@ -270,8 +270,8 @@ pub const Launcher = struct {
         pkg_closure: ?*const Closure,
         isolation: IsolationMode,
     ) ![]const u8 {
-        var paths = std.ArrayList([]const u8).init(self.allocator);
-        defer paths.deinit();
+        var paths: std.ArrayList([]const u8) = .empty;
+        defer paths.deinit(self.allocator);
 
         // Add package's own lib directory first
         const pkg_lib = try std.fs.path.join(self.allocator, &[_][]const u8{
@@ -279,7 +279,7 @@ pub const Launcher = struct {
             "root",
             "lib",
         });
-        try paths.append(pkg_lib);
+        try paths.append(self.allocator, pkg_lib);
 
         // Add closure package libraries
         if (pkg_closure) |c| {
@@ -290,7 +290,7 @@ pub const Launcher = struct {
                     "root",
                     "lib",
                 });
-                try paths.append(dep_lib);
+                try paths.append(self.allocator, dep_lib);
                 self.allocator.free(dep_meta.dataset_path);
             }
         }
@@ -299,7 +299,7 @@ pub const Launcher = struct {
         switch (isolation) {
             .normal, .system_first => {
                 for (self.system_lib_paths) |sys_path| {
-                    try paths.append(sys_path);
+                    try paths.append(self.allocator, sys_path);
                 }
             },
             .isolated => {
@@ -317,8 +317,8 @@ pub const Launcher = struct {
         pkg_closure: ?*const Closure,
         isolation: IsolationMode,
     ) ![]const u8 {
-        var paths = std.ArrayList([]const u8).init(self.allocator);
-        defer paths.deinit();
+        var paths: std.ArrayList([]const u8) = .empty;
+        defer paths.deinit(self.allocator);
 
         // Add package's own bin directory first
         const pkg_bin = try std.fs.path.join(self.allocator, &[_][]const u8{
@@ -326,7 +326,7 @@ pub const Launcher = struct {
             "root",
             "bin",
         });
-        try paths.append(pkg_bin);
+        try paths.append(self.allocator, pkg_bin);
 
         // Add closure package binaries
         if (pkg_closure) |c| {
@@ -337,7 +337,7 @@ pub const Launcher = struct {
                     "root",
                     "bin",
                 });
-                try paths.append(dep_bin);
+                try paths.append(self.allocator, dep_bin);
                 self.allocator.free(dep_meta.dataset_path);
             }
         }
@@ -346,7 +346,7 @@ pub const Launcher = struct {
         switch (isolation) {
             .normal, .system_first => {
                 for (self.system_bin_paths) |sys_path| {
-                    try paths.append(sys_path);
+                    try paths.append(self.allocator, sys_path);
                 }
             },
             .isolated => {

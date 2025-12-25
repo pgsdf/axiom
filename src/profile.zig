@@ -155,7 +155,7 @@ pub const Profile = struct {
                             pkg.version orelse "*",
                             pkg.constraint_type orelse "any",
                         );
-                        try packages.append(.{
+                        try packages.append(allocator, .{
                             .name = try allocator.dupe(u8, name),
                             .constraint = constraint,
                         });
@@ -198,14 +198,14 @@ pub const Profile = struct {
                     pkg.version orelse "*",
                     pkg.constraint_type orelse "any",
                 );
-                try packages.append(.{
+                try packages.append(allocator, .{
                     .name = try allocator.dupe(u8, name),
                     .constraint = constraint,
                 });
             }
         }
 
-        profile.packages = try packages.toOwnedSlice();
+        profile.packages = try packages.toOwnedSlice(allocator);
         return profile;
     }
 
@@ -314,7 +314,7 @@ pub const ProfileLock = struct {
 
         var lines = std.mem.splitScalar(u8, yaml_content, '\n');
         var resolved = std.ArrayList(ResolvedPackage).empty;
-        defer resolved.deinit();
+        defer resolved.deinit(allocator);
 
         var current_pkg: ?struct {
             name: ?[]const u8 = null,
@@ -332,10 +332,10 @@ pub const ProfileLock = struct {
             if (std.mem.startsWith(u8, trimmed, "- ")) {
                 // Finalize previous package
                 if (current_pkg) |pkg| {
-                    if (pkg.name != null and pkg.version != null and 
+                    if (pkg.name != null and pkg.version != null and
                         pkg.revision != null and pkg.build_id != null) {
                         const version = try Version.parse(pkg.version.?);
-                        try resolved.append(.{
+                        try resolved.append(allocator, .{
                             .id = .{
                                 .name = try allocator.dupe(u8, pkg.name.?),
                                 .version = version,
@@ -385,10 +385,10 @@ pub const ProfileLock = struct {
 
         // Finalize last package
         if (current_pkg) |pkg| {
-            if (pkg.name != null and pkg.version != null and 
+            if (pkg.name != null and pkg.version != null and
                 pkg.revision != null and pkg.build_id != null) {
                 const version = try Version.parse(pkg.version.?);
-                try resolved.append(.{
+                try resolved.append(allocator, .{
                     .id = .{
                         .name = try allocator.dupe(u8, pkg.name.?),
                         .version = version,
@@ -400,7 +400,7 @@ pub const ProfileLock = struct {
             }
         }
 
-        lock.resolved = try resolved.toOwnedSlice();
+        lock.resolved = try resolved.toOwnedSlice(allocator);
         return lock;
     }
 
@@ -560,8 +560,8 @@ pub const ProfileManager = struct {
         defer self.allocator.free(profile_path);
 
         // Build content in memory first
-        var content = std.ArrayList(u8).init(self.allocator);
-        defer content.deinit();
+        var content: std.ArrayList(u8) = .empty;
+        defer content.deinit(self.allocator);
         try profile.write(content.writer());
 
         // Atomically write to file
@@ -616,8 +616,8 @@ pub const ProfileManager = struct {
         defer self.allocator.free(profile_path);
 
         // Build content in memory first
-        var content = std.ArrayList(u8).init(self.allocator);
-        defer content.deinit();
+        var content: std.ArrayList(u8) = .empty;
+        defer content.deinit(self.allocator);
         try profile.write(content.writer());
 
         // Atomically write to file
@@ -696,8 +696,8 @@ pub const ProfileManager = struct {
         defer self.allocator.free(lock_path);
 
         // Build content in memory first
-        var content = std.ArrayList(u8).init(self.allocator);
-        defer content.deinit();
+        var content: std.ArrayList(u8) = .empty;
+        defer content.deinit(self.allocator);
         try lock.write(content.writer());
 
         // Atomically write to file

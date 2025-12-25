@@ -350,7 +350,8 @@ pub const UserProfileManager = struct {
         const file = try std.fs.cwd().createFile(profile_path, .{});
         defer file.close();
 
-        try prof.write(file.writer());
+        var write_buf: [4096]u8 = undefined;
+        try prof.write(file.writer(&write_buf));
 
         std.debug.print("  Profile created at {s}\n", .{mountpoint});
     }
@@ -428,7 +429,8 @@ pub const UserProfileManager = struct {
         const file = try std.fs.cwd().createFile(profile_path, .{});
         defer file.close();
 
-        try prof.write(file.writer());
+        var write_buf: [4096]u8 = undefined;
+        try prof.write(file.writer(&write_buf));
 
         std.debug.print("Profile '{s}' updated (snapshot: {s})\n", .{ prof.name, snap_name });
     }
@@ -462,7 +464,8 @@ pub const UserProfileManager = struct {
         const file = try std.fs.cwd().createFile(lock_path, .{});
         defer file.close();
 
-        try lock.write(file.writer());
+        var write_buf: [4096]u8 = undefined;
+        try lock.write(file.writer(&write_buf));
 
         std.debug.print("Lock file saved: {s}\n", .{lock_path});
     }
@@ -617,8 +620,8 @@ pub const UserRealizationEngine = struct {
         // Clone and merge all packages
         std.debug.print("\nCloning packages...\n", .{});
 
-        var package_ids = std.ArrayList(PackageId).init(self.allocator);
-        defer package_ids.deinit();
+        var package_ids: std.ArrayList(PackageId) = .empty;
+        defer package_ids.deinit(self.allocator);
 
         for (lock.resolved, 0..) |pkg, i| {
             std.debug.print("  [{d}/{d}] {s} {}\n", .{
@@ -647,7 +650,7 @@ pub const UserRealizationEngine = struct {
             // Clone package to environment
             try self.clonePackage(env_mountpoint, pkg_dataset, pkg.id);
 
-            try package_ids.append(.{
+            try package_ids.append(self.allocator, .{
                 .name = try self.allocator.dupe(u8, pkg.id.name),
                 .version = pkg.id.version,
                 .revision = pkg.id.revision,
@@ -669,7 +672,7 @@ pub const UserRealizationEngine = struct {
             .name = try self.allocator.dupe(u8, env_name),
             .profile_name = try self.allocator.dupe(u8, lock.profile_name),
             .dataset_path = try self.allocator.dupe(u8, env_dataset),
-            .packages = try package_ids.toOwnedSlice(),
+            .packages = try package_ids.toOwnedSlice(self.allocator),
             .active = false,
         };
     }
@@ -788,8 +791,8 @@ pub const UserRealizationEngine = struct {
         // Clone and merge all packages with spec
         std.debug.print("\nCloning packages with spec...\n", .{});
 
-        var package_ids = std.ArrayList(PackageId).init(self.allocator);
-        defer package_ids.deinit();
+        var package_ids: std.ArrayList(PackageId) = .empty;
+        defer package_ids.deinit(self.allocator);
 
         for (lock.resolved, 0..) |pkg, i| {
             std.debug.print("  [{d}/{d}] {s} {} ({s})\n", .{
@@ -819,7 +822,7 @@ pub const UserRealizationEngine = struct {
             // Clone package with spec
             try self.clonePackageWithSpec(env_mountpoint, pkg_dataset, pkg.id, spec);
 
-            try package_ids.append(.{
+            try package_ids.append(self.allocator, .{
                 .name = try self.allocator.dupe(u8, pkg.id.name),
                 .version = pkg.id.version,
                 .revision = pkg.id.revision,
@@ -841,7 +844,7 @@ pub const UserRealizationEngine = struct {
             .name = try self.allocator.dupe(u8, env_name),
             .profile_name = try self.allocator.dupe(u8, lock.profile_name),
             .dataset_path = try self.allocator.dupe(u8, env_dataset),
-            .packages = try package_ids.toOwnedSlice(),
+            .packages = try package_ids.toOwnedSlice(self.allocator),
             .active = false,
         };
     }
@@ -947,7 +950,8 @@ pub const UserRealizationEngine = struct {
         const file = try std.fs.cwd().createFile(script_path, .{ .mode = 0o755 });
         defer file.close();
 
-        const writer = file.writer();
+        var write_buf: [4096]u8 = undefined;
+        const writer = file.writer(&write_buf);
 
         try writer.writeAll("#!/bin/sh\n");
         try writer.writeAll("# Axiom user environment activation script\n");

@@ -70,7 +70,7 @@ pub const RuntimeManifest = struct {
 
     pub fn serialize(self: RuntimeManifest, allocator: std.mem.Allocator) ![]const u8 {
         var output = std.ArrayList(u8).empty;
-        defer output.deinit();
+        defer output.deinit(allocator);
 
         const writer = output.writer();
 
@@ -105,7 +105,7 @@ pub const RuntimeManifest = struct {
             });
         }
 
-        return try output.toOwnedSlice();
+        return try output.toOwnedSlice(allocator);
     }
 };
 
@@ -257,15 +257,15 @@ pub const RuntimeManager = struct {
         try manifest_file.writeAll(manifest_content);
 
         // Collect packages
-        var packages = std.ArrayList(PackageId).init(self.allocator);
-        defer packages.deinit();
+        var packages: std.ArrayList(PackageId) = .empty;
+        defer packages.deinit(self.allocator);
 
         for (runtime_manifest.core_packages) |pkg_name| {
             // Find package in store
             const pkg_list = try self.pkg_store.listPackages();
             for (pkg_list) |pkg_id| {
                 if (std.mem.eql(u8, pkg_id.name, pkg_name)) {
-                    try packages.append(pkg_id);
+                    try packages.append(self.allocator, pkg_id);
                     break;
                 }
             }
@@ -276,7 +276,7 @@ pub const RuntimeManager = struct {
             .version = runtime_manifest.version,
             .description = try self.allocator.dupe(u8, runtime_manifest.description),
             .created_at = std.time.timestamp(),
-            .packages = try packages.toOwnedSlice(),
+            .packages = try packages.toOwnedSlice(self.allocator),
             .abi_version = try self.allocator.dupe(u8, runtime_manifest.abi_version),
             .stable = runtime_manifest.stable,
             .dataset_path = dataset_path,
@@ -285,11 +285,11 @@ pub const RuntimeManager = struct {
 
     /// List all available runtimes
     pub fn listRuntimes(self: *RuntimeManager) ![]RuntimeInfo {
-        var runtimes = std.ArrayList(RuntimeInfo).init(self.allocator);
-        defer runtimes.deinit();
+        var runtimes: std.ArrayList(RuntimeInfo) = .empty;
+        defer runtimes.deinit(self.allocator);
 
         var dir = std.fs.cwd().openDir(self.runtime_base, .{ .iterate = true }) catch {
-            return try runtimes.toOwnedSlice();
+            return try runtimes.toOwnedSlice(self.allocator);
         };
         defer dir.close();
 
@@ -297,11 +297,11 @@ pub const RuntimeManager = struct {
         while (try iter.next()) |entry| {
             if (entry.kind == .directory) {
                 const runtime_info = self.loadRuntimeInfo(entry.name) catch continue;
-                try runtimes.append(runtime_info);
+                try runtimes.append(self.allocator, runtime_info);
             }
         }
 
-        return try runtimes.toOwnedSlice();
+        return try runtimes.toOwnedSlice(self.allocator);
     }
 
     fn loadRuntimeInfo(self: *RuntimeManager, name: []const u8) !RuntimeInfo {

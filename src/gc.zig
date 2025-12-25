@@ -249,8 +249,8 @@ pub const GarbageCollector = struct {
         // Phase 3: Identify unreferenced packages
         std.debug.print("\nPhase 3: Identifying unreferenced packages...\n", .{});
         
-        var to_remove = std.ArrayList(PackageId).init(self.allocator);
-        defer to_remove.deinit();
+        var to_remove: std.ArrayList(PackageId) = .empty;
+        defer to_remove.deinit(self.allocator);
 
         const current_time = std.time.timestamp();
 
@@ -264,7 +264,7 @@ pub const GarbageCollector = struct {
                 // For now, assume all packages are outside grace period
                 _ = current_time;
                 
-                try to_remove.append(.{
+                try to_remove.append(self.allocator, .{
                     .name = try self.allocator.dupe(u8, pkg.name),
                     .version = pkg.version,
                     .revision = pkg.revision,
@@ -405,13 +405,13 @@ pub const GarbageCollector = struct {
     /// Scan profiles for referenced packages
     /// Reads all profile.lock.yaml files to find referenced packages
     fn scanProfiles(self: *GarbageCollector) ![]PackageId {
-        var packages = std.ArrayList(PackageId).init(self.allocator);
+        var packages: std.ArrayList(PackageId) = .empty;
         errdefer {
             for (packages.items) |pkg| {
                 self.allocator.free(pkg.name);
                 self.allocator.free(pkg.build_id);
             }
-            packages.deinit();
+            packages.deinit(self.allocator);
         }
 
         // Get mountpoint for the profile root
@@ -420,13 +420,13 @@ pub const GarbageCollector = struct {
             self.profile_mgr.profile_root,
         ) catch {
             // Profile root doesn't exist
-            return packages.toOwnedSlice();
+            return packages.toOwnedSlice(self.allocator);
         };
         defer self.allocator.free(profile_mountpoint);
 
         // Open the profiles directory
         var profiles_dir = std.fs.cwd().openDir(profile_mountpoint, .{ .iterate = true }) catch {
-            return packages.toOwnedSlice();
+            return packages.toOwnedSlice(self.allocator);
         };
         defer profiles_dir.close();
 
@@ -456,7 +456,7 @@ pub const GarbageCollector = struct {
 
             // Add all resolved packages
             for (lock.resolved) |pkg| {
-                try packages.append(.{
+                try packages.append(self.allocator, .{
                     .name = try self.allocator.dupe(u8, pkg.id.name),
                     .version = pkg.id.version,
                     .revision = pkg.id.revision,
@@ -465,19 +465,19 @@ pub const GarbageCollector = struct {
             }
         }
 
-        return packages.toOwnedSlice();
+        return packages.toOwnedSlice(self.allocator);
     }
 
     /// Scan environments for referenced packages
     /// Reads environment metadata to find referenced packages
     fn scanEnvironments(self: *GarbageCollector) ![]PackageId {
-        var packages = std.ArrayList(PackageId).init(self.allocator);
+        var packages: std.ArrayList(PackageId) = .empty;
         errdefer {
             for (packages.items) |pkg| {
                 self.allocator.free(pkg.name);
                 self.allocator.free(pkg.build_id);
             }
-            packages.deinit();
+            packages.deinit(self.allocator);
         }
 
         // Get mountpoint for the env root
@@ -487,13 +487,13 @@ pub const GarbageCollector = struct {
             env_root,
         ) catch {
             // Env root doesn't exist
-            return packages.toOwnedSlice();
+            return packages.toOwnedSlice(self.allocator);
         };
         defer self.allocator.free(env_mountpoint);
 
         // Open the environments directory
         var envs_dir = std.fs.cwd().openDir(env_mountpoint, .{ .iterate = true }) catch {
-            return packages.toOwnedSlice();
+            return packages.toOwnedSlice(self.allocator);
         };
         defer envs_dir.close();
 
@@ -528,7 +528,7 @@ pub const GarbageCollector = struct {
             defer lock.deinit(self.allocator);
 
             for (lock.resolved) |pkg| {
-                try packages.append(.{
+                try packages.append(self.allocator, .{
                     .name = try self.allocator.dupe(u8, pkg.id.name),
                     .version = pkg.id.version,
                     .revision = pkg.id.revision,
@@ -537,7 +537,7 @@ pub const GarbageCollector = struct {
             }
         }
 
-        return packages.toOwnedSlice();
+        return packages.toOwnedSlice(self.allocator);
     }
 
     /// Print garbage collection statistics

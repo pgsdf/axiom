@@ -127,7 +127,7 @@ pub const SetuidPolicy = struct {
         for (self.allowed_binaries.items) |b| {
             allocator.free(b);
         }
-        self.allowed_binaries.deinit();
+        self.allowed_binaries.deinit(allocator);
     }
 
     pub fn isAllowed(self: *const SetuidPolicy, binary_name: []const u8) bool {
@@ -156,12 +156,12 @@ pub const SetuidValidationResult = struct {
         for (self.issues.items) |issue| {
             allocator.free(issue);
         }
-        self.issues.deinit();
+        self.issues.deinit(allocator);
     }
 
     pub fn addIssue(self: *SetuidValidationResult, allocator: Allocator, issue: []const u8) !void {
         self.valid = false;
-        try self.issues.append(try allocator.dupe(u8, issue));
+        try self.issues.append(allocator, try allocator.dupe(u8, issue));
     }
 };
 
@@ -397,10 +397,10 @@ pub const SetuidManager = struct {
 
     /// Read audit log entries
     pub fn readAuditLog(self: *Self, limit: usize) ![]AuditEntry {
-        var entries = std.ArrayList(AuditEntry).init(self.allocator);
+        var entries: std.ArrayList(AuditEntry) = .empty;
 
         const file = std.fs.cwd().openFile(self.audit_log_path, .{}) catch {
-            return entries.toOwnedSlice();
+            return entries.toOwnedSlice(self.allocator);
         };
         defer file.close();
 
@@ -449,11 +449,11 @@ pub const SetuidManager = struct {
                 entry.success = false;
             }
 
-            try entries.append(entry);
+            try entries.append(self.allocator, entry);
             count += 1;
         }
 
-        return entries.toOwnedSlice();
+        return entries.toOwnedSlice(self.allocator);
     }
 };
 

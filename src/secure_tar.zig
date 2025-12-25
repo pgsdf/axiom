@@ -129,8 +129,9 @@ pub const SecureTarExtractor = struct {
 
     /// Extract a tar archive from a file handle
     pub fn extractFromFile(self: *SecureTarExtractor, file: std.fs.File) !void {
-        // Get file reader
-        var reader = file.reader();
+        // Get file reader with buffer
+        var read_buf: [4096]u8 = undefined;
+        var reader = file.reader(&read_buf);
 
         // Detect and handle compression
         // Read magic bytes to detect compression type
@@ -157,19 +158,22 @@ pub const SecureTarExtractor = struct {
             try self.extractZstd(file);
         } else {
             // Assume uncompressed tar
-            try self.extractTar(file.reader());
+            var tar_buf: [4096]u8 = undefined;
+            try self.extractTar(file.reader(&tar_buf));
         }
     }
 
     /// Extract gzip-compressed tar
     fn extractGzip(self: *SecureTarExtractor, file: std.fs.File) !void {
-        var decompress = std.compress.gzip.decompressor(file.reader());
+        var read_buf: [4096]u8 = undefined;
+        var decompress = std.compress.gzip.decompressor(file.reader(&read_buf));
         try self.extractTar(decompress.reader());
     }
 
     /// Extract xz-compressed tar
     fn extractXz(self: *SecureTarExtractor, file: std.fs.File) !void {
-        var decompress = std.compress.xz.decompress(self.allocator, file.reader()) catch |err| {
+        var read_buf: [4096]u8 = undefined;
+        var decompress = std.compress.xz.decompress(self.allocator, file.reader(&read_buf)) catch |err| {
             std.debug.print("SecureTarExtractor: XZ decompression init failed: {}\n", .{err});
             return ExtractionError.MalformedArchive;
         };
@@ -181,7 +185,8 @@ pub const SecureTarExtractor = struct {
     fn extractZstd(self: *SecureTarExtractor, file: std.fs.File) !void {
         // Zstd requires a window buffer for decompression (up to 8MB for max window size)
         var window_buffer: [1 << 23]u8 = undefined; // 8MB window buffer
-        var decompress = std.compress.zstd.decompressor(file.reader(), .{
+        var read_buf: [4096]u8 = undefined;
+        var decompress = std.compress.zstd.decompressor(file.reader(&read_buf), .{
             .window_buffer = &window_buffer,
         });
         try self.extractTar(decompress.reader());
@@ -268,7 +273,8 @@ pub const SecureTarExtractor = struct {
         defer file.close();
 
         // Write file contents directly using tar entry's writeAll method
-        entry.writeAll(file.writer()) catch |err| {
+        var write_buf: [4096]u8 = undefined;
+        entry.writeAll(file.writer(&write_buf)) catch |err| {
             std.debug.print("SecureTarExtractor: Write error: {}\n", .{err});
             return ExtractionError.IoError;
         };
@@ -396,8 +402,8 @@ pub const SecureTarExtractor = struct {
 
         // Check for parent directory references
         var iter = std.mem.splitScalar(u8, path, '/');
-        var normalized_parts = std.ArrayList([]const u8).init(self.allocator);
-        defer normalized_parts.deinit();
+        var normalized_parts: std.ArrayList([]const u8) = .empty;
+        defer normalized_parts.deinit(self.allocator);
 
         while (iter.next()) |component| {
             if (component.len == 0) continue; // Skip empty components (double slashes)
@@ -421,7 +427,7 @@ pub const SecureTarExtractor = struct {
                     return ExtractionError.PathTraversal;
                 }
             } else {
-                try normalized_parts.append(component);
+                try normalized_parts.append(self.allocator, component);
             }
         }
 
@@ -479,14 +485,14 @@ pub const SecureTarExtractor = struct {
         // Get the directory containing the symlink
         const link_dir = std.fs.path.dirname(link_location) orelse "";
 
-        var resolved_parts = std.ArrayList([]const u8).init(self.allocator);
-        defer resolved_parts.deinit();
+        var resolved_parts: std.ArrayList([]const u8) = .empty;
+        defer resolved_parts.deinit(self.allocator);
 
         // Start with link directory components
         var dir_iter = std.mem.splitScalar(u8, link_dir, '/');
         while (dir_iter.next()) |component| {
             if (component.len > 0 and !std.mem.eql(u8, component, ".")) {
-                try resolved_parts.append(component);
+                try resolved_parts.append(self.allocator, component);
             }
         }
 
@@ -506,7 +512,7 @@ pub const SecureTarExtractor = struct {
                 }
                 _ = resolved_parts.pop();
             } else {
-                try resolved_parts.append(component);
+                try resolved_parts.append(self.allocator, component);
             }
         }
     }

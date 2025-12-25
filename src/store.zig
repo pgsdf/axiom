@@ -465,13 +465,13 @@ pub const PackageStore = struct {
     pub fn listPackages(
         self: *PackageStore,
     ) ![]PackageId {
-        var packages = std.ArrayList(PackageId).init(self.allocator);
+        var packages: std.ArrayList(PackageId) = .empty;
         errdefer {
             for (packages.items) |pkg| {
                 self.allocator.free(pkg.name);
                 self.allocator.free(pkg.build_id);
             }
-            packages.deinit();
+            packages.deinit(self.allocator);
         }
 
         // Get mountpoint for the store root
@@ -480,13 +480,13 @@ pub const PackageStore = struct {
             self.paths.store_root,
         ) catch {
             // Store root doesn't exist or isn't mounted
-            return packages.toOwnedSlice();
+            return packages.toOwnedSlice(self.allocator);
         };
         defer self.allocator.free(store_mountpoint);
 
         // Open the store directory
         var store_dir = std.fs.cwd().openDir(store_mountpoint, .{ .iterate = true }) catch {
-            return packages.toOwnedSlice();
+            return packages.toOwnedSlice(self.allocator);
         };
         defer store_dir.close();
 
@@ -538,7 +538,7 @@ pub const PackageStore = struct {
                     while (try build_iter.next()) |build_entry| {
                         if (build_entry.kind != .directory) continue;
 
-                        try packages.append(.{
+                        try packages.append(self.allocator, .{
                             .name = try self.allocator.dupe(u8, name_entry.name),
                             .version = version,
                             .revision = revision,
@@ -549,7 +549,7 @@ pub const PackageStore = struct {
             }
         }
 
-        return packages.toOwnedSlice();
+        return packages.toOwnedSlice(self.allocator);
     }
 
     // Private helper methods
@@ -680,8 +680,8 @@ pub const PackageStore = struct {
         defer self.allocator.free(path);
 
         // Build content in memory first
-        var content = std.ArrayList(u8).init(self.allocator);
-        defer content.deinit();
+        var content: std.ArrayList(u8) = .empty;
+        defer content.deinit(self.allocator);
         const writer = content.writer();
 
         // Write manifest in YAML format
@@ -731,8 +731,8 @@ pub const PackageStore = struct {
         defer self.allocator.free(path);
 
         // Build content in memory first
-        var content = std.ArrayList(u8).init(self.allocator);
-        defer content.deinit();
+        var content: std.ArrayList(u8) = .empty;
+        defer content.deinit(self.allocator);
         const writer = content.writer();
 
         try writer.writeAll("dependencies:\n");
@@ -800,8 +800,8 @@ pub const PackageStore = struct {
         defer self.allocator.free(path);
 
         // Build content in memory first
-        var content = std.ArrayList(u8).init(self.allocator);
-        defer content.deinit();
+        var content: std.ArrayList(u8) = .empty;
+        defer content.deinit(self.allocator);
         const writer = content.writer();
 
         try writer.print("build_time: {d}\n", .{prov.build_time});

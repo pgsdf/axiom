@@ -485,7 +485,7 @@ pub const VirtualPackageIndex = struct {
     pub fn deinit(self: *VirtualPackageIndex) void {
         var iter = self.providers.iterator();
         while (iter.next()) |entry| {
-            entry.value_ptr.deinit();
+            entry.value_ptr.deinit(self.allocator);
         }
         self.providers.deinit();
     }
@@ -494,9 +494,9 @@ pub const VirtualPackageIndex = struct {
     pub fn addProvider(self: *VirtualPackageIndex, virtual_name: []const u8, real_name: []const u8) !void {
         const entry = try self.providers.getOrPut(virtual_name);
         if (!entry.found_existing) {
-            entry.value_ptr.* = std.ArrayList([]const u8).init(self.allocator);
+            entry.value_ptr.* = .empty;
         }
-        try entry.value_ptr.append(real_name);
+        try entry.value_ptr.append(self.allocator, real_name);
     }
 
     /// Get all packages that provide a virtual package
@@ -556,14 +556,14 @@ pub const ResolutionContext = struct {
     pub fn deinit(self: *ResolutionContext) void {
         var constraint_iter = self.constraints.iterator();
         while (constraint_iter.next()) |entry| {
-            entry.value_ptr.deinit();
+            entry.value_ptr.deinit(self.allocator);
         }
         self.constraints.deinit();
         self.resolved.deinit();
         self.requested.deinit();
         self.resolving.deinit();
         self.virtual_index.deinit();
-        self.conflicts.deinit();
+        self.conflicts.deinit(self.allocator);
         self.resolved_candidates.deinit();
     }
 
@@ -575,7 +575,7 @@ pub const ResolutionContext = struct {
                 // Check version constraint if present
                 if (conflict.constraint) |constraint| {
                     if (constraint.satisfies(resolved_id.version)) {
-                        try self.conflicts.append(.{
+                        try self.conflicts.append(self.allocator, .{
                             .package_a = candidate.id.name,
                             .package_b = conflict.name,
                             .reason = "explicit conflict declaration",
@@ -583,7 +583,7 @@ pub const ResolutionContext = struct {
                         return true;
                     }
                 } else {
-                    try self.conflicts.append(.{
+                    try self.conflicts.append(self.allocator, .{
                         .package_a = candidate.id.name,
                         .package_b = conflict.name,
                         .reason = "explicit conflict declaration",
@@ -601,7 +601,7 @@ pub const ResolutionContext = struct {
                 if (std.mem.eql(u8, conflict.name, candidate.id.name)) {
                     if (conflict.constraint) |constraint| {
                         if (constraint.satisfies(candidate.id.version)) {
-                            try self.conflicts.append(.{
+                            try self.conflicts.append(self.allocator, .{
                                 .package_a = resolved_candidate.id.name,
                                 .package_b = candidate.id.name,
                                 .reason = "explicit conflict declaration",
@@ -609,7 +609,7 @@ pub const ResolutionContext = struct {
                             return true;
                         }
                     } else {
-                        try self.conflicts.append(.{
+                        try self.conflicts.append(self.allocator, .{
                             .package_a = resolved_candidate.id.name,
                             .package_b = candidate.id.name,
                             .reason = "explicit conflict declaration",
@@ -853,13 +853,13 @@ pub const Resolver = struct {
         }
 
         // Build result
-        var resolved_packages = std.ArrayList(ResolvedPackage).init(self.allocator);
-        defer resolved_packages.deinit();
+        var resolved_packages: std.ArrayList(ResolvedPackage) = .empty;
+        defer resolved_packages.deinit(self.allocator);
 
         var resolved_iter = ctx.resolved.iterator();
         while (resolved_iter.next()) |entry| {
             const is_requested = ctx.requested.get(entry.key_ptr.*) orelse false;
-            try resolved_packages.append(.{
+            try resolved_packages.append(self.allocator, .{
                 .id = .{
                     .name = try self.allocator.dupe(u8, entry.value_ptr.name),
                     .version = entry.value_ptr.version,
@@ -879,7 +879,7 @@ pub const Resolver = struct {
         return ProfileLock{
             .profile_name = try self.allocator.dupe(u8, prof.name),
             .lock_version = 1,
-            .resolved = try resolved_packages.toOwnedSlice(),
+            .resolved = try resolved_packages.toOwnedSlice(self.allocator),
         };
     }
 
@@ -904,7 +904,7 @@ pub const Resolver = struct {
         defer {
             var iter = tried_versions.valueIterator();
             while (iter.next()) |list| {
-                list.deinit();
+                list.deinit(self.allocator);
             }
             tried_versions.deinit();
         }
@@ -970,13 +970,13 @@ pub const Resolver = struct {
         }
 
         // Build result
-        var resolved_packages = std.ArrayList(ResolvedPackage).init(self.allocator);
-        defer resolved_packages.deinit();
+        var resolved_packages: std.ArrayList(ResolvedPackage) = .empty;
+        defer resolved_packages.deinit(self.allocator);
 
         var resolved_iter = ctx.resolved.iterator();
         while (resolved_iter.next()) |entry| {
             const is_requested = ctx.requested.get(entry.key_ptr.*) orelse false;
-            try resolved_packages.append(.{
+            try resolved_packages.append(self.allocator, .{
                 .id = .{
                     .name = try self.allocator.dupe(u8, entry.value_ptr.name),
                     .version = entry.value_ptr.version,
@@ -1003,7 +1003,7 @@ pub const Resolver = struct {
         return ProfileLock{
             .profile_name = try self.allocator.dupe(u8, prof.name),
             .lock_version = 1,
-            .resolved = try resolved_packages.toOwnedSlice(),
+            .resolved = try resolved_packages.toOwnedSlice(self.allocator),
         };
     }
 
@@ -1038,7 +1038,7 @@ pub const Resolver = struct {
         // Get list of already-tried versions for this package
         const tried_entry = try tried_versions.getOrPut(pkg_name);
         if (!tried_entry.found_existing) {
-            tried_entry.value_ptr.* = std.ArrayList(Version).init(self.allocator);
+            tried_entry.value_ptr.* = .empty;
         }
 
         // Sort candidates by preference
@@ -1064,7 +1064,7 @@ pub const Resolver = struct {
             const has_conflict = try ctx.checkConflicts(candidate);
             if (has_conflict) {
                 // Mark this version as tried
-                try tried_entry.value_ptr.append(candidate.id.version);
+                try tried_entry.value_ptr.append(self.allocator, candidate.id.version);
                 continue;
             }
 
@@ -1072,7 +1072,7 @@ pub const Resolver = struct {
             if (candidate.kernel_compat) |kc| {
                 const compat_result = kernelIsCompatible(&self.kernel_ctx, &kc);
                 if (!compat_result.compatible) {
-                    try tried_entry.value_ptr.append(candidate.id.version);
+                    try tried_entry.value_ptr.append(self.allocator, candidate.id.version);
                     continue;
                 }
             }
@@ -1176,22 +1176,22 @@ pub const Resolver = struct {
             }
 
             // Convert dependencies
-            var deps = std.ArrayList(sat_resolver.PackageCandidate.Dependency).init(self.allocator);
-            defer deps.deinit();
+            var deps: std.ArrayList(sat_resolver.PackageCandidate.Dependency) = .empty;
+            defer deps.deinit(self.allocator);
 
             for (pkg_meta.dependencies) |dep| {
-                try deps.append(.{
+                try deps.append(self.allocator, .{
                     .name = dep.name,
                     .constraint = dep.constraint,
                 });
             }
 
             // Convert conflicts
-            var conflicts = std.ArrayList([]const u8).init(self.allocator);
-            defer conflicts.deinit();
+            var conflicts: std.ArrayList([]const u8) = .empty;
+            defer conflicts.deinit(self.allocator);
 
             for (pkg_meta.manifest.conflicts) |conflict| {
-                try conflicts.append(conflict.name);
+                try conflicts.append(self.allocator, conflict.name);
             }
 
             try sat.registerPackage(pkg_id, deps.items, conflicts.items);
@@ -1216,8 +1216,8 @@ pub const Resolver = struct {
             .success => |resolved_ids| {
                 defer self.allocator.free(resolved_ids);
 
-                var resolved_packages = std.ArrayList(ResolvedPackage).init(self.allocator);
-                defer resolved_packages.deinit();
+                var resolved_packages: std.ArrayList(ResolvedPackage) = .empty;
+                defer resolved_packages.deinit(self.allocator);
 
                 for (resolved_ids) |pkg_id| {
                     // Check if this was directly requested
@@ -1229,7 +1229,7 @@ pub const Resolver = struct {
                         }
                     }
 
-                    try resolved_packages.append(.{
+                    try resolved_packages.append(self.allocator, .{
                         .id = .{
                             .name = try self.allocator.dupe(u8, pkg_id.name),
                             .version = pkg_id.version,
@@ -1245,7 +1245,7 @@ pub const Resolver = struct {
                 return ProfileLock{
                     .profile_name = try self.allocator.dupe(u8, prof.name),
                     .lock_version = 1,
-                    .resolved = try resolved_packages.toOwnedSlice(),
+                    .resolved = try resolved_packages.toOwnedSlice(self.allocator),
                 };
             },
             .failure => |failure| {
@@ -1290,9 +1290,9 @@ pub const Resolver = struct {
     ) !void {
         const entry = try ctx.constraints.getOrPut(pkg_name);
         if (!entry.found_existing) {
-            entry.value_ptr.* = std.ArrayList(VersionConstraint).init(self.allocator);
+            entry.value_ptr.* = .empty;
         }
-        try entry.value_ptr.append(constraint);
+        try entry.value_ptr.append(self.allocator, constraint);
     }
 
     /// Resolve a single package and its dependencies
@@ -1453,13 +1453,13 @@ pub const Resolver = struct {
     ) ![]Candidate {
         _ = ctx;
 
-        var candidates = std.ArrayList(Candidate).init(self.allocator);
+        var candidates: std.ArrayList(Candidate) = .empty;
         errdefer {
             for (candidates.items) |c| {
                 self.allocator.free(c.id.name);
                 self.allocator.free(c.id.build_id);
             }
-            candidates.deinit();
+            candidates.deinit(self.allocator);
         }
 
         // Query the store for all packages
@@ -1500,65 +1500,65 @@ pub const Resolver = struct {
                     var pkg_meta = pkg_meta_const;
 
                     // Copy dependencies with proper cleanup on error
-                    var deps = std.ArrayList(Dependency).init(self.allocator);
+                    var deps: std.ArrayList(Dependency) = .empty;
                     errdefer {
                         for (deps.items) |dep| {
                             self.allocator.free(dep.name);
                         }
-                        deps.deinit();
+                        deps.deinit(self.allocator);
                     }
                     for (pkg_meta.dependencies) |dep| {
-                        try deps.append(.{
+                        try deps.append(self.allocator, .{
                             .name = try self.allocator.dupe(u8, dep.name),
                             .constraint = dep.constraint,
                         });
                     }
-                    dependencies = try deps.toOwnedSlice();
+                    dependencies = try deps.toOwnedSlice(self.allocator);
 
                     // Copy provides (provides is [][]const u8) with proper cleanup
-                    var prov = std.ArrayList([]const u8).init(self.allocator);
+                    var prov: std.ArrayList([]const u8) = .empty;
                     errdefer {
                         for (prov.items) |p| {
                             self.allocator.free(p);
                         }
-                        prov.deinit();
+                        prov.deinit(self.allocator);
                     }
                     for (pkg_meta.manifest.provides) |p| {
-                        try prov.append(try self.allocator.dupe(u8, p));
+                        try prov.append(self.allocator, try self.allocator.dupe(u8, p));
                     }
-                    provides = try prov.toOwnedSlice();
+                    provides = try prov.toOwnedSlice(self.allocator);
 
                     // Copy conflicts with proper cleanup
-                    var conf = std.ArrayList(VirtualPackage).init(self.allocator);
+                    var conf: std.ArrayList(VirtualPackage) = .empty;
                     errdefer {
                         for (conf.items) |c| {
                             self.allocator.free(c.name);
                         }
-                        conf.deinit();
+                        conf.deinit(self.allocator);
                     }
                     for (pkg_meta.manifest.conflicts) |c| {
-                        try conf.append(.{
+                        try conf.append(self.allocator, .{
                             .name = try self.allocator.dupe(u8, c.name),
                             .constraint = c.constraint,
                         });
                     }
-                    conflicts = try conf.toOwnedSlice();
+                    conflicts = try conf.toOwnedSlice(self.allocator);
 
                     // Copy replaces with proper cleanup
-                    var repl = std.ArrayList(VirtualPackage).init(self.allocator);
+                    var repl: std.ArrayList(VirtualPackage) = .empty;
                     errdefer {
                         for (repl.items) |r| {
                             self.allocator.free(r.name);
                         }
-                        repl.deinit();
+                        repl.deinit(self.allocator);
                     }
                     for (pkg_meta.manifest.replaces) |r| {
-                        try repl.append(.{
+                        try repl.append(self.allocator, .{
                             .name = try self.allocator.dupe(u8, r.name),
                             .constraint = r.constraint,
                         });
                     }
-                    replaces = try repl.toOwnedSlice();
+                    replaces = try repl.toOwnedSlice(self.allocator);
 
                     // Copy kernel compat (field is named 'kernel' in Manifest)
                     kernel_compat = pkg_meta.manifest.kernel;
@@ -1570,7 +1570,7 @@ pub const Resolver = struct {
                     // Failed to load metadata - use empty dependencies
                 }
 
-                try candidates.append(.{
+                try candidates.append(self.allocator, .{
                     .id = .{
                         .name = try self.allocator.dupe(u8, pkg.name),
                         .version = pkg.version,
@@ -1586,7 +1586,7 @@ pub const Resolver = struct {
             }
         }
 
-        return candidates.toOwnedSlice();
+        return candidates.toOwnedSlice(self.allocator);
     }
 
     /// Build a virtual package index from all packages in the store
