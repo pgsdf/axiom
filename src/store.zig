@@ -61,7 +61,7 @@ pub const DatasetPaths = struct {
 
         // Convert version to string for validation
         var version_buf: [64]u8 = undefined;
-        const version_str = std.fmt.bufPrint(&version_buf, "{}", .{pkg.version}) catch {
+        const version_str = std.fmt.bufPrint(&version_buf, "{f}", .{pkg.version}) catch {
             return StoreError.InvalidPathComponent;
         };
 
@@ -465,13 +465,13 @@ pub const PackageStore = struct {
     pub fn listPackages(
         self: *PackageStore,
     ) ![]PackageId {
-        var packages = std.ArrayList(PackageId).init(self.allocator);
+        var packages: std.ArrayList(PackageId) = .empty;
         errdefer {
             for (packages.items) |pkg| {
                 self.allocator.free(pkg.name);
                 self.allocator.free(pkg.build_id);
             }
-            packages.deinit();
+            packages.deinit(self.allocator);
         }
 
         // Get mountpoint for the store root
@@ -480,13 +480,13 @@ pub const PackageStore = struct {
             self.paths.store_root,
         ) catch {
             // Store root doesn't exist or isn't mounted
-            return packages.toOwnedSlice();
+            return packages.toOwnedSlice(self.allocator);
         };
         defer self.allocator.free(store_mountpoint);
 
         // Open the store directory
         var store_dir = std.fs.cwd().openDir(store_mountpoint, .{ .iterate = true }) catch {
-            return packages.toOwnedSlice();
+            return packages.toOwnedSlice(self.allocator);
         };
         defer store_dir.close();
 
@@ -538,7 +538,7 @@ pub const PackageStore = struct {
                     while (try build_iter.next()) |build_entry| {
                         if (build_entry.kind != .directory) continue;
 
-                        try packages.append(.{
+                        try packages.append(self.allocator, .{
                             .name = try self.allocator.dupe(u8, name_entry.name),
                             .version = version,
                             .revision = revision,
@@ -549,7 +549,7 @@ pub const PackageStore = struct {
             }
         }
 
-        return packages.toOwnedSlice();
+        return packages.toOwnedSlice(self.allocator);
     }
 
     // Private helper methods
@@ -680,13 +680,13 @@ pub const PackageStore = struct {
         defer self.allocator.free(path);
 
         // Build content in memory first
-        var content = std.ArrayList(u8).init(self.allocator);
-        defer content.deinit();
-        const writer = content.writer();
+        var content: std.ArrayList(u8) = .empty;
+        defer content.deinit(self.allocator);
+        const writer = content.writer(self.allocator);
 
         // Write manifest in YAML format
         try writer.print("name: {s}\n", .{mani.name});
-        try writer.print("version: {}\n", .{mani.version});
+        try writer.print("version: {f}\n", .{mani.version});
         try writer.print("revision: {d}\n", .{mani.revision});
 
         if (mani.description) |desc| {
@@ -731,9 +731,9 @@ pub const PackageStore = struct {
         defer self.allocator.free(path);
 
         // Build content in memory first
-        var content = std.ArrayList(u8).init(self.allocator);
-        defer content.deinit();
-        const writer = content.writer();
+        var content: std.ArrayList(u8) = .empty;
+        defer content.deinit(self.allocator);
+        const writer = content.writer(self.allocator);
 
         try writer.writeAll("dependencies:\n");
         for (deps.dependencies) |dep| {
@@ -741,15 +741,15 @@ pub const PackageStore = struct {
 
             switch (dep.constraint) {
                 .exact => |v| {
-                    try writer.print("    version: \"{}\"\n", .{v});
+                    try writer.print("    version: \"{f}\"\n", .{v});
                     try writer.writeAll("    constraint: exact\n");
                 },
                 .tilde => |v| {
-                    try writer.print("    version: \"~{}\"\n", .{v});
+                    try writer.print("    version: \"~{f}\"\n", .{v});
                     try writer.writeAll("    constraint: tilde\n");
                 },
                 .caret => |v| {
-                    try writer.print("    version: \"^{}\"\n", .{v});
+                    try writer.print("    version: \"^{f}\"\n", .{v});
                     try writer.writeAll("    constraint: caret\n");
                 },
                 .any => {
@@ -800,9 +800,9 @@ pub const PackageStore = struct {
         defer self.allocator.free(path);
 
         // Build content in memory first
-        var content = std.ArrayList(u8).init(self.allocator);
-        defer content.deinit();
-        const writer = content.writer();
+        var content: std.ArrayList(u8) = .empty;
+        defer content.deinit(self.allocator);
+        const writer = content.writer(self.allocator);
 
         try writer.print("build_time: {d}\n", .{prov.build_time});
         try writer.print("builder: {s}\n", .{prov.builder});

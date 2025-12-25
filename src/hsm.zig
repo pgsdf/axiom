@@ -269,10 +269,10 @@ pub const HsmProvider = struct {
 
         // In a real implementation, this would call C_GetSlotList
         // For now, return simulated slot info
-        var slots = std.ArrayList(SlotInfo).init(self.allocator);
+        var slots: std.ArrayList(SlotInfo) = .empty;
 
         // Add default slot
-        try slots.append(SlotInfo{
+        try slots.append(self.allocator, SlotInfo{
             .slot_id = self.config.slot_id,
             .description = try self.allocator.dupe(u8, "HSM Slot"),
             .manufacturer = try self.allocator.dupe(u8, "Unknown"),
@@ -282,7 +282,7 @@ pub const HsmProvider = struct {
             .hardware_version_minor = 0,
         });
 
-        return slots.toOwnedSlice();
+        return slots.toOwnedSlice(self.allocator);
     }
 
     /// Open a session to the HSM
@@ -346,12 +346,12 @@ pub const HsmProvider = struct {
         }
 
         // In real implementation: C_FindObjectsInit, C_FindObjects, C_GetAttributeValue
-        var keys = std.ArrayList(KeyInfo).init(self.allocator);
+        var keys: std.ArrayList(KeyInfo) = .empty;
 
         // Return simulated key list
         // In production, this would enumerate actual HSM keys
         if (self.config.key_label) |label| {
-            try keys.append(KeyInfo{
+            try keys.append(self.allocator, KeyInfo{
                 .key_id = try self.allocator.dupe(u8, "01"),
                 .label = try self.allocator.dupe(u8, label),
                 .key_type = .ed25519,
@@ -360,7 +360,7 @@ pub const HsmProvider = struct {
             });
         }
 
-        return keys.toOwnedSlice();
+        return keys.toOwnedSlice(self.allocator);
     }
 
     /// Sign data using an HSM key

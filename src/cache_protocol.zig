@@ -36,39 +36,39 @@ pub const CacheInfo = struct {
     features: []const []const u8,
 
     pub fn toJson(self: *const CacheInfo, allocator: Allocator) ![]const u8 {
-        var buffer = std.ArrayList(u8).empty;
-        errdefer buffer.deinit();
+        var buffer: std.ArrayList(u8) = .empty;
+        errdefer buffer.deinit(allocator);
 
         const writer = buffer.writer();
 
-        try buffer.appendSlice("{\"name\":\"");
+        try buffer.appendSlice(allocator, "{\"name\":\"");
         try validation.writeJsonEscaped(writer, self.name);
-        try buffer.appendSlice("\",\"version\":\"");
+        try buffer.appendSlice(allocator, "\",\"version\":\"");
         try validation.writeJsonEscaped(writer, self.version);
-        try buffer.appendSlice("\",\"protocol_version\":\"");
+        try buffer.appendSlice(allocator, "\",\"protocol_version\":\"");
         try validation.writeJsonEscaped(writer, self.protocol_version);
-        try buffer.appendSlice("\",");
+        try buffer.appendSlice(allocator, "\",");
         try std.fmt.format(writer, "\"package_count\":{d},", .{self.package_count});
         try std.fmt.format(writer, "\"total_size\":{d},", .{self.total_size});
 
         if (self.public_key) |key| {
-            try buffer.appendSlice("\"public_key\":\"");
+            try buffer.appendSlice(allocator, "\"public_key\":\"");
             try validation.writeJsonEscaped(writer, key);
-            try buffer.appendSlice("\",");
+            try buffer.appendSlice(allocator, "\",");
         } else {
-            try buffer.appendSlice("\"public_key\":null,");
+            try buffer.appendSlice(allocator, "\"public_key\":null,");
         }
 
-        try buffer.appendSlice("\"features\":[");
+        try buffer.appendSlice(allocator, "\"features\":[");
         for (self.features, 0..) |feature, i| {
-            if (i > 0) try buffer.append(',');
-            try buffer.append('"');
+            if (i > 0) try buffer.append(allocator, ',');
+            try buffer.append(allocator, '"');
             try validation.writeJsonEscaped(writer, feature);
-            try buffer.append('"');
+            try buffer.append(allocator, '"');
         }
-        try buffer.appendSlice("]}");
+        try buffer.appendSlice(allocator, "]}");
 
-        return buffer.toOwnedSlice();
+        return buffer.toOwnedSlice(allocator);
     }
 };
 
@@ -125,49 +125,49 @@ pub const PackageMeta = struct {
     }
 
     pub fn toJson(self: *const PackageMeta, allocator: Allocator) ![]const u8 {
-        var buffer = std.ArrayList(u8).empty;
-        errdefer buffer.deinit();
+        var buffer: std.ArrayList(u8) = .empty;
+        errdefer buffer.deinit(allocator);
 
         const writer = buffer.writer();
 
-        try buffer.appendSlice("{\"name\":\"");
+        try buffer.appendSlice(allocator, "{\"name\":\"");
         try validation.writeJsonEscaped(writer, self.name);
-        try buffer.appendSlice("\",\"version\":\"");
+        try buffer.appendSlice(allocator, "\",\"version\":\"");
         try validation.writeJsonEscaped(writer, self.version);
-        try buffer.appendSlice("\",\"hash\":\"");
+        try buffer.appendSlice(allocator, "\",\"hash\":\"");
         try validation.writeJsonEscaped(writer, self.hash);
-        try buffer.appendSlice("\",");
+        try buffer.appendSlice(allocator, "\",");
         try std.fmt.format(writer, "\"size\":{d},", .{self.size});
         try std.fmt.format(writer, "\"compressed_size\":{d},", .{self.compressed_size});
         try std.fmt.format(writer, "\"compression\":\"{s}\",", .{@tagName(self.compression)});
 
-        try buffer.appendSlice("\"dependencies\":[");
+        try buffer.appendSlice(allocator, "\"dependencies\":[");
         for (self.dependencies, 0..) |dep, i| {
-            if (i > 0) try buffer.append(',');
-            try buffer.append('"');
+            if (i > 0) try buffer.append(allocator, ',');
+            try buffer.append(allocator, '"');
             try validation.writeJsonEscaped(writer, dep);
-            try buffer.append('"');
+            try buffer.append(allocator, '"');
         }
-        try buffer.appendSlice("],");
+        try buffer.appendSlice(allocator, "],");
 
         if (self.description) |desc| {
-            try buffer.appendSlice("\"description\":\"");
+            try buffer.appendSlice(allocator, "\"description\":\"");
             try validation.writeJsonEscaped(writer, desc);
-            try buffer.appendSlice("\",");
+            try buffer.appendSlice(allocator, "\",");
         } else {
-            try buffer.appendSlice("\"description\":null,");
+            try buffer.appendSlice(allocator, "\"description\":null,");
         }
 
-        try buffer.appendSlice("\"signatures\":[");
+        try buffer.appendSlice(allocator, "\"signatures\":[");
         for (self.signatures, 0..) |sig, i| {
-            if (i > 0) try buffer.append(',');
-            try buffer.append('"');
+            if (i > 0) try buffer.append(allocator, ',');
+            try buffer.append(allocator, '"');
             try validation.writeJsonEscaped(writer, sig);
-            try buffer.append('"');
+            try buffer.append(allocator, '"');
         }
-        try buffer.appendSlice("]}");
+        try buffer.appendSlice(allocator, "]}");
 
-        return buffer.toOwnedSlice();
+        return buffer.toOwnedSlice(allocator);
     }
 };
 
@@ -233,10 +233,10 @@ pub const CacheConfig = struct {
 
     /// Parse YAML configuration
     fn parseYaml(allocator: Allocator, content: []const u8) !CacheConfig {
-        var sources = std.ArrayList(CacheSource).empty;
+        var sources: std.ArrayList(CacheSource) = .empty;
         errdefer {
             for (sources.items) |*s| s.deinit(allocator);
-            sources.deinit();
+            sources.deinit(allocator);
         }
 
         var config = CacheConfig{
@@ -265,7 +265,7 @@ pub const CacheConfig = struct {
                 if (std.mem.startsWith(u8, trimmed, "- url:")) {
                     // Save previous source
                     if (current_source) |src| {
-                        try sources.append(src);
+                        try sources.append(allocator, src);
                     }
                     // Start new source
                     const url_start = std.mem.indexOf(u8, trimmed, ":") orelse continue;
@@ -316,10 +316,10 @@ pub const CacheConfig = struct {
 
         // Save last source
         if (current_source) |src| {
-            try sources.append(src);
+            try sources.append(allocator, src);
         }
 
-        config.sources = try sources.toOwnedSlice();
+        config.sources = try sources.toOwnedSlice(allocator);
         return config;
     }
 };
@@ -470,17 +470,17 @@ pub const CacheServer = struct {
 
     /// List all packages
     pub fn listPackages(self: *Self) ![]PackageMeta {
-        var packages = std.ArrayList(PackageMeta).init(self.allocator);
+        var packages: std.ArrayList(PackageMeta) = .empty;
         errdefer {
             for (packages.items) |*p| p.deinit(self.allocator);
-            packages.deinit();
+            packages.deinit(self.allocator);
         }
 
         const pkg_path = try std.fmt.allocPrint(self.allocator, "{s}/pkg", .{self.store_path});
         defer self.allocator.free(pkg_path);
 
         var dir = std.fs.openDirAbsolute(pkg_path, .{ .iterate = true }) catch {
-            return packages.toOwnedSlice();
+            return packages.toOwnedSlice(self.allocator);
         };
         defer dir.close();
 
@@ -489,12 +489,12 @@ pub const CacheServer = struct {
             if (entry.kind == .directory) {
                 // Try to load package metadata
                 if (try self.getPackageMeta(entry.name, "latest")) |meta| {
-                    try packages.append(meta);
+                    try packages.append(self.allocator, meta);
                 }
             }
         }
 
-        return packages.toOwnedSlice();
+        return packages.toOwnedSlice(self.allocator);
     }
 
     /// Get package metadata
@@ -579,16 +579,16 @@ pub const CacheServer = struct {
                 self.allocator.free(packages);
             }
 
-            var json = std.ArrayList(u8).init(self.allocator);
-            try json.appendSlice("[");
+            var json: std.ArrayList(u8) = .empty;
+            try json.appendSlice(self.allocator, "[");
             for (packages, 0..) |pkg, i| {
-                if (i > 0) try json.append(',');
+                if (i > 0) try json.append(self.allocator, ',');
                 const pkg_json = try pkg.toJson(self.allocator);
                 defer self.allocator.free(pkg_json);
-                try json.appendSlice(pkg_json);
+                try json.appendSlice(self.allocator, pkg_json);
             }
-            try json.appendSlice("]");
-            response.body = try json.toOwnedSlice();
+            try json.appendSlice(self.allocator, "]");
+            response.body = try json.toOwnedSlice(self.allocator);
         } else if (std.mem.startsWith(u8, request.path, "/api/v1/packages/")) {
             // Parse package name and version from path
             const path_rest = request.path[17..]; // After "/api/v1/packages/"
@@ -835,14 +835,14 @@ pub const CacheClient = struct {
         };
 
         // Read response
-        var response = std.ArrayList(u8).init(self.allocator);
-        errdefer response.deinit();
+        var response: std.ArrayList(u8) = .empty;
+        errdefer response.deinit(self.allocator);
 
         var buf: [8192]u8 = undefined;
         while (true) {
             const n = stream.read(&buf) catch break;
             if (n == 0) break;
-            try response.appendSlice(buf[0..n]);
+            try response.appendSlice(self.allocator, buf[0..n]);
         }
 
         // Skip HTTP headers to get body
@@ -850,11 +850,11 @@ pub const CacheClient = struct {
         if (header_end) |idx| {
             const body = response.items[idx + 4 ..];
             const result = try self.allocator.dupe(u8, body);
-            response.deinit();
+            response.deinit(self.allocator);
             return result;
         }
 
-        return try response.toOwnedSlice();
+        return try response.toOwnedSlice(self.allocator);
     }
 
     /// Push package to cache

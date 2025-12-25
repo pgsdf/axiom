@@ -242,10 +242,10 @@ pub const RecoveryPlan = struct {
     pub fn init(allocator: Allocator) Self {
         return .{
             .allocator = allocator,
-            .interrupted_imports = std.ArrayList(ImportRecovery).empty,
-            .interrupted_realizations = std.ArrayList(RealizationRecovery).empty,
-            .orphaned_datasets = std.ArrayList([]const u8).empty,
-            .corrupted_packages = std.ArrayList(PackageRecovery).empty,
+            .interrupted_imports = .empty,
+            .interrupted_realizations = .empty,
+            .orphaned_datasets = .empty,
+            .corrupted_packages = .empty,
             .scan_time = std.time.timestamp(),
         };
     }
@@ -254,22 +254,22 @@ pub const RecoveryPlan = struct {
         for (self.interrupted_imports.items) |*item| {
             item.deinit(self.allocator);
         }
-        self.interrupted_imports.deinit();
+        self.interrupted_imports.deinit(self.allocator);
 
         for (self.interrupted_realizations.items) |*item| {
             item.deinit(self.allocator);
         }
-        self.interrupted_realizations.deinit();
+        self.interrupted_realizations.deinit(self.allocator);
 
         for (self.orphaned_datasets.items) |ds| {
             self.allocator.free(ds);
         }
-        self.orphaned_datasets.deinit();
+        self.orphaned_datasets.deinit(self.allocator);
 
         for (self.corrupted_packages.items) |*item| {
             item.deinit(self.allocator);
         }
-        self.corrupted_packages.deinit();
+        self.corrupted_packages.deinit(self.allocator);
     }
 
     pub fn isEmpty(self: *const Self) bool {
@@ -312,7 +312,7 @@ pub const RecoveryResult = struct {
             .actions_taken = 0,
             .actions_failed = 0,
             .actions_skipped = 0,
-            .messages = std.ArrayList([]const u8).empty,
+            .messages = .empty,
         };
     }
 
@@ -320,11 +320,11 @@ pub const RecoveryResult = struct {
         for (self.messages.items) |msg| {
             allocator.free(msg);
         }
-        self.messages.deinit();
+        self.messages.deinit(allocator);
     }
 
     pub fn addMessage(self: *Self, allocator: Allocator, msg: []const u8) !void {
-        try self.messages.append(try allocator.dupe(u8, msg));
+        try self.messages.append(allocator, try allocator.dupe(u8, msg));
     }
 };
 
@@ -406,7 +406,7 @@ pub const VerificationResult = struct {
                 .invalid_count = 0,
                 .details = null,
             },
-            .recommendations = std.ArrayList([]const u8).empty,
+            .recommendations = .empty,
         };
     }
 
@@ -414,7 +414,7 @@ pub const VerificationResult = struct {
         for (self.recommendations.items) |rec| {
             self.allocator.free(rec);
         }
-        self.recommendations.deinit();
+        self.recommendations.deinit(self.allocator);
     }
 
     pub fn overallStatus(self: *const Self) VerificationStatus {
@@ -436,7 +436,7 @@ pub const VerificationResult = struct {
     }
 
     pub fn addRecommendation(self: *Self, rec: []const u8) !void {
-        try self.recommendations.append(try self.allocator.dupe(u8, rec));
+        try self.recommendations.append(self.allocator, try self.allocator.dupe(u8, rec));
     }
 };
 
@@ -496,7 +496,7 @@ pub const RecoveryEngine = struct {
                         .retry_operation,
                     }),
                 };
-                try plan.interrupted_imports.append(recovery);
+                try plan.interrupted_imports.append(self.allocator, recovery);
             }
         }
     }
@@ -524,7 +524,7 @@ pub const RecoveryEngine = struct {
                         .retry_operation,
                     }),
                 };
-                try plan.interrupted_realizations.append(recovery);
+                try plan.interrupted_realizations.append(self.allocator, recovery);
             }
         }
     }
@@ -966,7 +966,7 @@ pub const TransactionLog = struct {
 
     /// Check for incomplete transactions
     pub fn getIncomplete(self: *Self) !std.ArrayList(TransactionEntry) {
-        var entries = std.ArrayList(TransactionEntry).init(self.allocator);
+        var entries: std.ArrayList(TransactionEntry) = .empty;
 
         var dir = std.fs.cwd().openDir(self.log_path, .{ .iterate = true }) catch {
             return entries;
@@ -984,7 +984,7 @@ pub const TransactionLog = struct {
                     .status = .in_progress,
                     .resource = try self.allocator.dupe(u8, "unknown"),
                 };
-                try entries.append(tx_entry);
+                try entries.append(self.allocator, tx_entry);
             }
         }
 

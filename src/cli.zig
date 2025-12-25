@@ -1371,8 +1371,8 @@ pub const CLI = struct {
             revision: u32,
         };
 
-        var unique_packages = std.ArrayList(PackageKey).init(self.allocator);
-        defer unique_packages.deinit();
+        var unique_packages: std.ArrayList(PackageKey) = .empty;
+        defer unique_packages.deinit(self.allocator);
 
         // Simple O(n²) deduplication - fine for reasonable package counts
         for (packages) |pkg| {
@@ -1389,7 +1389,7 @@ pub const CLI = struct {
                 }
             }
             if (!found) {
-                unique_packages.append(.{
+                unique_packages.append(self.allocator, .{
                     .name = pkg.name,
                     .version = pkg.version,
                     .revision = pkg.revision,
@@ -1734,14 +1734,14 @@ pub const CLI = struct {
             // Parse outputs filter if provided
             if (outputs_filter) |filter_str| {
                 // Parse comma-separated outputs
-                var outputs_list = std.ArrayList([]const u8).init(self.allocator);
-                defer outputs_list.deinit();
+                var outputs_list: std.ArrayList([]const u8) = .empty;
+                defer outputs_list.deinit(self.allocator);
 
                 var iter = std.mem.splitScalar(u8, filter_str, ',');
                 while (iter.next()) |output| {
                     const trimmed = std.mem.trim(u8, output, " ");
                     if (trimmed.len > 0) {
-                        try outputs_list.append(trimmed);
+                        try outputs_list.append(self.allocator, trimmed);
                     }
                 }
 
@@ -2076,14 +2076,14 @@ pub const CLI = struct {
         defer graph.deinit();
 
         // Find all packages that depend on target
-        var dependents = std.ArrayList([]const u8).init(self.allocator);
-        defer dependents.deinit();
+        var dependents: std.ArrayList([]const u8) = .empty;
+        defer dependents.deinit(self.allocator);
 
         for (lock.resolved) |pkg| {
             if (graph.edges.get(pkg.id.name)) |deps| {
                 for (deps.items) |dep| {
                     if (std.mem.eql(u8, dep, target_pkg)) {
-                        try dependents.append(pkg.id.name);
+                        try dependents.append(self.allocator, pkg.id.name);
                         break;
                     }
                 }
@@ -2115,8 +2115,8 @@ pub const CLI = struct {
         var chains_found: u32 = 0;
         for (lock.resolved) |pkg| {
             if (pkg.requested) {
-                var path = std.ArrayList([]const u8).init(self.allocator);
-                defer path.deinit();
+                var path: std.ArrayList([]const u8) = .empty;
+                defer path.deinit(self.allocator);
                 if (try self.findDependencyPath(graph, pkg.id.name, target_pkg, &path)) {
                     chains_found += 1;
                     std.debug.print("\n  {s}", .{pkg.id.name});
@@ -2177,8 +2177,8 @@ pub const CLI = struct {
         defer graph.deinit();
 
         // Find path
-        var path = std.ArrayList([]const u8).init(self.allocator);
-        defer path.deinit();
+        var path: std.ArrayList([]const u8) = .empty;
+        defer path.deinit(self.allocator);
 
         if (try self.findDependencyPath(graph, from_pkg, to_pkg, &path)) {
             std.debug.print("Dependency path: {s} → {s}\n", .{ from_pkg, to_pkg });
@@ -2229,13 +2229,13 @@ pub const CLI = struct {
         errdefer graph.deinit();
 
         for (lock.resolved) |pkg| {
-            var deps = std.ArrayList([]const u8).init(self.allocator);
-            errdefer deps.deinit();
+            var deps: std.ArrayList([]const u8) = .empty;
+            errdefer deps.deinit(self.allocator);
 
             // Get package metadata to find dependencies
             if (self.store.getPackage(pkg.id)) |pkg_meta| {
                 for (pkg_meta.dependencies) |dep| {
-                    try deps.append(dep.name);
+                    try deps.append(self.allocator, dep.name);
                 }
             } else |_| {
                 // Package not in store, skip dependencies
@@ -2361,7 +2361,7 @@ pub const CLI = struct {
     // Helper: Find path between two packages (BFS)
     fn findDependencyPath(self: *CLI, graph: DependencyGraph, from: []const u8, to: []const u8, path: *std.ArrayList([]const u8)) !bool {
         if (std.mem.eql(u8, from, to)) {
-            try path.append(from);
+            try path.append(self.allocator, from);
             return true;
         }
 
@@ -2369,10 +2369,10 @@ pub const CLI = struct {
         var visited = std.StringHashMap([]const u8).init(self.allocator);
         defer visited.deinit();
 
-        var queue = std.ArrayList([]const u8).init(self.allocator);
-        defer queue.deinit();
+        var queue: std.ArrayList([]const u8) = .empty;
+        defer queue.deinit(self.allocator);
 
-        try queue.append(from);
+        try queue.append(self.allocator, from);
         try visited.put(from, from); // parent of start is itself
 
         while (queue.items.len > 0) {
@@ -2386,26 +2386,26 @@ pub const CLI = struct {
 
                     if (std.mem.eql(u8, dep, to)) {
                         // Reconstruct path
-                        var reconstruct = std.ArrayList([]const u8).init(self.allocator);
-                        defer reconstruct.deinit();
+                        var reconstruct: std.ArrayList([]const u8) = .empty;
+                        defer reconstruct.deinit(self.allocator);
 
                         var node: []const u8 = to;
                         while (!std.mem.eql(u8, node, from)) {
-                            try reconstruct.append(node);
+                            try reconstruct.append(self.allocator, node);
                             node = visited.get(node).?;
                         }
-                        try reconstruct.append(from);
+                        try reconstruct.append(self.allocator, from);
 
                         // Reverse the path
                         var j: usize = reconstruct.items.len;
                         while (j > 0) {
                             j -= 1;
-                            try path.append(reconstruct.items[j]);
+                            try path.append(self.allocator, reconstruct.items[j]);
                         }
                         return true;
                     }
 
-                    try queue.append(dep);
+                    try queue.append(self.allocator, dep);
                 }
             }
         }
@@ -2779,7 +2779,8 @@ pub const CLI = struct {
         {
             const secret_file = try std.fs.cwd().createFile(secret_path, .{ .mode = 0o600 });
             defer secret_file.close();
-            const writer = secret_file.writer();
+            var write_buf: [4096]u8 = undefined;
+            const writer = secret_file.writer(&write_buf);
             try writer.writeAll("# Axiom Secret Key - KEEP PRIVATE!\n");
             try writer.print("key_id: {s}\n", .{key_id});
             try writer.print("secret_key: {s}\n", .{std.fmt.fmtSliceHexLower(&key_pair.secret_key)});
@@ -4018,14 +4019,14 @@ pub const CLI = struct {
 
             // Parse outputs filter if provided
             if (outputs_filter) |filter_str| {
-                var outputs_list = std.ArrayList([]const u8).init(self.allocator);
-                defer outputs_list.deinit();
+                var outputs_list: std.ArrayList([]const u8) = .empty;
+                defer outputs_list.deinit(self.allocator);
 
                 var iter = std.mem.splitScalar(u8, filter_str, ',');
                 while (iter.next()) |output| {
                     const trimmed = std.mem.trim(u8, output, " ");
                     if (trimmed.len > 0) {
-                        try outputs_list.append(trimmed);
+                        try outputs_list.append(self.allocator, trimmed);
                     }
                 }
 
@@ -4440,14 +4441,14 @@ pub const CLI = struct {
 
         // Check for --isolated flag
         var isolated = false;
-        var pkg_args = std.ArrayList([]const u8).init(self.allocator);
-        defer pkg_args.deinit();
+        var pkg_args: std.ArrayList([]const u8) = .empty;
+        defer pkg_args.deinit(self.allocator);
 
         for (args[1..]) |arg| {
             if (std.mem.eql(u8, arg, "--isolated")) {
                 isolated = true;
             } else {
-                pkg_args.append(arg) catch {};
+                pkg_args.append(self.allocator, arg) catch {};
             }
         }
 
@@ -4946,14 +4947,14 @@ pub const CLI = struct {
         var allow_untrusted = false;
         var skip_verify = false;
         var keep_extracted = false;
-        var bundle_args = std.ArrayList([]const u8).init(self.allocator);
-        defer bundle_args.deinit();
+        var bundle_args: std.ArrayList([]const u8) = .empty;
+        defer bundle_args.deinit(self.allocator);
 
         var i: usize = 1;
         var in_bundle_args = false;
         while (i < args.len) : (i += 1) {
             if (in_bundle_args) {
-                try bundle_args.append(args[i]);
+                try bundle_args.append(self.allocator, args[i]);
             } else if (std.mem.eql(u8, args[i], "--")) {
                 in_bundle_args = true;
             } else if (std.mem.eql(u8, args[i], "--trust-store") and i + 1 < args.len) {
@@ -4969,7 +4970,7 @@ pub const CLI = struct {
                 keep_extracted = true;
             } else {
                 // Treat unknown args as bundle args
-                try bundle_args.append(args[i]);
+                try bundle_args.append(self.allocator, args[i]);
             }
         }
 
@@ -5853,8 +5854,8 @@ pub const CLI = struct {
 
         // Parse options
         var options = bootstrap_pkg.ExportOptions{};
-        var custom_packages = std.ArrayList([]const u8).init(self.allocator);
-        defer custom_packages.deinit();
+        var custom_packages: std.ArrayList([]const u8) = .empty;
+        defer custom_packages.deinit(self.allocator);
 
         var i: usize = 1;
         while (i < args.len) : (i += 1) {
@@ -5865,7 +5866,7 @@ pub const CLI = struct {
                 // Parse comma-separated package list
                 var pkg_iter = std.mem.splitScalar(u8, args[i], ',');
                 while (pkg_iter.next()) |pkg| {
-                    try custom_packages.append(pkg);
+                    try custom_packages.append(self.allocator, pkg);
                 }
             } else if (std.mem.eql(u8, args[i], "--os-version") and i + 1 < args.len) {
                 i += 1;
@@ -7209,18 +7210,18 @@ pub const CLI = struct {
         }
 
         // Group by type
-        var profiles = std.ArrayList([]const u8).init(self.allocator);
-        defer profiles.deinit();
-        var environments = std.ArrayList([]const u8).init(self.allocator);
-        defer environments.deinit();
-        var processes = std.ArrayList([]const u8).init(self.allocator);
-        defer processes.deinit();
+        var profiles: std.ArrayList([]const u8) = .empty;
+        defer profiles.deinit(self.allocator);
+        var environments: std.ArrayList([]const u8) = .empty;
+        defer environments.deinit(self.allocator);
+        var processes: std.ArrayList([]const u8) = .empty;
+        defer processes.deinit(self.allocator);
 
         for (sources.items) |source| {
             switch (source.source_type) {
-                .profile => try profiles.append(source.name),
-                .environment => try environments.append(source.name),
-                .process => try processes.append(source.name),
+                .profile => try profiles.append(self.allocator, source.name),
+                .environment => try environments.append(self.allocator, source.name),
+                .process => try processes.append(self.allocator, source.name),
                 .build => {},
             }
         }

@@ -228,7 +228,7 @@ pub const Importer = struct {
 
         std.debug.print("\nPackage Details:\n", .{});
         std.debug.print("  Name:     {s}\n", .{pkg_id.name});
-        std.debug.print("  Version:  {}\n", .{pkg_id.version});
+        std.debug.print("  Version:  {f}\n", .{pkg_id.version});
         std.debug.print("  Revision: {d}\n", .{pkg_id.revision});
         std.debug.print("  Build ID: {s}\n", .{pkg_id.build_id});
 
@@ -582,7 +582,7 @@ pub const Importer = struct {
         // Report findings
         std.debug.print("  File type: {s}\n", .{@tagName(metadata.file_type)});
         if (metadata.name) |n| std.debug.print("  Detected name: {s}\n", .{n});
-        if (metadata.version) |v| std.debug.print("  Detected version: {}\n", .{v});
+        if (metadata.version) |v| std.debug.print("  Detected version: {f}\n", .{v});
         if (metadata.description) |d| std.debug.print("  Detected description: {s}\n", .{d});
         if (metadata.license) |l| std.debug.print("  Detected license: {s}\n", .{l});
 

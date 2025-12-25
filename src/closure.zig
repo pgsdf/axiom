@@ -50,16 +50,16 @@ pub const Closure = struct {
     pub fn init(allocator: std.mem.Allocator) Closure {
         return .{
             .allocator = allocator,
-            .roots = std.ArrayList(PackageId).empty,
+            .roots = .empty,
             .entries = std.StringHashMap(ClosureEntry).init(allocator),
-            .topo_order = std.ArrayList(PackageId).empty,
+            .topo_order = .empty,
             .total_size = 0,
             .base_packages = std.StringHashMap(void).init(allocator),
         };
     }
 
     pub fn deinit(self: *Closure) void {
-        self.roots.deinit();
+        self.roots.deinit(self.allocator);
 
         var entry_iter = self.entries.iterator();
         while (entry_iter.next()) |entry| {
@@ -69,7 +69,7 @@ pub const Closure = struct {
         }
         self.entries.deinit();
 
-        self.topo_order.deinit();
+        self.topo_order.deinit(self.allocator);
         self.base_packages.deinit();
     }
 
@@ -150,7 +150,7 @@ pub const ClosureComputer = struct {
             try closure.base_packages.put(entry.key_ptr.*, {});
         }
 
-        try closure.roots.append(pkg_id);
+        try closure.roots.append(self.allocator, pkg_id);
         try self.computeRecursive(&closure, pkg_id, 0, null);
         try self.computeTopologicalOrder(&closure);
 
@@ -169,7 +169,7 @@ pub const ClosureComputer = struct {
         }
 
         for (pkg_ids) |pkg_id| {
-            try closure.roots.append(pkg_id);
+            try closure.roots.append(self.allocator, pkg_id);
             try self.computeRecursive(&closure, pkg_id, 0, null);
         }
 
@@ -272,13 +272,13 @@ pub const ClosureComputer = struct {
         }
 
         // Find all nodes with in-degree 0 (leaf dependencies)
-        var queue = std.ArrayList([]const u8).init(self.allocator);
-        defer queue.deinit();
+        var queue: std.ArrayList([]const u8) = .empty;
+        defer queue.deinit(self.allocator);
 
         var degree_iter = in_degree.iterator();
         while (degree_iter.next()) |entry| {
             if (entry.value_ptr.* == 0) {
-                try queue.append(entry.key_ptr.*);
+                try queue.append(self.allocator, entry.key_ptr.*);
             }
         }
 
@@ -287,7 +287,7 @@ pub const ClosureComputer = struct {
             const key = queue.orderedRemove(0);
 
             if (closure.entries.get(key)) |entry| {
-                try closure.topo_order.append(entry.id);
+                try closure.topo_order.append(self.allocator, entry.id);
 
                 // Decrease in-degree of packages that depend on this one
                 var iter2 = closure.entries.iterator();
@@ -300,7 +300,7 @@ pub const ClosureComputer = struct {
                             if (in_degree.getPtr(e.key_ptr.*)) |deg| {
                                 deg.* -= 1;
                                 if (deg.* == 0) {
-                                    try queue.append(e.key_ptr.*);
+                                    try queue.append(self.allocator, e.key_ptr.*);
                                 }
                             }
                         }
@@ -406,8 +406,8 @@ pub fn formatClosure(
     closure: *const Closure,
     options: FormatOptions,
 ) ![]const u8 {
-    var output = std.ArrayList(u8).empty;
-    defer output.deinit();
+    var output = .empty;
+    defer output.deinit(allocator);
 
     const writer = output.writer();
 
@@ -446,7 +446,7 @@ pub fn formatClosure(
         }
     }
 
-    return try output.toOwnedSlice();
+    return try output.toOwnedSlice(allocator);
 }
 
 fn formatTreeNode(

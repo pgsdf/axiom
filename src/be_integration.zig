@@ -66,7 +66,7 @@ pub const HealthStatus = struct {
     pub fn init(allocator: Allocator) HealthStatus {
         return .{
             .allocator = allocator,
-            .results = std.ArrayList(HealthCheckResult).empty,
+            .results = .empty,
             .all_passed = true,
             .required_passed = true,
         };
@@ -76,7 +76,7 @@ pub const HealthStatus = struct {
         for (self.results.items) |*r| {
             r.deinit(self.allocator);
         }
-        self.results.deinit();
+        self.results.deinit(self.allocator);
     }
 };
 
@@ -110,7 +110,7 @@ pub const RollbackPolicy = struct {
 
     pub fn init(allocator: Allocator) RollbackPolicy {
         return .{
-            .health_checks = std.ArrayList(HealthCheck).empty,
+            .health_checks = .empty,
         };
     }
 
@@ -118,12 +118,12 @@ pub const RollbackPolicy = struct {
         for (self.health_checks.items) |*hc| {
             hc.deinit(allocator);
         }
-        self.health_checks.deinit();
+        self.health_checks.deinit(allocator);
     }
 
     /// Add a health check
-    pub fn addHealthCheck(self: *RollbackPolicy, check: HealthCheck) !void {
-        try self.health_checks.append(check);
+    pub fn addHealthCheck(self: *RollbackPolicy, allocator: Allocator, check: HealthCheck) !void {
+        try self.health_checks.append(allocator, check);
     }
 };
 
@@ -211,7 +211,7 @@ pub const ProfileDiff = struct {
     pub fn init(allocator: Allocator, be_a: []const u8, be_b: []const u8) !ProfileDiff {
         return .{
             .allocator = allocator,
-            .entries = std.ArrayList(ProfileDiffEntry).empty,
+            .entries = .empty,
             .be_a = try allocator.dupe(u8, be_a),
             .be_b = try allocator.dupe(u8, be_b),
         };
@@ -221,7 +221,7 @@ pub const ProfileDiff = struct {
         for (self.entries.items) |*e| {
             e.deinit(self.allocator);
         }
-        self.entries.deinit();
+        self.entries.deinit(self.allocator);
         self.allocator.free(self.be_a);
         self.allocator.free(self.be_b);
     }
@@ -388,7 +388,7 @@ pub const BeProfileManager = struct {
 
             if (packages_b.get(pkg_name)) |version_b| {
                 if (!std.mem.eql(u8, version_a, version_b)) {
-                    try diff.entries.append(.{
+                    try diff.entries.append(self.allocator, .{
                         .package_name = try self.allocator.dupe(u8, pkg_name),
                         .diff_type = .version_changed,
                         .version_a = try self.allocator.dupe(u8, version_a),
@@ -396,7 +396,7 @@ pub const BeProfileManager = struct {
                     });
                 }
             } else {
-                try diff.entries.append(.{
+                try diff.entries.append(self.allocator, .{
                     .package_name = try self.allocator.dupe(u8, pkg_name),
                     .diff_type = .removed,
                     .version_a = try self.allocator.dupe(u8, version_a),
@@ -412,7 +412,7 @@ pub const BeProfileManager = struct {
             const version_b = entry.value_ptr.*;
 
             if (packages_a.get(pkg_name) == null) {
-                try diff.entries.append(.{
+                try diff.entries.append(self.allocator, .{
                     .package_name = try self.allocator.dupe(u8, pkg_name),
                     .diff_type = .added,
                     .version_a = null,
@@ -492,7 +492,7 @@ pub const BootloaderIntegration = struct {
             .allocator = allocator,
             .zfs_handle = zfs_handle,
             .bootloader_type = .freebsd,
-            .hooks = std.ArrayList(ActivationHook).empty,
+            .hooks = .empty,
             .rollback_policy = RollbackPolicy.empty,
         };
     }
@@ -501,7 +501,7 @@ pub const BootloaderIntegration = struct {
         for (self.hooks.items) |*h| {
             h.deinit(self.allocator);
         }
-        self.hooks.deinit();
+        self.hooks.deinit(self.allocator);
         self.rollback_policy.deinit(self.allocator);
     }
 
@@ -511,7 +511,7 @@ pub const BootloaderIntegration = struct {
 
     /// Add an activation hook
     pub fn addHook(self: *Self, hook: ActivationHook) !void {
-        try self.hooks.append(hook);
+        try self.hooks.append(self.allocator, hook);
     }
 
     /// Configure auto-rollback policy
@@ -547,8 +547,8 @@ pub const BootloaderIntegration = struct {
             "/boot/loader.conf";
 
         // Read existing config
-        var config_content = std.ArrayList(u8).init(self.allocator);
-        defer config_content.deinit();
+        var config_content: std.ArrayList(u8) = .empty;
+        defer config_content.deinit(self.allocator);
 
         const file = std.fs.cwd().openFile(config_path, .{}) catch null;
         if (file) |f| {
@@ -560,8 +560,8 @@ pub const BootloaderIntegration = struct {
             var lines = std.mem.splitScalar(u8, existing, '\n');
             while (lines.next()) |line| {
                 if (!std.mem.startsWith(u8, line, "vfs.root.mountfrom=")) {
-                    try config_content.appendSlice(line);
-                    try config_content.append('\n');
+                    try config_content.appendSlice(self.allocator, line);
+                    try config_content.append(self.allocator, '\n');
                 }
             }
         }
@@ -574,7 +574,7 @@ pub const BootloaderIntegration = struct {
         );
         defer self.allocator.free(be_line);
 
-        try config_content.appendSlice(be_line);
+        try config_content.appendSlice(self.allocator, be_line);
 
         // Write config
         const out_file = try std.fs.cwd().createFile(config_path, .{});
@@ -654,7 +654,7 @@ pub const BootloaderIntegration = struct {
             child.spawn() catch {
                 result.passed = false;
                 result.duration_ms = @intCast(std.time.milliTimestamp() - start_time);
-                try status.results.append(result);
+                try status.results.append(status.allocator, result);
 
                 if (check.required) {
                     status.required_passed = false;
@@ -666,7 +666,7 @@ pub const BootloaderIntegration = struct {
             const term = child.wait() catch {
                 result.passed = false;
                 result.duration_ms = @intCast(std.time.milliTimestamp() - start_time);
-                try status.results.append(result);
+                try status.results.append(status.allocator, result);
 
                 if (check.required) {
                     status.required_passed = false;
@@ -685,7 +685,7 @@ pub const BootloaderIntegration = struct {
                 }
             }
 
-            try status.results.append(result);
+            try status.results.append(status.allocator, result);
         }
 
         return status;
@@ -794,7 +794,7 @@ pub const SystemUpgradeManager = struct {
 
 // Tests
 test "HealthStatus.init" {
-    const allocator = std.testing.allocator;
+    const _ = std.testing.allocator;
     var status = HealthStatus.empty;
     defer status.deinit();
 

@@ -367,7 +367,8 @@ pub const PortsMigrator = struct {
             {
                 const file = try std.fs.cwd().createFile(LOCAL_SECRET_KEY_PATH, .{ .mode = 0o600 });
                 defer file.close();
-                const writer = file.writer();
+                var write_buf: [4096]u8 = undefined;
+                const writer = file.writer(&write_buf);
                 try writer.writeAll("# Axiom Local Signing Key (SECRET - keep private!)\n");
                 try writer.writeAll("# Generated automatically for signing locally-built packages\n");
                 try writer.print("key_id: {s}\n", .{key_id});
@@ -378,7 +379,8 @@ pub const PortsMigrator = struct {
             {
                 const file = try std.fs.cwd().createFile(LOCAL_PUBLIC_KEY_PATH, .{ .mode = 0o644 });
                 defer file.close();
-                const writer = file.writer();
+                var write_buf: [4096]u8 = undefined;
+                const writer = file.writer(&write_buf);
                 try writer.writeAll("# Axiom Local Signing Key (PUBLIC)\n");
                 try writer.writeAll("# This key is used to verify packages built on this machine\n");
                 try writer.print("key_id: {s}\n", .{key_id});
@@ -578,8 +580,8 @@ pub const PortsMigrator = struct {
 
     /// Check if minimal bootstrap packages are available and warn if not
     pub fn checkBootstrapStatus(self: *PortsMigrator) !void {
-        var missing_minimal = std.ArrayList([]const u8).init(self.allocator);
-        defer missing_minimal.deinit();
+        var missing_minimal: std.ArrayList([]const u8) = .empty;
+        defer missing_minimal.deinit(self.allocator);
 
         // Check for minimal bootstrap packages
         for (bootstrap_pkg.MINIMAL_BOOTSTRAP_PACKAGES) |pkg_name| {
@@ -587,7 +589,7 @@ pub const PortsMigrator = struct {
             defer self.allocator.free(pkg_path);
 
             var dir = std.fs.openDirAbsolute(pkg_path, .{}) catch {
-                try missing_minimal.append(pkg_name);
+                try missing_minimal.append(self.allocator, pkg_name);
                 continue;
             };
             dir.close();
@@ -726,16 +728,16 @@ pub const PortsMigrator = struct {
         manifest.homepage = try self.allocator.dupe(u8, meta.www);
 
         // Map provides (the port provides itself as a virtual package)
-        var provides = std.ArrayList([]const u8).init(self.allocator);
-        try provides.append(try self.allocator.dupe(u8, meta.name));
-        manifest.provides = try provides.toOwnedSlice();
+        var provides: std.ArrayList([]const u8) = .empty;
+        try provides.append(self.allocator, try self.allocator.dupe(u8, meta.name));
+        manifest.provides = try provides.toOwnedSlice(self.allocator);
 
         // Map conflicts
-        var conflicts = std.ArrayList([]const u8).init(self.allocator);
+        var conflicts: std.ArrayList([]const u8) = .empty;
         for (meta.conflicts) |c| {
-            try conflicts.append(try self.allocator.dupe(u8, c));
+            try conflicts.append(self.allocator, try self.allocator.dupe(u8, c));
         }
-        manifest.conflicts = try conflicts.toOwnedSlice();
+        manifest.conflicts = try conflicts.toOwnedSlice(self.allocator);
 
         manifest.replaces = &[_][]const u8{};
 
@@ -744,7 +746,7 @@ pub const PortsMigrator = struct {
 
     /// Generate deps.yaml content from port metadata
     pub fn generateDepsYaml(self: *PortsMigrator, meta: *const PortMetadata) ![]const u8 {
-        var output = std.ArrayList(u8).init(self.allocator);
+        var output: std.ArrayList(u8) = .empty;
         const writer = output.writer();
 
         try writer.writeAll("# Generated from FreeBSD port: ");
@@ -802,12 +804,12 @@ pub const PortsMigrator = struct {
             }
         }
 
-        return output.toOwnedSlice();
+        return output.toOwnedSlice(self.allocator);
     }
 
     /// Generate build.yaml recipe from port metadata
     pub fn generateBuildYaml(self: *PortsMigrator, meta: *const PortMetadata) ![]const u8 {
-        var output = std.ArrayList(u8).init(self.allocator);
+        var output: std.ArrayList(u8) = .empty;
         const writer = output.writer();
 
         try writer.writeAll("# Generated from FreeBSD port\n");
@@ -923,7 +925,7 @@ pub const PortsMigrator = struct {
         try writer.writeAll("  strip: true\n");
         try writer.writeAll("  compress_man: true\n");
 
-        return output.toOwnedSlice();
+        return output.toOwnedSlice(self.allocator);
     }
 
     /// Write generated files to output directory
@@ -996,8 +998,8 @@ pub const PortsMigrator = struct {
             .status = .pending,
             .manifest_path = null,
             .axiom_package = null,
-            .warnings = std.ArrayList([]const u8).init(self.allocator),
-            .errors = std.ArrayList([]const u8).init(self.allocator),
+            .warnings = .empty,
+            .errors = .empty,
         };
 
         // Check if port should be skipped (e.g., ports-mgmt/pkg is replaced by Axiom)
@@ -1013,7 +1015,7 @@ pub const PortsMigrator = struct {
         // Phase 1: Extract metadata
         var metadata = self.extractMetadata(origin) catch |err| {
             result.status = .failed;
-            try result.errors.append(try std.fmt.allocPrint(
+            try result.errors.append(self.allocator, try std.fmt.allocPrint(
                 self.allocator,
                 "Failed to extract metadata: {s}",
                 .{@errorName(err)},
@@ -1070,10 +1072,10 @@ pub const PortsMigrator = struct {
 
         // Check for unsupported features
         if (metadata.flavors.len > 0 and !self.options.skip_options) {
-            try result.warnings.append(try self.allocator.dupe(u8, "Port has FLAVORS - only default flavor generated"));
+            try result.warnings.append(self.allocator, try self.allocator.dupe(u8, "Port has FLAVORS - only default flavor generated"));
         }
         if (metadata.options.len > 0 and !self.options.skip_options) {
-            try result.warnings.append(try std.fmt.allocPrint(
+            try result.warnings.append(self.allocator, try std.fmt.allocPrint(
                 self.allocator,
                 "Port has {d} OPTIONS - only default options used",
                 .{metadata.options.len},
@@ -1106,7 +1108,7 @@ pub const PortsMigrator = struct {
         // Phase 2: Build (optional)
         if (self.options.build_after_generate and !self.options.dry_run) {
             const build_result = self.buildPort(origin, &metadata, result.manifest_path) catch |err| {
-                try result.errors.append(try std.fmt.allocPrint(
+                try result.errors.append(self.allocator, try std.fmt.allocPrint(
                     self.allocator,
                     "Build failed: {s}",
                     .{@errorName(err)},
@@ -1124,7 +1126,7 @@ pub const PortsMigrator = struct {
                 defer self.allocator.free(display_name);
 
                 const pkg_id = self.importPort(&metadata, build_result.output_dir, origin) catch |err| {
-                    try result.errors.append(try std.fmt.allocPrint(
+                    try result.errors.append(self.allocator, try std.fmt.allocPrint(
                         self.allocator,
                         "Import failed: {s}",
                         .{@errorName(err)},
@@ -1215,7 +1217,7 @@ pub const PortsMigrator = struct {
                 };
                 self.allocator.free(symlink_path);
             }
-            self.bootstrap_symlinks.deinit();
+            self.bootstrap_symlinks.deinit(self.allocator);
 
             // Clean up system share symlinks (before sysroot is deleted)
             for (self.system_share_symlinks.items) |symlink_path| {
@@ -1224,7 +1226,7 @@ pub const PortsMigrator = struct {
                 };
                 self.allocator.free(symlink_path);
             }
-            self.system_share_symlinks.deinit();
+            self.system_share_symlinks.deinit(self.allocator);
 
             // Clean up the sysroot directory
             if (self.sysroot.len > 0) {
@@ -1521,10 +1523,10 @@ pub const PortsMigrator = struct {
     /// Scan the package store for packages with broken layout
     /// Returns a list of (package_name, origin) tuples for packages that need rebuilding
     pub fn findBrokenPackages(self: *PortsMigrator) !std.ArrayList(BrokenPackage) {
-        var broken = std.ArrayList(BrokenPackage).init(self.allocator);
+        var broken: std.ArrayList(BrokenPackage) = .empty;
         errdefer {
             for (broken.items) |b| b.deinit(self.allocator);
-            broken.deinit();
+            broken.deinit(self.allocator);
         }
 
         // Require store to be configured
@@ -1593,7 +1595,7 @@ pub const PortsMigrator = struct {
 
                             const origin = self.readOriginFromManifest(manifest_path) catch null;
 
-                            try broken.append(.{
+                            try broken.append(self.allocator, .{
                                 .name = try self.allocator.dupe(u8, pkg_entry.name),
                                 .origin = origin,
                                 .path = try self.allocator.dupe(u8, rev_path),
@@ -1719,7 +1721,7 @@ pub const PortsMigrator = struct {
         const broken = try self.findBrokenPackages();
         defer {
             for (broken.items) |b| b.deinit(self.allocator);
-            broken.deinit();
+            broken.deinit(self.allocator);
         }
 
         if (broken.items.len == 0) {
@@ -2183,10 +2185,10 @@ pub const PortsMigrator = struct {
     /// Returns paths to all versions' root/ directories (important for packages like autoconf
     /// where autoconf-switch and autoconf both provide different binaries under the same package name)
     fn findAllPackageRootsInStore(self: *PortsMigrator, pkg_name: []const u8) !std.ArrayList([]const u8) {
-        var roots = std.ArrayList([]const u8).init(self.allocator);
+        var roots: std.ArrayList([]const u8) = .empty;
         errdefer {
             for (roots.items) |r| self.allocator.free(r);
-            roots.deinit();
+            roots.deinit(self.allocator);
         }
 
         const store = self.options.store orelse return roots;
@@ -2253,7 +2255,7 @@ pub const PortsMigrator = struct {
                 continue;
             };
 
-            roots.append(root_path) catch {
+            roots.append(self.allocator, root_path) catch {
                 self.allocator.free(root_path);
                 continue;
             };
@@ -2369,17 +2371,17 @@ pub const PortsMigrator = struct {
                 .perl5lib = "",
                 .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
                 .cmake_path = try self.allocator.dupe(u8, "/usr/local/bin/cmake"),
-                .system_share_symlinks = std.ArrayList([]const u8).init(self.allocator),
-                .bootstrap_symlinks = std.ArrayList([]const u8).init(self.allocator),
+                .system_share_symlinks = .empty,
+                .bootstrap_symlinks = .empty,
                 .allocator = self.allocator,
             };
         }
 
         // Collect all package roots from dependencies
-        var all_roots = std.ArrayList([]const u8).init(self.allocator);
+        var all_roots: std.ArrayList([]const u8) = .empty;
         defer {
             for (all_roots.items) |r| self.allocator.free(r);
-            all_roots.deinit();
+            all_roots.deinit(self.allocator);
         }
 
         // Get ALL transitive dependencies for this port (not just direct ones)
@@ -2398,14 +2400,14 @@ pub const PortsMigrator = struct {
                 .perl5lib = "",
                 .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
                 .cmake_path = try self.allocator.dupe(u8, "/usr/local/bin/cmake"),
-                .system_share_symlinks = std.ArrayList([]const u8).init(self.allocator),
-                .bootstrap_symlinks = std.ArrayList([]const u8).init(self.allocator),
+                .system_share_symlinks = .empty,
+                .bootstrap_symlinks = .empty,
                 .allocator = self.allocator,
             };
         };
         defer {
             for (deps.items) |d| self.allocator.free(d);
-            deps.deinit();
+            deps.deinit(self.allocator);
         }
 
         std.debug.print("    [DEBUG] Processing {d} transitive dependencies for sysroot\n", .{deps.items.len});
@@ -2459,7 +2461,7 @@ pub const PortsMigrator = struct {
             defer {
                 // Free all strings in roots before deiniting
                 for (roots.items) |r| self.allocator.free(r);
-                roots.deinit();
+                roots.deinit(self.allocator);
             }
 
             if (roots.items.len == 0) {
@@ -2473,7 +2475,7 @@ pub const PortsMigrator = struct {
             for (roots.items) |root| {
                 // Dupe to transfer ownership since roots will be cleaned up
                 const root_copy = self.allocator.dupe(u8, root) catch continue;
-                all_roots.append(root_copy) catch {
+                all_roots.append(self.allocator, root_copy) catch {
                     self.allocator.free(root_copy);
                     continue;
                 };
@@ -2490,7 +2492,7 @@ pub const PortsMigrator = struct {
             var roots = self.findAllPackageRootsInStore(pkg_name) catch continue;
             defer {
                 for (roots.items) |r| self.allocator.free(r);
-                roots.deinit();
+                roots.deinit(self.allocator);
             }
 
             if (roots.items.len == 0) {
@@ -2502,7 +2504,7 @@ pub const PortsMigrator = struct {
 
             for (roots.items) |root| {
                 const root_copy = self.allocator.dupe(u8, root) catch continue;
-                all_roots.append(root_copy) catch {
+                all_roots.append(self.allocator, root_copy) catch {
                     self.allocator.free(root_copy);
                     continue;
                 };
@@ -2523,8 +2525,8 @@ pub const PortsMigrator = struct {
                 .perl5lib = "",
                 .gmake_path = try self.allocator.dupe(u8, "/usr/local/bin/gmake"),
                 .cmake_path = try self.allocator.dupe(u8, "/usr/local/bin/cmake"),
-                .system_share_symlinks = std.ArrayList([]const u8).init(self.allocator),
-                .bootstrap_symlinks = std.ArrayList([]const u8).init(self.allocator),
+                .system_share_symlinks = .empty,
+                .bootstrap_symlinks = .empty,
                 .allocator = self.allocator,
             };
         }
@@ -2672,10 +2674,10 @@ pub const PortsMigrator = struct {
 
         // Create symlinks in /usr/local/share/ pointing to sysroot share directories
         // This allows build systems that hardcode /usr/local/share/ paths to find data files
-        var system_share_symlinks = std.ArrayList([]const u8).init(self.allocator);
+        var system_share_symlinks: std.ArrayList([]const u8) = .empty;
         errdefer {
             for (system_share_symlinks.items) |s| self.allocator.free(s);
-            system_share_symlinks.deinit();
+            system_share_symlinks.deinit(self.allocator);
         }
 
         const sysroot_share = try std.fs.path.join(self.allocator, &[_][]const u8{ sysroot, "share" });
@@ -2683,10 +2685,10 @@ pub const PortsMigrator = struct {
 
         // Create bootstrap symlinks for packages that expect hardcoded paths at /usr/local/
         // These symlinks point from /usr/local/<bootstrap-name> to the sysroot content
-        var bootstrap_symlinks = std.ArrayList([]const u8).init(self.allocator);
+        var bootstrap_symlinks: std.ArrayList([]const u8) = .empty;
         errdefer {
             for (bootstrap_symlinks.items) |s| self.allocator.free(s);
-            bootstrap_symlinks.deinit();
+            bootstrap_symlinks.deinit(self.allocator);
         }
 
         // Check if any bootstrap packages need symlinks or stub directories
@@ -2865,7 +2867,7 @@ pub const PortsMigrator = struct {
                     std.debug.print("    [BOOTSTRAP]   Build gobject-introspection first for full support\n", .{});
                 }
 
-                try bootstrap_symlinks.append(bootstrap_path);
+                try bootstrap_symlinks.append(self.allocator, bootstrap_path);
                 continue;
             };
             // Already exists, skip
@@ -2964,7 +2966,7 @@ pub const PortsMigrator = struct {
                     continue;
                 };
                 std.debug.print("    [SYSROOT] Created system share symlink: {s} -> {s}\n", .{ system_subdir, sysroot_subdir });
-                try system_share_symlinks.append(system_subdir);
+                try system_share_symlinks.append(self.allocator, system_subdir);
                 continue;
             };
             // Already exists, skip (don't overwrite system files)
@@ -2992,10 +2994,10 @@ pub const PortsMigrator = struct {
     /// Scans sysroot first, then system paths as fallback
     /// This allows bootstrap Python packages (like py-installer) to use system modules
     fn buildPythonPath(self: *PortsMigrator, lib_dir: []const u8) ![]const u8 {
-        var paths = std.ArrayList([]const u8).init(self.allocator);
+        var paths: std.ArrayList([]const u8) = .empty;
         defer {
             for (paths.items) |p| self.allocator.free(p);
-            paths.deinit();
+            paths.deinit(self.allocator);
         }
 
         // Directories to scan: sysroot first, then system fallbacks
@@ -3053,7 +3055,7 @@ pub const PortsMigrator = struct {
                         continue;
                     }
 
-                    try paths.append(packages_path);
+                    try paths.append(self.allocator,self.allocator,packages_path);
                 }
             }
         }
@@ -3196,10 +3198,10 @@ pub const PortsMigrator = struct {
 
     /// Build PERL5LIB by scanning lib directory for perl5/site_perl directories
     fn buildPerl5Lib(self: *PortsMigrator, lib_dir: []const u8) ![]const u8 {
-        var paths = std.ArrayList([]const u8).init(self.allocator);
+        var paths: std.ArrayList([]const u8) = .empty;
         defer {
             for (paths.items) |p| self.allocator.free(p);
-            paths.deinit();
+            paths.deinit(self.allocator);
         }
 
         // Perl modules are in lib/perl5/site_perl and lib/perl5/X.YZ
@@ -3228,7 +3230,7 @@ pub const PortsMigrator = struct {
 
             // Add site_perl itself first (some modules install directly here)
             const site_perl_copy = try self.allocator.dupe(u8, site_perl_dir);
-            try paths.append(site_perl_copy);
+            try paths.append(self.allocator,site_perl_copy);
 
             // Scan site_perl for both version dirs (5.XX) and arch dirs (amd64-freebsd)
             // FreeBSD installs p5-* modules to various patterns:
@@ -3248,7 +3250,7 @@ pub const PortsMigrator = struct {
                     site_perl_dir,
                     entry.name,
                 });
-                try paths.append(subdir_path);
+                try paths.append(self.allocator,subdir_path);
 
                 // Scan ALL subdirs (not just version dirs) for nested directories
                 // This handles site_perl/mach/5.42/ pattern used by p5-Locale-gettext
@@ -3266,7 +3268,7 @@ pub const PortsMigrator = struct {
                             subdir_path,
                             sub_entry.name,
                         });
-                        try paths.append(sub_path);
+                        try paths.append(self.allocator,self.allocator,sub_path);
                     }
                 } else |_| {}
             }
@@ -3289,7 +3291,7 @@ pub const PortsMigrator = struct {
                 perl5_dir,
                 entry.name,
             });
-            try paths.append(version_path);
+            try paths.append(self.allocator,version_path);
 
             // Also add site_perl/<version> if it exists (p5-* packages install here)
             const site_version_path = try std.fs.path.join(self.allocator, &[_][]const u8{
@@ -3301,7 +3303,7 @@ pub const PortsMigrator = struct {
                 self.allocator.free(site_version_path);
                 continue;
             };
-            try paths.append(site_version_path);
+            try paths.append(self.allocator,site_version_path);
 
             // Also scan for arch subdirs under site_perl/<version>
             if (std.fs.cwd().openDir(site_version_path, .{ .iterate = true })) |svd| {
@@ -3317,7 +3319,7 @@ pub const PortsMigrator = struct {
                         site_version_path,
                         arch_entry.name,
                     });
-                    try paths.append(arch_path);
+                    try paths.append(self.allocator,self.allocator,arch_path);
                 }
             } else |_| {}
         }
@@ -3592,8 +3594,8 @@ pub const PortsMigrator = struct {
         target: []const u8,
         destdir: ?[]const u8,
     ) !MakeResult {
-        var args = std.ArrayList([]const u8).init(self.allocator);
-        defer args.deinit();
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(self.allocator);
 
         // Track allocated strings to free after process completes
         var destdir_arg: ?[]const u8 = null;
@@ -3602,27 +3604,27 @@ pub const PortsMigrator = struct {
         var jobs_arg: ?[]const u8 = null;
         defer if (jobs_arg) |j| self.allocator.free(j);
 
-        try args.append("make");
-        try args.append("-C");
-        try args.append(port_path);
+        try args.append(self.allocator, "make");
+        try args.append(self.allocator, "-C");
+        try args.append(self.allocator, port_path);
 
         // Add BATCH=yes to prevent interactive prompts
-        try args.append("BATCH=yes");
+        try args.append(self.allocator, "BATCH=yes");
 
         // Disable interactive dialogs
-        try args.append("DISABLE_VULNERABILITIES=yes");
+        try args.append(self.allocator, "DISABLE_VULNERABILITIES=yes");
 
         // Add DESTDIR if provided
         if (destdir) |dir| {
             destdir_arg = try std.fmt.allocPrint(self.allocator, "DESTDIR={s}", .{dir});
-            try args.append(destdir_arg.?);
+            try args.append(self.allocator, destdir_arg.?);
         }
 
         // Add job count for parallel builds
         jobs_arg = try std.fmt.allocPrint(self.allocator, "-j{d}", .{self.options.build_jobs});
-        try args.append(jobs_arg.?);
+        try args.append(self.allocator, jobs_arg.?);
 
-        try args.append(target);
+        try args.append(self.allocator, target);
 
         var child = std.process.Child.init(args.items, self.allocator);
 
@@ -3730,8 +3732,8 @@ pub const PortsMigrator = struct {
         build_env: ?*const BuildEnvironment,
         origin: []const u8,
     ) !MakeResult {
-        var args = std.ArrayList([]const u8).init(self.allocator);
-        defer args.deinit();
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(self.allocator);
 
         // Track allocated strings to free after process completes
         // Note: destdir is only used for env_map (meson DESTDIR), not as make arg
@@ -3826,28 +3828,28 @@ pub const PortsMigrator = struct {
         var flavor_arg: ?[]const u8 = null;
         defer if (flavor_arg) |f| self.allocator.free(f);
 
-        try args.append("make");
-        try args.append("-C");
-        try args.append(port_path);
+        try args.append(self.allocator, "make");
+        try args.append(self.allocator, "-C");
+        try args.append(self.allocator, port_path);
 
         // Add BATCH=yes to prevent interactive prompts
-        try args.append("BATCH=yes");
+        try args.append(self.allocator, "BATCH=yes");
 
         // Parse origin to check for flavor suffix (e.g., @py311)
         const parsed = ParsedOrigin.parse(origin);
         if (parsed.flavor) |flavor| {
             flavor_arg = try std.fmt.allocPrint(self.allocator, "FLAVOR={s}", .{flavor});
-            try args.append(flavor_arg.?);
+            try args.append(self.allocator, flavor_arg.?);
         }
 
         // Disable interactive dialogs
-        try args.append("DISABLE_VULNERABILITIES=yes");
+        try args.append(self.allocator, "DISABLE_VULNERABILITIES=yes");
 
         // Skip dependency building - we installed them from packages
-        try args.append("NO_DEPENDS=yes");
+        try args.append(self.allocator, "NO_DEPENDS=yes");
 
         // Don't chroot during install (DESTDIR is empty staging dir without /bin/sh)
-        try args.append("NO_INSTALL_CHROOT=yes");
+        try args.append(self.allocator, "NO_INSTALL_CHROOT=yes");
 
         // Pass Axiom sysroot PATH through MAKE_ENV and CONFIGURE_ENV
         // This is critical: the ports framework (bsd.port.mk) uses these variables
@@ -3879,14 +3881,14 @@ pub const PortsMigrator = struct {
                 "MAKE_ENV+=PATH={s} LOCALBASE={s}",
                 .{ env.path, localbase },
             );
-            try args.append(make_env_arg.?);
+            try args.append(self.allocator, make_env_arg.?);
 
             configure_env_arg = try std.fmt.allocPrint(
                 self.allocator,
                 "CONFIGURE_ENV+=PATH={s} LOCALBASE={s} FORCE_UNSAFE_CONFIGURE=1",
                 .{ env.path, localbase },
             );
-            try args.append(configure_env_arg.?);
+            try args.append(self.allocator, configure_env_arg.?);
 
             // Pass CPPFLAGS and LDFLAGS as make variable overrides
             // Using += syntax ensures they're appended to existing values
@@ -3895,14 +3897,14 @@ pub const PortsMigrator = struct {
                 "CPPFLAGS+={s}",
                 .{env.cppflags},
             );
-            try args.append(cppflags_arg.?);
+            try args.append(self.allocator, cppflags_arg.?);
 
             ldflags_arg = try std.fmt.allocPrint(
                 self.allocator,
                 "LDFLAGS+={s}",
                 .{env.ldflags},
             );
-            try args.append(ldflags_arg.?);
+            try args.append(self.allocator, ldflags_arg.?);
 
             // CRITICAL: Also pass CPPFLAGS and LDFLAGS via CONFIGURE_ENV and MAKE_ENV
             // The ports framework runs: env ${CONFIGURE_ENV} ./configure
@@ -3914,28 +3916,28 @@ pub const PortsMigrator = struct {
                 "CONFIGURE_ENV+=CPPFLAGS=\"{s}\"",
                 .{env.cppflags},
             );
-            try args.append(configure_cppflags_arg.?);
+            try args.append(self.allocator, configure_cppflags_arg.?);
 
             configure_ldflags_arg = try std.fmt.allocPrint(
                 self.allocator,
                 "CONFIGURE_ENV+=LDFLAGS=\"{s}\"",
                 .{env.ldflags},
             );
-            try args.append(configure_ldflags_arg.?);
+            try args.append(self.allocator, configure_ldflags_arg.?);
 
             make_cppflags_arg = try std.fmt.allocPrint(
                 self.allocator,
                 "MAKE_ENV+=CPPFLAGS=\"{s}\"",
                 .{env.cppflags},
             );
-            try args.append(make_cppflags_arg.?);
+            try args.append(self.allocator, make_cppflags_arg.?);
 
             make_ldflags_arg = try std.fmt.allocPrint(
                 self.allocator,
                 "MAKE_ENV+=LDFLAGS=\"{s}\"",
                 .{env.ldflags},
             );
-            try args.append(make_ldflags_arg.?);
+            try args.append(self.allocator, make_ldflags_arg.?);
 
             // PYTHONPATH for Python package builds (flit_core, setuptools, etc.)
             // Only set if we found Python site-packages in the sysroot
@@ -3945,14 +3947,14 @@ pub const PortsMigrator = struct {
                     "MAKE_ENV+=PYTHONPATH=\"{s}\"",
                     .{env.pythonpath},
                 );
-                try args.append(make_pythonpath_arg.?);
+                try args.append(self.allocator, make_pythonpath_arg.?);
 
                 configure_pythonpath_arg = try std.fmt.allocPrint(
                     self.allocator,
                     "CONFIGURE_ENV+=PYTHONPATH=\"{s}\"",
                     .{env.pythonpath},
                 );
-                try args.append(configure_pythonpath_arg.?);
+                try args.append(self.allocator, configure_pythonpath_arg.?);
             }
 
             // PERL5LIB for Perl module builds (p5-Locale-gettext, etc.)
@@ -3963,14 +3965,14 @@ pub const PortsMigrator = struct {
                     "MAKE_ENV+=PERL5LIB=\"{s}\"",
                     .{env.perl5lib},
                 );
-                try args.append(make_perl5lib_arg.?);
+                try args.append(self.allocator, make_perl5lib_arg.?);
 
                 configure_perl5lib_arg = try std.fmt.allocPrint(
                     self.allocator,
                     "CONFIGURE_ENV+=PERL5LIB=\"{s}\"",
                     .{env.perl5lib},
                 );
-                try args.append(configure_perl5lib_arg.?);
+                try args.append(self.allocator, configure_perl5lib_arg.?);
             }
 
             // PKG_CONFIG_PATH for pkg-config to find .pc files in sysroot
@@ -3980,14 +3982,14 @@ pub const PortsMigrator = struct {
                 "MAKE_ENV+=PKG_CONFIG_PATH=\"{s}\"",
                 .{env.pkg_config_path},
             );
-            try args.append(make_pkg_config_path_arg.?);
+            try args.append(self.allocator, make_pkg_config_path_arg.?);
 
             configure_pkg_config_path_arg = try std.fmt.allocPrint(
                 self.allocator,
                 "CONFIGURE_ENV+=PKG_CONFIG_PATH=\"{s}\"",
                 .{env.pkg_config_path},
             );
-            try args.append(configure_pkg_config_path_arg.?);
+            try args.append(self.allocator, configure_pkg_config_path_arg.?);
 
             // PKG_CONFIG_SYSROOT_DIR tells pkg-config to prepend sysroot path to all paths
             // This is critical for meson/pkg-config builds that use paths from .pc files
@@ -4001,14 +4003,14 @@ pub const PortsMigrator = struct {
                     "MAKE_ENV+=PKG_CONFIG_SYSROOT_DIR=\"{s}\"",
                     .{sysroot_root},
                 );
-                try args.append(make_pkg_config_sysroot_dir_arg.?);
+                try args.append(self.allocator, make_pkg_config_sysroot_dir_arg.?);
 
                 configure_pkg_config_sysroot_dir_arg = try std.fmt.allocPrint(
                     self.allocator,
                     "CONFIGURE_ENV+=PKG_CONFIG_SYSROOT_DIR=\"{s}\"",
                     .{sysroot_root},
                 );
-                try args.append(configure_pkg_config_sysroot_dir_arg.?);
+                try args.append(self.allocator, configure_pkg_config_sysroot_dir_arg.?);
             }
 
             // LD_LIBRARY_PATH for loading shared libraries during configure
@@ -4019,14 +4021,14 @@ pub const PortsMigrator = struct {
                     "MAKE_ENV+=LD_LIBRARY_PATH=\"{s}\"",
                     .{env.ld_library_path},
                 );
-                try args.append(make_ld_library_path_arg.?);
+                try args.append(self.allocator, make_ld_library_path_arg.?);
 
                 configure_ld_library_path_arg = try std.fmt.allocPrint(
                     self.allocator,
                     "CONFIGURE_ENV+=LD_LIBRARY_PATH=\"{s}\"",
                     .{env.ld_library_path},
                 );
-                try args.append(configure_ld_library_path_arg.?);
+                try args.append(self.allocator, configure_ld_library_path_arg.?);
             }
 
             // GMAKE: Override the path to GNU make
@@ -4038,7 +4040,7 @@ pub const PortsMigrator = struct {
                     "GMAKE={s}",
                     .{env.gmake_path},
                 );
-                try args.append(gmake_arg.?);
+                try args.append(self.allocator, gmake_arg.?);
             }
 
             // CMAKE_BIN: Override the path to cmake binary
@@ -4050,7 +4052,7 @@ pub const PortsMigrator = struct {
                     "CMAKE_BIN={s}",
                     .{env.cmake_path},
                 );
-                try args.append(cmake_arg.?);
+                try args.append(self.allocator, cmake_arg.?);
             }
 
             // CMAKE_PREFIX_PATH for cmake-based builds (like cmake-core itself)
@@ -4061,7 +4063,7 @@ pub const PortsMigrator = struct {
                 "CMAKE_PREFIX_PATH={s}",
                 .{env.sysroot},
             );
-            try args.append(cmake_prefix_arg.?);
+            try args.append(self.allocator, cmake_prefix_arg.?);
 
             // Also pass via CONFIGURE_ENV for ports that run cmake in configure phase
             configure_cmake_prefix_arg = try std.fmt.allocPrint(
@@ -4069,7 +4071,7 @@ pub const PortsMigrator = struct {
                 "CONFIGURE_ENV+=CMAKE_PREFIX_PATH=\"{s}\"",
                 .{env.sysroot},
             );
-            try args.append(configure_cmake_prefix_arg.?);
+            try args.append(self.allocator, configure_cmake_prefix_arg.?);
         }
 
         // For glib20: disable introspection when gobject-introspection is not available
@@ -4083,7 +4085,7 @@ pub const PortsMigrator = struct {
                 "MESON_ARGS+=-Dintrospection=disabled -Dxattr=false -Ddtrace=false -Dsystemtap=false -Dsysprof=disabled -Db_lundef=false",
                 .{},
             );
-            try args.append(meson_args_arg.?);
+            try args.append(self.allocator, meson_args_arg.?);
             std.debug.print("    [DEBUG] glib20: disabled introspection, xattr, dtrace, systemtap, sysprof, b_lundef\n", .{});
         }
 
@@ -4135,9 +4137,9 @@ pub const PortsMigrator = struct {
 
         // Add job count for parallel builds
         jobs_arg = try std.fmt.allocPrint(self.allocator, "-j{d}", .{self.options.build_jobs});
-        try args.append(jobs_arg.?);
+        try args.append(self.allocator, jobs_arg.?);
 
-        try args.append(target);
+        try args.append(self.allocator, target);
 
         var child = std.process.Child.init(args.items, self.allocator);
 
@@ -4291,16 +4293,16 @@ pub const PortsMigrator = struct {
 
         for (dep_vars, 0..) |dep_var, idx| {
             // Build args list with optional flavor
-            var args_list = std.ArrayList([]const u8).init(self.allocator);
-            defer args_list.deinit();
-            try args_list.append("make");
-            try args_list.append("-C");
-            try args_list.append(port_path);
+            var args_list: std.ArrayList([]const u8) = .empty;
+            defer args_list.deinit(self.allocator);
+            try args_list.append(self.allocator, "make");
+            try args_list.append(self.allocator, "-C");
+            try args_list.append(self.allocator, port_path);
             if (flavor_arg) |f| {
-                try args_list.append(f);
+                try args_list.append(self.allocator, f);
             }
-            try args_list.append("-V");
-            try args_list.append(dep_var);
+            try args_list.append(self.allocator, "-V");
+            try args_list.append(self.allocator, dep_var);
 
             var child = std.process.Child.init(args_list.items, self.allocator);
             child.stdout_behavior = .Pipe;
@@ -4324,10 +4326,10 @@ pub const PortsMigrator = struct {
         const run_deps = all_deps[2];
 
         // Parse dependencies and extract port origins (category/port format)
-        var origins = std.ArrayList([]const u8).init(self.allocator);
+        var origins: std.ArrayList([]const u8) = .empty;
         defer {
             for (origins.items) |o| self.allocator.free(o);
-            origins.deinit();
+            origins.deinit(self.allocator);
         }
 
         // BUILD_DEPENDS format: "/path/to/file:category/port" or "command:category/port"
@@ -4351,7 +4353,7 @@ pub const PortsMigrator = struct {
                                 }
                             }
                             if (!found) {
-                                try origins.append(try self.allocator.dupe(u8, dep_origin));
+                                try origins.append(self.allocator, try self.allocator.dupe(u8, dep_origin));
                             }
                         }
                     }
@@ -4381,7 +4383,7 @@ pub const PortsMigrator = struct {
                                     }
                                 }
                                 if (!found) {
-                                    try origins.append(try self.allocator.dupe(u8, dep_origin));
+                                    try origins.append(self.allocator, try self.allocator.dupe(u8, dep_origin));
                                 }
                             }
                         }
@@ -4401,8 +4403,8 @@ pub const PortsMigrator = struct {
         }
 
         // Check which dependencies are missing from the Axiom store
-        var missing = std.ArrayList([]const u8).init(self.allocator);
-        defer missing.deinit();
+        var missing: std.ArrayList([]const u8) = .empty;
+        defer missing.deinit(self.allocator);
         // Note: we don't free the strings in missing since they're borrowed from origins
 
         for (origins.items) |dep_origin| {
@@ -4422,17 +4424,17 @@ pub const PortsMigrator = struct {
 
             // Check if package exists in store
             var roots = self.findAllPackageRootsInStore(pkg_name) catch {
-                try missing.append(dep_origin);
+                try missing.append(self.allocator, dep_origin);
                 continue;
             };
 
             if (roots.items.len == 0) {
-                try missing.append(dep_origin);
+                try missing.append(self.allocator, dep_origin);
             }
 
             // Clean up roots
             for (roots.items) |r| self.allocator.free(r);
-            roots.deinit();
+            roots.deinit(self.allocator);
         }
 
         if (missing.items.len > 0) {
@@ -4462,10 +4464,10 @@ pub const PortsMigrator = struct {
         });
         defer self.allocator.free(port_path);
 
-        var deps = std.ArrayList([]const u8).init(self.allocator);
+        var deps: std.ArrayList([]const u8) = .empty;
         errdefer {
             for (deps.items) |d| self.allocator.free(d);
-            deps.deinit();
+            deps.deinit(self.allocator);
         }
 
         // Get BUILD_DEPENDS, LIB_DEPENDS, RUN_DEPENDS
@@ -4480,16 +4482,16 @@ pub const PortsMigrator = struct {
 
         for (dep_vars) |dep_var| {
             // Build args list with optional flavor
-            var args_list = std.ArrayList([]const u8).init(self.allocator);
-            defer args_list.deinit();
-            try args_list.append("make");
-            try args_list.append("-C");
-            try args_list.append(port_path);
+            var args_list: std.ArrayList([]const u8) = .empty;
+            defer args_list.deinit(self.allocator);
+            try args_list.append(self.allocator, "make");
+            try args_list.append(self.allocator, "-C");
+            try args_list.append(self.allocator, port_path);
             if (flavor_arg) |f| {
-                try args_list.append(f);
+                try args_list.append(self.allocator, f);
             }
-            try args_list.append("-V");
-            try args_list.append(dep_var);
+            try args_list.append(self.allocator, "-V");
+            try args_list.append(self.allocator, dep_var);
 
             var child = std.process.Child.init(args_list.items, self.allocator);
             child.stdout_behavior = .Pipe;
@@ -4526,7 +4528,7 @@ pub const PortsMigrator = struct {
                                 }
                             }
                             if (!found) {
-                                try deps.append(try self.allocator.dupe(u8, dep_origin));
+                                try deps.append(self.allocator, try self.allocator.dupe(u8, dep_origin));
                             }
                         }
                     }
@@ -4557,10 +4559,10 @@ pub const PortsMigrator = struct {
             visited.deinit();
         }
 
-        var result = std.ArrayList([]const u8).init(self.allocator);
+        var result: std.ArrayList([]const u8) = .empty;
         errdefer {
             for (result.items) |r| self.allocator.free(r);
-            result.deinit();
+            result.deinit(self.allocator);
         }
 
         // Track what we're currently visiting (for cycle detection)
@@ -4633,7 +4635,7 @@ pub const PortsMigrator = struct {
         };
         defer {
             for (deps.items) |d| self.allocator.free(d);
-            deps.deinit();
+            deps.deinit(self.allocator);
         }
 
         // Visit each dependency first (depth-first)
@@ -4648,16 +4650,16 @@ pub const PortsMigrator = struct {
         try visited.put(owned_origin, depth);
 
         // Add to result (dupe again since result needs its own copy)
-        try result.append(try self.allocator.dupe(u8, origin));
+        try result.append(self.allocator, try self.allocator.dupe(u8, origin));
     }
 
     /// Migrate a port and all its dependencies
     /// Returns results for all ports in build order
     pub fn migrateWithDependencies(self: *PortsMigrator, origin: []const u8) !std.ArrayList(MigrationResult) {
-        var results = std.ArrayList(MigrationResult).init(self.allocator);
+        var results: std.ArrayList(MigrationResult) = .empty;
         errdefer {
             for (results.items) |*r| r.deinit(self.allocator);
-            results.deinit();
+            results.deinit(self.allocator);
         }
 
         if (self.options.auto_deps) {
@@ -4690,7 +4692,7 @@ pub const PortsMigrator = struct {
                 defer self.options.auto_deps = saved_auto_deps;
 
                 const result = try self.migrate(dep);
-                try results.append(result);
+                try results.append(self.allocator, result);
 
                 // Stop on failure unless continue_on_failure is set
                 if (result.status == .failed and !self.options.continue_on_failure) {
@@ -4702,7 +4704,7 @@ pub const PortsMigrator = struct {
         } else {
             // Just migrate the single port (no dependency resolution)
             const result = try self.migrate(origin);
-            try results.append(result);
+            try results.append(self.allocator, result);
         }
 
         return results;
@@ -4808,14 +4810,14 @@ pub const PortsMigrator = struct {
 
     /// Batch migrate multiple ports
     pub fn migrateMultiple(self: *PortsMigrator, origins: []const []const u8) ![]MigrationResult {
-        var results = std.ArrayList(MigrationResult).init(self.allocator);
+        var results: std.ArrayList(MigrationResult) = .empty;
 
         for (origins) |origin| {
             const result = try self.migrate(origin);
-            try results.append(result);
+            try results.append(self.allocator, result);
         }
 
-        return results.toOwnedSlice();
+        return results.toOwnedSlice(self.allocator);
     }
 
     /// Scan ports tree for all ports in a category
@@ -4826,10 +4828,10 @@ pub const PortsMigrator = struct {
         });
         defer self.allocator.free(cat_path);
 
-        var ports = std.ArrayList([]const u8).init(self.allocator);
+        var ports: std.ArrayList([]const u8) = .empty;
 
         var dir = std.fs.cwd().openDir(cat_path, .{ .iterate = true }) catch {
-            return ports.toOwnedSlice();
+            return ports.toOwnedSlice(self.allocator);
         };
         defer dir.close();
 
@@ -4846,12 +4848,12 @@ pub const PortsMigrator = struct {
 
                 if (std.fs.cwd().access(makefile_path, .{})) |_| {
                     const origin = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ category, entry.name });
-                    try ports.append(origin);
+                    try ports.append(self.allocator, origin);
                 } else |_| {}
             }
         }
 
-        return ports.toOwnedSlice();
+        return ports.toOwnedSlice(self.allocator);
     }
 
     // --- Internal helpers ---
@@ -4871,23 +4873,23 @@ pub const PortsMigrator = struct {
     }
 
     fn makeVarOptionalWithFlavor(self: *PortsMigrator, port_path: []const u8, varname: []const u8, flavor: ?[]const u8) !?[]const u8 {
-        var args = std.ArrayList([]const u8).init(self.allocator);
-        defer args.deinit();
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(self.allocator);
 
-        try args.append("make");
-        try args.append("-C");
-        try args.append(port_path);
+        try args.append(self.allocator, "make");
+        try args.append(self.allocator, "-C");
+        try args.append(self.allocator, port_path);
 
         // Add FLAVOR if specified (for flavored ports like py-setuptools@py311)
         var flavor_arg: ?[]const u8 = null;
         defer if (flavor_arg) |f| self.allocator.free(f);
         if (flavor) |flv| {
             flavor_arg = try std.fmt.allocPrint(self.allocator, "FLAVOR={s}", .{flv});
-            try args.append(flavor_arg.?);
+            try args.append(self.allocator, flavor_arg.?);
         }
 
-        try args.append("-V");
-        try args.append(varname);
+        try args.append(self.allocator, "-V");
+        try args.append(self.allocator, varname);
 
         var child = std.process.Child.init(args.items, self.allocator);
         child.stdout_behavior = .Pipe;
@@ -4938,12 +4940,12 @@ pub const PortsMigrator = struct {
     }
 
     fn splitWhitespace(self: *PortsMigrator, input: []const u8) ![]const []const u8 {
-        var parts = std.ArrayList([]const u8).init(self.allocator);
+        var parts: std.ArrayList([]const u8) = .empty;
         var iter = std.mem.tokenizeAny(u8, input, " \t\n\r");
         while (iter.next()) |part| {
-            try parts.append(try self.allocator.dupe(u8, part));
+            try parts.append(self.allocator, try self.allocator.dupe(u8, part));
         }
-        return parts.toOwnedSlice();
+        return parts.toOwnedSlice(self.allocator);
     }
 
     fn readPkgDescr(self: *PortsMigrator, port_path: []const u8) ![]const u8 {
@@ -5002,7 +5004,7 @@ pub const PortsMigrator = struct {
         const deps_str = try self.makeVarOptionalWithFlavor(port_path, depvar, flavor) orelse return &[_]PortDependency{};
         defer self.allocator.free(deps_str);
 
-        var deps = std.ArrayList(PortDependency).init(self.allocator);
+        var deps: std.ArrayList(PortDependency) = .empty;
 
         // Format: file:origin or lib.so:origin or pkg>=version:origin
         var iter = std.mem.tokenizeAny(u8, deps_str, " \t\n\r");
@@ -5014,7 +5016,7 @@ pub const PortsMigrator = struct {
                 // Extract package name from origin (last component)
                 const pkg_name = std.fs.path.basename(origin);
 
-                try deps.append(.{
+                try deps.append(self.allocator, .{
                     .origin = try self.allocator.dupe(u8, origin),
                     .package = try self.allocator.dupe(u8, pkg_name),
                     .version = null, // TODO: parse version from pkg>=version
@@ -5023,7 +5025,7 @@ pub const PortsMigrator = struct {
             }
         }
 
-        return deps.toOwnedSlice();
+        return deps.toOwnedSlice(self.allocator);
     }
 
     fn parseOptions(self: *PortsMigrator, port_path: []const u8) ![]const PortOption {
@@ -5193,7 +5195,7 @@ pub const PortsMigrator = struct {
     }
 
     fn generateManifestYaml(self: *PortsMigrator, meta: *const PortMetadata, origin: []const u8) ![]const u8 {
-        var output = std.ArrayList(u8).init(self.allocator);
+        var output: std.ArrayList(u8) = .empty;
         const writer = output.writer();
 
         // Use mapPortNameAlloc to get correct package name (handles Python flavors)
@@ -5278,7 +5280,7 @@ pub const PortsMigrator = struct {
             try std.fmt.format(writer, "    - \"{s}.ko\"\n", .{meta.name});
         }
 
-        return output.toOwnedSlice();
+        return output.toOwnedSlice(self.allocator);
     }
 };
 
@@ -5311,9 +5313,9 @@ pub const MigrationResult = struct {
         if (self.manifest_path) |p| allocator.free(p);
         if (self.axiom_package) |p| allocator.free(p);
         for (self.warnings.items) |w| allocator.free(w);
-        self.warnings.deinit();
+        self.warnings.deinit(allocator);
         for (self.errors.items) |e| allocator.free(e);
-        self.errors.deinit();
+        self.errors.deinit(allocator);
     }
 };
 
@@ -5343,7 +5345,7 @@ pub const SkipReason = enum {
 
 /// Generate a migration report
 pub fn generateReport(allocator: std.mem.Allocator, results: []const MigrationResult) ![]const u8 {
-    var output = std.ArrayList(u8).empty;
+    var output = .empty;
     const writer = output.writer();
 
     var generated: u32 = 0;
@@ -5385,5 +5387,5 @@ pub fn generateReport(allocator: std.mem.Allocator, results: []const MigrationRe
         }
     }
 
-    return output.toOwnedSlice();
+    return output.toOwnedSlice(allocator);
 }

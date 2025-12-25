@@ -219,8 +219,8 @@ pub const ServiceConfig = struct {
     }
 
     /// Generate rc.conf.d file content
-    pub fn toRcConf(self: ServiceConfig, allocator: std.mem.Allocator) ![]u8 {
-        var result = std.ArrayList(u8).empty;
+    pub fn toRcConf(self: ServiceConfig, _: std.mem.Allocator) ![]u8 {
+        var result = .empty;
         defer result.deinit();
         const writer = result.writer();
 
@@ -237,7 +237,7 @@ pub const ServiceConfig = struct {
             try writer.print("{s}_{s}=\"{s}\"\n", .{ self.name, entry.key_ptr.*, entry.value_ptr.* });
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(allocator);
     }
 };
 
@@ -279,8 +279,8 @@ pub const ServiceManager = struct {
         self: *ServiceManager,
         profile_path: []const u8,
     ) ![]ServiceInfo {
-        var services = std.ArrayList(ServiceInfo).init(self.allocator);
-        defer services.deinit();
+        var services: std.ArrayList(ServiceInfo) = .empty;
+        defer services.deinit(self.allocator);
 
         // Read profile packages and find services
         // For now, scan for rc.d scripts in linked packages
@@ -288,7 +288,7 @@ pub const ServiceManager = struct {
         defer self.allocator.free(profile_etc_rc_d);
 
         var dir = std.fs.cwd().openDir(profile_etc_rc_d, .{ .iterate = true }) catch {
-            return services.toOwnedSlice();
+            return services.toOwnedSlice(self.allocator);
         };
         defer dir.close();
 
@@ -299,7 +299,7 @@ pub const ServiceManager = struct {
                 const status = self.getServiceStatus(service_name) catch .unknown;
                 const enabled = self.isServiceEnabled(service_name) catch false;
 
-                try services.append(ServiceInfo{
+                try services.append(self.allocator, ServiceInfo{
                     .name = try self.allocator.dupe(u8, service_name),
                     .package_name = try self.allocator.dupe(u8, "unknown"),
                     .package_version = try self.allocator.dupe(u8, "0.0.0"),
@@ -313,7 +313,7 @@ pub const ServiceManager = struct {
             }
         }
 
-        return services.toOwnedSlice();
+        return services.toOwnedSlice(self.allocator);
     }
 
     /// Get status of a service
@@ -350,8 +350,8 @@ pub const ServiceManager = struct {
         defer self.allocator.free(content);
 
         // Look for <service_name>_enable="YES"
-        var enable_var = std.ArrayList(u8).init(self.allocator);
-        defer enable_var.deinit();
+        var enable_var: std.ArrayList(u8) = .empty;
+        defer enable_var.deinit(self.allocator);
         try enable_var.writer().print("{s}_enable", .{service_name});
 
         if (std.mem.indexOf(u8, content, enable_var.items)) |idx| {
@@ -482,10 +482,10 @@ pub const ServiceManager = struct {
 
         try child.spawn();
 
-        var stdout = std.ArrayList(u8).init(self.allocator);
-        defer stdout.deinit();
-        var stderr = std.ArrayList(u8).init(self.allocator);
-        defer stderr.deinit();
+        var stdout: std.ArrayList(u8) = .empty;
+        defer stdout.deinit(self.allocator);
+        var stderr: std.ArrayList(u8) = .empty;
+        defer stderr.deinit(self.allocator);
 
         // Read stdout and stderr
         if (child.stdout) |stdout_pipe| {
@@ -509,8 +509,8 @@ pub const ServiceManager = struct {
 
         return CommandResult{
             .exit_code = exit_code,
-            .stdout = try stdout.toOwnedSlice(),
-            .stderr = try stderr.toOwnedSlice(),
+            .stdout = try stdout.toOwnedSlice(self.allocator),
+            .stderr = try stderr.toOwnedSlice(self.allocator),
         };
     }
 
@@ -586,8 +586,8 @@ pub const ServiceManager = struct {
 
 /// Parse service declarations from manifest YAML
 pub fn parseServiceDeclarations(allocator: std.mem.Allocator, yaml_content: []const u8) ![]ServiceDeclaration {
-    var services = std.ArrayList(ServiceDeclaration).empty;
-    defer services.deinit();
+    var services = .empty;
+    defer services.deinit(allocator);
 
     var current_service: ?ServiceDeclaration = null;
     var in_services_section = false;
@@ -595,12 +595,12 @@ pub fn parseServiceDeclarations(allocator: std.mem.Allocator, yaml_content: []co
     var in_conflicts = false;
     var in_ports = false;
 
-    var deps_list = std.ArrayList([]const u8).empty;
-    defer deps_list.deinit();
-    var conflicts_list = std.ArrayList([]const u8).empty;
-    defer conflicts_list.deinit();
-    var ports_list = std.ArrayList(u16).empty;
-    defer ports_list.deinit();
+    var deps_list = .empty;
+    defer deps_list.deinit(allocator);
+    var conflicts_list = .empty;
+    defer conflicts_list.deinit(allocator);
+    var ports_list = .empty;
+    defer ports_list.deinit(allocator);
 
     var lines = std.mem.splitSequence(u8, yaml_content, "\n");
     while (lines.next()) |line| {
@@ -625,9 +625,9 @@ pub fn parseServiceDeclarations(allocator: std.mem.Allocator, yaml_content: []co
                 svc.conflicts = try toOwnedSliceOrCleanupStrings(allocator, &conflicts_list);
                 svc.ports = try toOwnedSliceOrCleanupU16(allocator, &ports_list);
                 try services.append(allocator, svc.*);
-                deps_list = std.ArrayList([]const u8).init(allocator);
-                conflicts_list = std.ArrayList([]const u8).init(allocator);
-                ports_list = std.ArrayList(u16).init(allocator);
+                deps_list = .empty;
+                conflicts_list = .empty;
+                ports_list = .empty;
             }
 
             var value = std.mem.trim(u8, trimmed[7..], " \t");
@@ -655,12 +655,12 @@ pub fn parseServiceDeclarations(allocator: std.mem.Allocator, yaml_content: []co
             }
 
             if (in_dependencies) {
-                try deps_list.append(try allocator.dupe(u8, item));
+                try deps_list.append(allocator, try allocator.dupe(u8, item));
             } else if (in_conflicts) {
-                try conflicts_list.append(try allocator.dupe(u8, item));
+                try conflicts_list.append(allocator, try allocator.dupe(u8, item));
             } else if (in_ports) {
                 const port = std.fmt.parseInt(u16, item, 10) catch continue;
-                try ports_list.append(port);
+                try ports_list.append(allocator, port);
             }
             continue;
         }

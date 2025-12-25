@@ -260,12 +260,12 @@ pub const AuditLog = struct {
         return AuditLog{
             .allocator = allocator,
             .log_path = log_path,
-            .entries = std.ArrayList(AuditEntry).empty,
+            .entries = .empty,
         };
     }
 
     pub fn deinit(self: *AuditLog) void {
-        self.entries.deinit();
+        self.entries.deinit(self.allocator);
     }
 
     /// Record a verification event
@@ -276,7 +276,7 @@ pub const AuditLog = struct {
         status: VerificationStatus,
         action: AuditEntry.AuditAction,
     ) !void {
-        try self.entries.append(.{
+        try self.entries.append(self.allocator, .{
             .timestamp = std.time.timestamp(),
             .package_path = package_path,
             .key_id = key_id,
@@ -293,7 +293,8 @@ pub const AuditLog = struct {
         defer file.close();
 
         try file.seekFromEnd(0);
-        const writer = file.writer();
+        var write_buf: [4096]u8 = undefined;
+        const writer = file.writer(&write_buf);
 
         for (self.entries.items) |entry| {
             try writer.print("{d}|{s}|{s}|{s}|{s}\n", .{
@@ -400,8 +401,8 @@ pub const Signature = struct {
     }
 
     /// Serialize signature to YAML
-    pub fn toYaml(self: Signature, allocator: std.mem.Allocator) ![]u8 {
-        var result = std.ArrayList(u8).empty;
+    pub fn toYaml(self: Signature, _: std.mem.Allocator) ![]u8 {
+        var result = .empty;
         defer result.deinit();
         const writer = result.writer();
 
@@ -420,7 +421,7 @@ pub const Signature = struct {
             try writer.print("    sha256: {s}\n", .{std.fmt.fmtSliceHexLower(&f.hash)});
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(allocator);
     }
 
     /// Parse signature from YAML
@@ -433,8 +434,8 @@ pub const Signature = struct {
             .files = undefined,
         };
 
-        var files = std.ArrayList(FileHash).empty;
-        defer files.deinit();
+        var files = .empty;
+        defer files.deinit(allocator);
 
         var current_file_path: ?[]const u8 = null;
 
@@ -489,7 +490,7 @@ pub const Signature = struct {
                             current_file_path = null;
                             continue;
                         };
-                        try files.append(.{
+                        try files.append(allocator, .{
                             .path = path,
                             .hash = hash,
                         });
@@ -506,7 +507,7 @@ pub const Signature = struct {
             allocator.free(path);
         }
 
-        sig.files = try files.toOwnedSlice();
+        sig.files = try files.toOwnedSlice(allocator);
         return sig;
     }
 };
@@ -642,8 +643,8 @@ pub const TrustStore = struct {
     }
 
     /// List all keys
-    pub fn listKeys(self: *TrustStore, allocator: std.mem.Allocator) ![]PublicKey {
-        var list = std.ArrayList(PublicKey).empty;
+    pub fn listKeys(self: *TrustStore, _: std.mem.Allocator) ![]PublicKey {
+        var list = .empty;
         defer list.deinit();
 
         var iter = self.keys.valueIterator();
@@ -664,7 +665,8 @@ pub const TrustStore = struct {
         const file = try std.fs.cwd().createFile(self.store_path, .{});
         defer file.close();
 
-        const writer = file.writer();
+        var write_buf: [4096]u8 = undefined;
+        const writer = file.writer(&write_buf);
         try writer.writeAll("# Axiom Trust Store\n\n");
 
         var iter = self.keys.iterator();
@@ -833,20 +835,20 @@ pub const Signer = struct {
         std.debug.print("Signing package: {s}\n", .{pkg_path});
 
         // Collect files and compute hashes
-        var files = std.ArrayList(FileHash).init(self.allocator);
-        defer files.deinit();
+        var files: std.ArrayList(FileHash) = .empty;
+        defer files.deinit(self.allocator);
 
         try self.hashDirectory(pkg_path, "", &files);
 
         std.debug.print("  Hashed {d} files\n", .{files.items.len});
 
         // Build message to sign (concatenated hashes)
-        var message = std.ArrayList(u8).init(self.allocator);
-        defer message.deinit();
+        var message: std.ArrayList(u8) = .empty;
+        defer message.deinit(self.allocator);
 
         for (files.items) |f| {
-            try message.appendSlice(&f.hash);
-            try message.appendSlice(f.path);
+            try message.appendSlice(self.allocator, &f.hash);
+            try message.appendSlice(self.allocator, f.path);
         }
 
         // Sign the message
@@ -871,7 +873,7 @@ pub const Signer = struct {
             .signer = if (self.signer_name) |n| try self.allocator.dupe(u8, n) else null,
             .timestamp = std.time.timestamp(),
             .signature = sig.toBytes(),
-            .files = try files.toOwnedSlice(),
+            .files = try files.toOwnedSlice(self.allocator),
         };
     }
 
@@ -901,7 +903,7 @@ pub const Signer = struct {
             switch (entry.kind) {
                 .file => {
                     const hash = try self.hashFile(base_path, entry_rel);
-                    try files.append(.{
+                    try files.append(self.allocator, .{
                         .path = entry_rel,
                         .hash = hash,
                     });
@@ -1076,12 +1078,12 @@ pub const Verifier = struct {
         std.debug.print("  Files verified: {d}/{d}\n", .{ files_verified, signature.files.len });
 
         // Verify signature
-        var message = std.ArrayList(u8).init(self.allocator);
-        defer message.deinit();
+        var message: std.ArrayList(u8) = .empty;
+        defer message.deinit(self.allocator);
 
         for (signature.files) |f| {
-            try message.appendSlice(&f.hash);
-            try message.appendSlice(f.path);
+            try message.appendSlice(self.allocator, &f.hash);
+            try message.appendSlice(self.allocator, f.path);
         }
 
         const pub_key = std.crypto.sign.Ed25519.PublicKey.fromBytes(public_key.key_data) catch {
@@ -1236,12 +1238,12 @@ pub const Verifier = struct {
         std.debug.print("  Files verified: {d}/{d}\n", .{ files_verified, signature.files.len });
 
         // Build message for signature verification
-        var message = std.ArrayList(u8).init(self.allocator);
-        defer message.deinit();
+        var message: std.ArrayList(u8) = .empty;
+        defer message.deinit(self.allocator);
 
         for (signature.files) |f| {
-            message.appendSlice(&f.hash) catch {};
-            message.appendSlice(f.path) catch {};
+            message.appendSlice(self.allocator, &f.hash) catch {};
+            message.appendSlice(self.allocator, f.path) catch {};
         }
 
         // Verify cryptographic signature
@@ -1304,7 +1306,8 @@ pub fn exportPublicKey(allocator: std.mem.Allocator, key: PublicKey, path: []con
     const file = try std.fs.cwd().createFile(path, .{});
     defer file.close();
 
-    const writer = file.writer();
+    var write_buf: [4096]u8 = undefined;
+    const writer = file.writer(&write_buf);
     try writer.writeAll("# Axiom Public Key\n");
     try writer.print("key_id: {s}\n", .{key.key_id});
     try writer.print("key_data: {s}\n", .{std.fmt.fmtSliceHexLower(&key.key_data)});
@@ -1411,10 +1414,10 @@ pub const MultiSignatureConfig = struct {
             .policy_name = null,
         };
 
-        var authorized = std.ArrayList([]const u8).empty;
-        defer authorized.deinit();
-        var required = std.ArrayList([]const u8).empty;
-        defer required.deinit();
+        var authorized = .empty;
+        defer authorized.deinit(allocator);
+        var required = .empty;
+        defer required.deinit(allocator);
 
         var in_signers = false;
         var in_required = false;
@@ -1449,22 +1452,22 @@ pub const MultiSignatureConfig = struct {
                     value = value[1 .. value.len - 1];
                 }
                 if (in_signers) {
-                    try authorized.append(try allocator.dupe(u8, value));
+                    try authorized.append(allocator, try allocator.dupe(u8, value));
                 } else if (in_required) {
-                    try required.append(try allocator.dupe(u8, value));
+                    try required.append(allocator, try allocator.dupe(u8, value));
                 }
             }
         }
 
-        config.authorized_signers = try authorized.toOwnedSlice();
-        config.required_signers = try required.toOwnedSlice();
+        config.authorized_signers = try authorized.toOwnedSlice(allocator);
+        config.required_signers = try required.toOwnedSlice(allocator);
 
         return config;
     }
 
     /// Serialize config to YAML
-    pub fn toYaml(self: MultiSignatureConfig, allocator: std.mem.Allocator) ![]u8 {
-        var result = std.ArrayList(u8).empty;
+    pub fn toYaml(self: MultiSignatureConfig, _: std.mem.Allocator) ![]u8 {
+        var result = .empty;
         defer result.deinit();
         const writer = result.writer();
 
@@ -1486,7 +1489,7 @@ pub const MultiSignatureConfig = struct {
             }
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(allocator);
     }
 
     /// Check if a key ID is authorized to sign
@@ -1538,8 +1541,8 @@ pub const MultiSignature = struct {
     }
 
     /// Serialize to YAML format
-    pub fn toYaml(self: MultiSignature, allocator: std.mem.Allocator) ![]u8 {
-        var result = std.ArrayList(u8).empty;
+    pub fn toYaml(self: MultiSignature, _: std.mem.Allocator) ![]u8 {
+        var result = .empty;
         defer result.deinit();
         const writer = result.writer();
 
@@ -1563,7 +1566,7 @@ pub const MultiSignature = struct {
             try writer.print("    signature: {s}\n", .{std.fmt.fmtSliceHexLower(&sig.signature)});
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(allocator);
     }
 
     /// Parse from YAML
@@ -1574,10 +1577,10 @@ pub const MultiSignature = struct {
             .signatures = undefined,
         };
 
-        var files = std.ArrayList(FileHash).empty;
-        defer files.deinit();
-        var signatures = std.ArrayList(SignatureEntry).empty;
-        defer signatures.deinit();
+        var files = .empty;
+        defer files.deinit(allocator);
+        var signatures = .empty;
+        defer signatures.deinit(allocator);
 
         var current_file_path: ?[]const u8 = null;
         var current_sig: ?SignatureEntry = null;
@@ -1619,7 +1622,7 @@ pub const MultiSignature = struct {
                         current_file_path = null;
                         continue;
                     };
-                    try files.append(.{
+                    try files.append(allocator, .{
                         .path = current_file_path.?,
                         .hash = hash,
                     });
@@ -1628,7 +1631,7 @@ pub const MultiSignature = struct {
             } else if (std.mem.startsWith(u8, trimmed, "- key_id:") and in_signatures) {
                 // Save previous signature if any
                 if (current_sig) |sig| {
-                    try signatures.append(sig);
+                    try signatures.append(allocator, sig);
                 }
                 const value = std.mem.trim(u8, trimmed[9..], " \t");
                 current_sig = SignatureEntry{
@@ -1658,7 +1661,7 @@ pub const MultiSignature = struct {
 
         // Save last signature
         if (current_sig) |sig| {
-            try signatures.append(sig);
+            try signatures.append(allocator, sig);
         }
 
         // Clean up any leftover file path
@@ -1666,8 +1669,8 @@ pub const MultiSignature = struct {
             allocator.free(path);
         }
 
-        multi_sig.files = try files.toOwnedSlice();
-        multi_sig.signatures = try signatures.toOwnedSlice();
+        multi_sig.files = try files.toOwnedSlice(allocator);
+        multi_sig.signatures = try signatures.toOwnedSlice(allocator);
 
         return multi_sig;
     }
@@ -1682,8 +1685,8 @@ pub const MultiSignature = struct {
     }
 
     /// Get list of signers
-    pub fn getSignerKeyIds(self: MultiSignature, allocator: std.mem.Allocator) ![][]const u8 {
-        var result = std.ArrayList([]const u8).empty;
+    pub fn getSignerKeyIds(self: MultiSignature, _: std.mem.Allocator) ![][]const u8 {
+        var result = .empty;
         defer result.deinit();
         for (self.signatures) |sig| {
             try result.append(sig.key_id);
@@ -1775,19 +1778,19 @@ pub const MultiSignatureVerifier = struct {
         multi_sig: *MultiSignature,
         config: MultiSignatureConfig,
     ) !MultiSignatureResult {
-        var signature_details = std.ArrayList(SignatureEntry).init(self.allocator);
-        defer signature_details.deinit();
+        var signature_details: std.ArrayList(SignatureEntry) = .empty;
+        defer signature_details.deinit(self.allocator);
 
         var valid_count: usize = 0;
         var trusted_count: usize = 0;
 
         // Build message to verify (same as single signature)
-        var message = std.ArrayList(u8).init(self.allocator);
-        defer message.deinit();
+        var message: std.ArrayList(u8) = .empty;
+        defer message.deinit(self.allocator);
 
         for (multi_sig.files) |f| {
-            try message.appendSlice(&f.hash);
-            try message.appendSlice(f.path);
+            try message.appendSlice(self.allocator, &f.hash);
+            try message.appendSlice(self.allocator, f.path);
         }
 
         // Verify each signature
@@ -1804,14 +1807,14 @@ pub const MultiSignatureVerifier = struct {
             // Check if signer is authorized
             if (!config.isSignerAuthorized(sig.key_id)) {
                 std.debug.print("  Signature from {s}: unauthorized signer\n", .{sig.key_id});
-                try signature_details.append(entry);
+                try signature_details.append(self.allocator, entry);
                 continue;
             }
 
             // Get public key
             const public_key = self.trust_store.getKey(sig.key_id) orelse {
                 std.debug.print("  Signature from {s}: key not found\n", .{sig.key_id});
-                try signature_details.append(entry);
+                try signature_details.append(self.allocator, entry);
                 continue;
             };
 
@@ -1820,14 +1823,14 @@ pub const MultiSignatureVerifier = struct {
             // Verify cryptographic signature
             const pub_key = std.crypto.sign.Ed25519.PublicKey.fromBytes(public_key.key_data) catch {
                 std.debug.print("  Signature from {s}: invalid key format\n", .{sig.key_id});
-                try signature_details.append(entry);
+                try signature_details.append(self.allocator, entry);
                 continue;
             };
 
             const ed_sig = std.crypto.sign.Ed25519.Signature.fromBytes(sig.signature);
             ed_sig.verify(message.items, pub_key) catch {
                 std.debug.print("  Signature from {s}: cryptographic verification failed\n", .{sig.key_id});
-                try signature_details.append(entry);
+                try signature_details.append(self.allocator, entry);
                 continue;
             };
 
@@ -1840,12 +1843,12 @@ pub const MultiSignatureVerifier = struct {
                 trusted_count += 1;
             }
 
-            try signature_details.append(entry);
+            try signature_details.append(self.allocator, entry);
         }
 
         // Check for missing required signers
-        var missing_required = std.ArrayList([]const u8).init(self.allocator);
-        defer missing_required.deinit();
+        var missing_required: std.ArrayList([]const u8) = .empty;
+        defer missing_required.deinit(self.allocator);
 
         for (config.required_signers) |required| {
             var found = false;
@@ -1856,7 +1859,7 @@ pub const MultiSignatureVerifier = struct {
                 }
             }
             if (!found) {
-                try missing_required.append(required);
+                try missing_required.append(self.allocator, required);
             }
         }
 
@@ -1879,8 +1882,8 @@ pub const MultiSignatureVerifier = struct {
             .trusted_signatures = trusted_count,
             .threshold = config.threshold,
             .threshold_met = threshold_met,
-            .missing_required = try missing_required.toOwnedSlice(),
-            .signature_details = try signature_details.toOwnedSlice(),
+            .missing_required = try missing_required.toOwnedSlice(self.allocator),
+            .signature_details = try signature_details.toOwnedSlice(self.allocator),
             .error_message = if (!success)
                 try self.allocator.dupe(u8, if (!threshold_met) "Threshold not met" else "Missing required signers")
             else
@@ -1951,8 +1954,8 @@ pub const MultiSignatureVerifier = struct {
 
     /// List all signatures on a package
     pub fn listSignatures(self: *MultiSignatureVerifier, pkg_path: []const u8) ![]SignatureEntry {
-        var signatures = std.ArrayList(SignatureEntry).init(self.allocator);
-        defer signatures.deinit();
+        var signatures: std.ArrayList(SignatureEntry) = .empty;
+        defer signatures.deinit(self.allocator);
 
         // Try multi-signature file first
         const msig_path = try std.fs.path.join(self.allocator, &[_][]const u8{ pkg_path, "manifest.msig" });
@@ -1967,7 +1970,7 @@ pub const MultiSignatureVerifier = struct {
             defer multi_sig.deinit(self.allocator);
 
             for (multi_sig.signatures) |sig| {
-                try signatures.append(SignatureEntry{
+                try signatures.append(self.allocator, SignatureEntry{
                     .key_id = try self.allocator.dupe(u8, sig.key_id),
                     .signer_name = if (sig.signer_name) |n| try self.allocator.dupe(u8, n) else null,
                     .signature = sig.signature,
@@ -1989,7 +1992,7 @@ pub const MultiSignatureVerifier = struct {
                 var sig = try Signature.fromYaml(self.allocator, content);
                 defer sig.deinit(self.allocator);
 
-                try signatures.append(SignatureEntry{
+                try signatures.append(self.allocator, SignatureEntry{
                     .key_id = try self.allocator.dupe(u8, sig.key_id),
                     .signer_name = if (sig.signer) |s| try self.allocator.dupe(u8, s) else null,
                     .signature = sig.signature,
@@ -2000,7 +2003,7 @@ pub const MultiSignatureVerifier = struct {
             } else |_| {}
         }
 
-        return signatures.toOwnedSlice();
+        return signatures.toOwnedSlice(self.allocator);
     }
 };
 
@@ -2097,12 +2100,12 @@ pub const MultiSignatureSigner = struct {
         }
 
         // Build message to sign
-        var message = std.ArrayList(u8).init(self.allocator);
-        defer message.deinit();
+        var message: std.ArrayList(u8) = .empty;
+        defer message.deinit(self.allocator);
 
         for (multi_sig.files) |f| {
-            try message.appendSlice(&f.hash);
-            try message.appendSlice(f.path);
+            try message.appendSlice(self.allocator, &f.hash);
+            try message.appendSlice(self.allocator, f.path);
         }
 
         // Sign the message
@@ -2153,14 +2156,14 @@ pub const MultiSignatureSigner = struct {
 
     /// Create a new multi-signature by hashing the package files
     fn createNewMultiSignature(self: *MultiSignatureSigner, pkg_path: []const u8) !MultiSignature {
-        var files = std.ArrayList(FileHash).init(self.allocator);
-        defer files.deinit();
+        var files: std.ArrayList(FileHash) = .empty;
+        defer files.deinit(self.allocator);
 
         try self.hashDirectory(pkg_path, "", &files);
 
         return MultiSignature{
             .algorithm = try self.allocator.dupe(u8, "ed25519"),
-            .files = try files.toOwnedSlice(),
+            .files = try files.toOwnedSlice(self.allocator),
             .signatures = try self.allocator.alloc(SignatureEntry, 0),
         };
     }
@@ -2198,7 +2201,7 @@ pub const MultiSignatureSigner = struct {
             switch (entry.kind) {
                 .file => {
                     const hash = try self.hashFile(base_path, entry_rel);
-                    try files.append(.{
+                    try files.append(self.allocator, .{
                         .path = entry_rel,
                         .hash = hash,
                     });

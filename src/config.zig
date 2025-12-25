@@ -80,7 +80,7 @@ pub const Config = struct {
     pub fn init(allocator: std.mem.Allocator) !Config {
         var config: Config = undefined;
         config.allocator = allocator;
-        config.allocated_strings = std.ArrayList([]const u8).empty;
+        config.allocated_strings = .empty;
 
         // Get base values from environment or use defaults
         const pool = getEnvOrDefault("AXIOM_POOL", DEFAULT_POOL);
@@ -127,7 +127,7 @@ pub const Config = struct {
     ) !Config {
         var config: Config = undefined;
         config.allocator = allocator;
-        config.allocated_strings = std.ArrayList([]const u8).empty;
+        config.allocated_strings = .empty;
 
         config.pool = pool;
         config.mountpoint = mountpoint;
@@ -319,7 +319,7 @@ pub fn resetGlobalConfig() void {
 // =============================================================================
 
 test "Config.init uses defaults" {
-    const allocator = std.testing.allocator;
+    const _ = std.testing.allocator;
     var config = try Config.empty;
     defer config.deinit();
 

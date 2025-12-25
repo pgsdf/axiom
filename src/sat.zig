@@ -91,6 +91,7 @@ pub const Clause = struct {
 
 /// Variable assignment with decision level tracking
 pub const Assignment = struct {
+    allocator: std.mem.Allocator,
     values: std.AutoHashMap(u32, bool),
     decision_levels: std.AutoHashMap(u32, u32),
     antecedents: std.AutoHashMap(u32, ?*Clause),
@@ -99,10 +100,11 @@ pub const Assignment = struct {
 
     pub fn init(allocator: std.mem.Allocator) Assignment {
         return .{
+            .allocator = allocator,
             .values = std.AutoHashMap(u32, bool).init(allocator),
             .decision_levels = std.AutoHashMap(u32, u32).init(allocator),
             .antecedents = std.AutoHashMap(u32, ?*Clause).init(allocator),
-            .trail = std.ArrayList(u32).empty,
+            .trail: std.ArrayList(u32) = .empty,
             .current_level = 0,
         };
     }
@@ -111,7 +113,7 @@ pub const Assignment = struct {
         self.values.deinit();
         self.decision_levels.deinit();
         self.antecedents.deinit();
-        self.trail.deinit();
+        self.trail.deinit(self.allocator);
     }
 
     pub fn get(self: *const Assignment, variable: u32) ?bool {
@@ -122,7 +124,7 @@ pub const Assignment = struct {
         try self.values.put(variable, value);
         try self.decision_levels.put(variable, self.current_level);
         try self.antecedents.put(variable, antecedent);
-        try self.trail.append(variable);
+        try self.trail.append(self.allocator, variable);
     }
 
     pub fn unassign(self: *Assignment, variable: u32) void {
@@ -174,9 +176,9 @@ pub const Solver = struct {
     pub fn init(allocator: std.mem.Allocator) Solver {
         return .{
             .allocator = allocator,
-            .clauses = std.ArrayList(Clause).empty,
+            .clauses: std.ArrayList(Clause) = .empty,
             .num_variables = 0,
-            .assignment = Assignment.empty,
+            .assignment = Assignment.init(allocator),
             .variable_activity = std.AutoHashMap(u32, f64).init(allocator),
             .activity_increment = 1.0,
             .activity_decay = 0.95,
@@ -187,7 +189,7 @@ pub const Solver = struct {
         for (self.clauses.items) |*clause| {
             clause.deinit(self.allocator);
         }
-        self.clauses.deinit();
+        self.clauses.deinit(self.allocator);
         self.assignment.deinit();
         self.variable_activity.deinit();
     }
@@ -205,7 +207,7 @@ pub const Solver = struct {
         if (literals.len == 0) return;
 
         const clause = try Clause.init(self.allocator, literals);
-        try self.clauses.append(clause);
+        try self.clauses.append(self.allocator, clause);
     }
 
     /// Add a unit clause (single literal)
@@ -284,7 +286,7 @@ pub const Solver = struct {
                 }
 
                 // Learn the conflict clause
-                try self.clauses.append(result.learned_clause);
+                try self.clauses.append(self.allocator, result.learned_clause);
 
                 // Backtrack
                 self.assignment.backtrackTo(result.backtrack_level);
@@ -337,8 +339,8 @@ pub const Solver = struct {
 
     /// Conflict analysis - First UIP learning
     fn analyzeConflict(self: *Solver, conflict: *Clause) !ConflictAnalysisResult {
-        var learned_lits = std.ArrayList(Literal).init(self.allocator);
-        defer learned_lits.deinit();
+        var learned_lits: std.ArrayList(Literal) = .empty;
+        defer learned_lits.deinit(self.allocator);
 
         var seen = std.AutoHashMap(u32, void).init(self.allocator);
         defer seen.deinit();
@@ -353,7 +355,7 @@ pub const Solver = struct {
             if (level == self.assignment.current_level) {
                 counter += 1;
             } else if (level > 0) {
-                try learned_lits.append(lit.negate());
+                try learned_lits.append(self.allocator, lit.negate());
                 if (level > backtrack_level) {
                     backtrack_level = level;
                 }
@@ -391,7 +393,7 @@ pub const Solver = struct {
                         if (lit_level == self.assignment.current_level) {
                             counter += 1;
                         } else if (lit_level > 0) {
-                            try learned_lits.append(lit.negate());
+                            try learned_lits.append(self.allocator, lit.negate());
                             if (lit_level > backtrack_level) {
                                 backtrack_level = lit_level;
                             }
@@ -423,7 +425,7 @@ pub const Solver = struct {
         }
 
         if (asserting_lit) |lit| {
-            try learned_lits.append(lit);
+            try learned_lits.append(self.allocator, lit);
         }
 
         // Decay activities
@@ -496,7 +498,7 @@ pub const Optimizer = struct {
         return .{
             .solver = solver,
             .allocator = allocator,
-            .soft_clauses = std.ArrayList(SoftClause).empty,
+            .soft_clauses: std.ArrayList(SoftClause) = .empty,
         };
     }
 
@@ -504,14 +506,14 @@ pub const Optimizer = struct {
         for (self.soft_clauses.items) |clause| {
             self.allocator.free(clause.literals);
         }
-        self.soft_clauses.deinit();
+        self.soft_clauses.deinit(self.allocator);
     }
 
     /// Add a soft clause (preference, not required)
     pub fn addSoftClause(self: *Optimizer, literals: []const Literal, weight: u32) !void {
         const lits = try self.allocator.alloc(Literal, literals.len);
         @memcpy(lits, literals);
-        try self.soft_clauses.append(.{
+        try self.soft_clauses.append(self.allocator, .{
             .literals = lits,
             .weight = weight,
         });
@@ -578,7 +580,7 @@ test "Solver basic satisfiability" {
     const allocator = std.testing.allocator;
 
     var solver = Solver.init(allocator);
-    defer solver.deinit(allocator);
+    defer solver.deinit();
 
     // Create variables
     const a = try solver.newVariable();
@@ -608,7 +610,7 @@ test "Solver unsatisfiable" {
     const allocator = std.testing.allocator;
 
     var solver = Solver.init(allocator);
-    defer solver.deinit(allocator);
+    defer solver.deinit();
 
     const a = try solver.newVariable();
 
@@ -632,7 +634,7 @@ test "Solver exactly one constraint" {
     const allocator = std.testing.allocator;
 
     var solver = Solver.init(allocator);
-    defer solver.deinit(allocator);
+    defer solver.deinit();
 
     const a = try solver.newVariable();
     const b = try solver.newVariable();

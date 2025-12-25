@@ -94,7 +94,7 @@ pub const CacheConfig = struct {
     pub fn init(allocator: std.mem.Allocator) Self {
         return Self{
             .allocator = allocator,
-            .caches = std.ArrayList(RemoteCache).empty,
+            .caches = .empty,
             .local = LocalCacheConfig{},
             .push = PushConfig{},
         };
@@ -104,7 +104,7 @@ pub const CacheConfig = struct {
         for (self.caches.items) |*cache| {
             cache.deinit(self.allocator);
         }
-        self.caches.deinit();
+        self.caches.deinit(self.allocator);
         self.local.deinit(self.allocator);
         self.push.deinit(self.allocator);
     }
@@ -112,7 +112,7 @@ pub const CacheConfig = struct {
     /// Add a remote cache
     pub fn addCache(self: *Self, url: []const u8, priority: u32) !void {
         const url_copy = try self.allocator.dupe(u8, url);
-        try self.caches.append(RemoteCache{
+        try self.caches.append(self.allocator, RemoteCache{
             .url = url_copy,
             .priority = priority,
         });
@@ -176,7 +176,7 @@ pub const CacheConfig = struct {
                 in_local = true;
                 in_push = false;
                 if (current_cache) |c| {
-                    try self.caches.append(c);
+                    try self.caches.append(self.allocator, c);
                     current_cache = null;
                 }
                 continue;
@@ -186,7 +186,7 @@ pub const CacheConfig = struct {
                 in_local = false;
                 in_push = true;
                 if (current_cache) |c| {
-                    try self.caches.append(c);
+                    try self.caches.append(self.allocator, c);
                     current_cache = null;
                 }
                 continue;
@@ -196,7 +196,7 @@ pub const CacheConfig = struct {
                 if (std.mem.startsWith(u8, trimmed, "- url:")) {
                     // Save previous cache if exists
                     if (current_cache) |c| {
-                        try self.caches.append(c);
+                        try self.caches.append(self.allocator, c);
                     }
                     const url_value = std.mem.trim(u8, trimmed[6..], " \t");
                     current_cache = RemoteCache{
@@ -241,7 +241,7 @@ pub const CacheConfig = struct {
 
         // Save last cache
         if (current_cache) |c| {
-            try self.caches.append(c);
+            try self.caches.append(self.allocator, c);
         }
 
         // Sort caches by priority
@@ -257,7 +257,8 @@ pub const CacheConfig = struct {
         var file = try std.fs.createFileAbsolute(path, .{});
         defer file.close();
 
-        var writer = file.writer();
+        var write_buf: [4096]u8 = undefined;
+        var writer = file.writer(&write_buf);
 
         // Write caches
         try writer.writeAll("caches:\n");
@@ -682,12 +683,12 @@ pub const CacheClient = struct {
 
         // Calculate current cache size
         var current_size: u64 = 0;
-        var entries = std.ArrayList(CacheEntry).init(self.allocator);
+        var entries: std.ArrayList(CacheEntry) = .empty;
         defer {
             for (entries.items) |*entry| {
                 entry.deinit(self.allocator);
             }
-            entries.deinit();
+            entries.deinit(self.allocator);
         }
 
         var walker = cache_dir.walk(self.allocator) catch return 0;

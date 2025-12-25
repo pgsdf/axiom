@@ -140,8 +140,8 @@ pub const RealizationEngine = struct {
         // Clone and merge all packages
         std.debug.print("\nCloning packages...\n", .{});
 
-        var package_ids = std.ArrayList(PackageId).init(self.allocator);
-        defer package_ids.deinit();
+        var package_ids: std.ArrayList(PackageId) = .empty;
+        defer package_ids.deinit(self.allocator);
 
         // Track files already in environment for conflict detection
         var env_files = std.StringHashMap(PackageId).init(self.allocator);
@@ -184,7 +184,7 @@ pub const RealizationEngine = struct {
                 std.debug.print("    ⚠ {d} file conflict(s) detected\n", .{conflicts_found});
             }
 
-            try package_ids.append(.{
+            try package_ids.append(self.allocator, .{
                 .name = try self.allocator.dupe(u8, pkg.id.name),
                 .version = pkg.id.version,
                 .revision = pkg.id.revision,
@@ -232,7 +232,7 @@ pub const RealizationEngine = struct {
             .name = try self.allocator.dupe(u8, env_name),
             .profile_name = try self.allocator.dupe(u8, lock.profile_name),
             .dataset_path = try self.allocator.dupe(u8, env_dataset),
-            .packages = try package_ids.toOwnedSlice(),
+            .packages = try package_ids.toOwnedSlice(self.allocator),
             .active = false,
         };
     }
@@ -304,8 +304,8 @@ pub const RealizationEngine = struct {
         // Clone and merge all packages
         std.debug.print("\nCloning packages with spec...\n", .{});
 
-        var package_ids = std.ArrayList(PackageId).init(self.allocator);
-        defer package_ids.deinit();
+        var package_ids: std.ArrayList(PackageId) = .empty;
+        defer package_ids.deinit(self.allocator);
 
         var env_files = std.StringHashMap(PackageId).init(self.allocator);
         defer env_files.deinit();
@@ -357,7 +357,7 @@ pub const RealizationEngine = struct {
                 std.debug.print("    ⚠ {d} file conflict(s) detected\n", .{conflicts_found});
             }
 
-            try package_ids.append(.{
+            try package_ids.append(self.allocator, .{
                 .name = try self.allocator.dupe(u8, pkg.id.name),
                 .version = pkg.id.version,
                 .revision = pkg.id.revision,
@@ -409,7 +409,7 @@ pub const RealizationEngine = struct {
             .name = try self.allocator.dupe(u8, env_name),
             .profile_name = try self.allocator.dupe(u8, lock.profile_name),
             .dataset_path = try self.allocator.dupe(u8, env_dataset),
-            .packages = try package_ids.toOwnedSlice(),
+            .packages = try package_ids.toOwnedSlice(self.allocator),
             .active = false,
         };
     }
@@ -613,7 +613,8 @@ pub const RealizationEngine = struct {
         const file = try std.fs.cwd().createFile(script_path, .{ .mode = 0o755 });
         defer file.close();
 
-        const writer = file.writer();
+        var write_buf: [4096]u8 = undefined;
+        const writer = file.writer(&write_buf);
 
         try writer.writeAll("#!/bin/sh\n");
         try writer.writeAll("# Axiom environment activation script\n");
@@ -707,12 +708,12 @@ pub const RealizationEngine = struct {
     pub fn listEnvironments(
         self: *RealizationEngine,
     ) ![][]const u8 {
-        var envs = std.ArrayList([]const u8).init(self.allocator);
+        var envs: std.ArrayList([]const u8) = .empty;
         errdefer {
             for (envs.items) |env| {
                 self.allocator.free(env);
             }
-            envs.deinit();
+            envs.deinit(self.allocator);
         }
 
         // Get mountpoint for the env root
@@ -721,13 +722,13 @@ pub const RealizationEngine = struct {
             self.env_root,
         ) catch {
             // Env root doesn't exist or isn't mounted
-            return envs.toOwnedSlice();
+            return envs.toOwnedSlice(self.allocator);
         };
         defer self.allocator.free(env_mountpoint);
 
         // Open the environments directory
         var env_dir = std.fs.cwd().openDir(env_mountpoint, .{ .iterate = true }) catch {
-            return envs.toOwnedSlice();
+            return envs.toOwnedSlice(self.allocator);
         };
         defer env_dir.close();
 
@@ -736,10 +737,10 @@ pub const RealizationEngine = struct {
         while (try iter.next()) |entry| {
             if (entry.kind != .directory) continue;
 
-            try envs.append(try self.allocator.dupe(u8, entry.name));
+            try envs.append(self.allocator, try self.allocator.dupe(u8, entry.name));
         }
 
-        return envs.toOwnedSlice();
+        return envs.toOwnedSlice(self.allocator);
     }
 
     /// Get environment information

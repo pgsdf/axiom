@@ -95,12 +95,12 @@ pub const BootEnvManager = struct {
 
     /// List all boot environments
     pub fn list(self: *Self) ![]BootEnvironment {
-        var envs = std.ArrayList(BootEnvironment).init(self.allocator);
+        var envs: std.ArrayList(BootEnvironment) = .empty;
         errdefer {
             for (envs.items) |*env| {
                 env.deinit(self.allocator);
             }
-            envs.deinit();
+            envs.deinit(self.allocator);
         }
 
         // Run bectl list with parseable output
@@ -141,10 +141,10 @@ pub const BootEnvManager = struct {
                 .creation_time = parseTimestamp(created_field),
             };
 
-            try envs.append(env);
+            try envs.append(self.allocator, env);
         }
 
-        return envs.toOwnedSlice();
+        return envs.toOwnedSlice(self.allocator);
     }
 
     /// Get the currently active boot environment
@@ -184,18 +184,18 @@ pub const BootEnvManager = struct {
 
     /// Create a new boot environment
     pub fn create(self: *Self, name: []const u8, options: CreateOptions) !void {
-        var args = std.ArrayList([]const u8).init(self.allocator);
-        defer args.deinit();
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(self.allocator);
 
-        try args.append("create");
+        try args.append(self.allocator, "create");
 
         // Add source if specified
         if (options.source) |source| {
-            try args.append("-e");
-            try args.append(source);
+            try args.append(self.allocator, "-e");
+            try args.append(self.allocator, source);
         }
 
-        try args.append(name);
+        try args.append(self.allocator, name);
 
         var result = try self.runBectl(args.items);
         defer result.deinit(self.allocator);
@@ -237,16 +237,16 @@ pub const BootEnvManager = struct {
 
     /// Activate a boot environment
     pub fn activate(self: *Self, name: []const u8, options: ActivateOptions) !void {
-        var args = std.ArrayList([]const u8).init(self.allocator);
-        defer args.deinit();
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(self.allocator);
 
-        try args.append("activate");
+        try args.append(self.allocator, "activate");
 
         if (options.temporary) {
-            try args.append("-t");
+            try args.append(self.allocator, "-t");
         }
 
-        try args.append(name);
+        try args.append(self.allocator, name);
 
         var result = try self.runBectl(args.items);
         defer result.deinit(self.allocator);
@@ -268,16 +268,16 @@ pub const BootEnvManager = struct {
             }
         }
 
-        var args = std.ArrayList([]const u8).init(self.allocator);
-        defer args.deinit();
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(self.allocator);
 
-        try args.append("destroy");
+        try args.append(self.allocator, "destroy");
 
         if (force) {
-            try args.append("-F");
+            try args.append(self.allocator, "-F");
         }
 
-        try args.append(name);
+        try args.append(self.allocator, name);
 
         var result = try self.runBectl(args.items);
         defer result.deinit(self.allocator);
@@ -301,14 +301,14 @@ pub const BootEnvManager = struct {
 
     /// Mount a boot environment
     pub fn mount(self: *Self, name: []const u8, mountpoint: ?[]const u8) ![]const u8 {
-        var args = std.ArrayList([]const u8).init(self.allocator);
-        defer args.deinit();
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(self.allocator);
 
-        try args.append("mount");
-        try args.append(name);
+        try args.append(self.allocator, "mount");
+        try args.append(self.allocator, name);
 
         if (mountpoint) |mp| {
-            try args.append(mp);
+            try args.append(self.allocator, mp);
         }
 
         var result = try self.runBectl(args.items);
@@ -336,16 +336,16 @@ pub const BootEnvManager = struct {
 
     /// Unmount a boot environment
     pub fn unmount(self: *Self, name: []const u8, force: bool) !void {
-        var args = std.ArrayList([]const u8).init(self.allocator);
-        defer args.deinit();
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(self.allocator);
 
-        try args.append("unmount");
+        try args.append(self.allocator, "unmount");
 
         if (force) {
-            try args.append("-f");
+            try args.append(self.allocator, "-f");
         }
 
-        try args.append(name);
+        try args.append(self.allocator, name);
 
         var result = try self.runBectl(args.items);
         defer result.deinit(self.allocator);
@@ -402,12 +402,12 @@ pub const BootEnvManager = struct {
             self.allocator.free(envs);
         }
 
-        var to_delete = std.ArrayList([]const u8).init(self.allocator);
+        var to_delete: std.ArrayList([]const u8) = .empty;
         defer {
             for (to_delete.items) |name| {
                 self.allocator.free(name);
             }
-            to_delete.deinit();
+            to_delete.deinit(self.allocator);
         }
 
         const now = std.time.timestamp();
@@ -436,7 +436,7 @@ pub const BootEnvManager = struct {
             const age = now - env.creation_time;
             if (age > max_age_seconds) {
                 const name_copy = try self.allocator.dupe(u8, env.name);
-                try to_delete.append(name_copy);
+                try to_delete.append(self.allocator, name_copy);
             }
         }
 
@@ -461,7 +461,7 @@ pub const BootEnvManager = struct {
                     }
                     if (!already_listed) {
                         const name_copy = try self.allocator.dupe(u8, env.name);
-                        try to_delete.append(name_copy);
+                        try to_delete.append(self.allocator, name_copy);
                         count -= 1;
                     }
                 }
@@ -521,12 +521,12 @@ pub const BootEnvManager = struct {
 
     /// Run a bectl command
     fn runBectl(self: *Self, args: []const []const u8) !CommandResult {
-        var full_args = std.ArrayList([]const u8).init(self.allocator);
-        defer full_args.deinit();
+        var full_args: std.ArrayList([]const u8) = .empty;
+        defer full_args.deinit(self.allocator);
 
-        try full_args.append("bectl");
+        try full_args.append(self.allocator, "bectl");
         for (args) |arg| {
-            try full_args.append(arg);
+            try full_args.append(self.allocator, arg);
         }
 
         var child = std.process.Child.init(full_args.items, self.allocator);
@@ -535,10 +535,10 @@ pub const BootEnvManager = struct {
 
         try child.spawn();
 
-        var stdout = std.ArrayList(u8).init(self.allocator);
-        defer stdout.deinit();
-        var stderr = std.ArrayList(u8).init(self.allocator);
-        defer stderr.deinit();
+        var stdout: std.ArrayList(u8) = .empty;
+        defer stdout.deinit(self.allocator);
+        var stderr: std.ArrayList(u8) = .empty;
+        defer stderr.deinit(self.allocator);
 
         if (child.stdout) |stdout_pipe| {
             var reader = stdout_pipe.reader();
@@ -557,8 +557,8 @@ pub const BootEnvManager = struct {
 
         return CommandResult{
             .success = exit_code == 0,
-            .stdout = try stdout.toOwnedSlice(),
-            .stderr = try stderr.toOwnedSlice(),
+            .stdout = try stdout.toOwnedSlice(self.allocator),
+            .stderr = try stderr.toOwnedSlice(self.allocator),
             .exit_code = exit_code,
         };
     }

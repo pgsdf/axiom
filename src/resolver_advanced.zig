@@ -51,7 +51,7 @@ pub const VirtualProviderIndex = struct {
     pub fn deinit(self: *VirtualProviderIndex) void {
         var iter = self.providers.valueIterator();
         while (iter.next()) |list| {
-            list.deinit();
+            list.deinit(self.allocator);
         }
         self.providers.deinit();
     }
@@ -85,10 +85,10 @@ pub const VirtualProviderIndex = struct {
     pub fn addProvider(self: *VirtualProviderIndex, virtual_name: []const u8, pkg_id: PackageId, priority: i32) !void {
         const gop = try self.providers.getOrPut(virtual_name);
         if (!gop.found_existing) {
-            gop.value_ptr.* = std.ArrayList(VirtualProvider).init(self.allocator);
+            gop.value_ptr.* = .empty;
         }
 
-        try gop.value_ptr.append(.{
+        try gop.value_ptr.append(self.allocator, .{
             .package_id = pkg_id,
             .virtual_name = virtual_name,
             .priority = priority,
@@ -131,13 +131,13 @@ pub const ResolvedFeatures = struct {
             .allocator = allocator,
             .package_name = package_name,
             .enabled = std.StringHashMap(void).init(allocator),
-            .feature_deps = std.ArrayList(Dependency).empty,
+            .feature_deps = .empty,
         };
     }
 
     pub fn deinit(self: *ResolvedFeatures) void {
         self.enabled.deinit();
-        self.feature_deps.deinit();
+        self.feature_deps.deinit(self.allocator);
     }
 
     /// Enable a feature
@@ -227,7 +227,7 @@ pub const FeatureResolver = struct {
         for (manifest.features) |feature| {
             if (resolved.isEnabled(feature.name)) {
                 for (feature.dependencies) |dep| {
-                    try resolved.feature_deps.append(dep);
+                    try resolved.feature_deps.append(self.allocator, dep);
                 }
             }
         }
@@ -296,21 +296,21 @@ pub const DependencyExplanation = struct {
 
     pub fn deinit(self: *DependencyExplanation) void {
         for (self.paths.items) |*path| {
-            path.deinit();
+            path.deinit(self.allocator);
         }
-        self.paths.deinit();
+        self.paths.deinit(self.allocator);
     }
 
     /// Add a dependency path
     pub fn addPath(self: *DependencyExplanation, steps: []const DependencyStep) !void {
-        var path = std.ArrayList(DependencyStep).init(self.allocator);
-        try path.appendSlice(steps);
-        try self.paths.append(path);
+        var path: std.ArrayList(DependencyStep) = .empty;
+        try path.appendSlice(self.allocator, steps);
+        try self.paths.append(self.allocator, path);
     }
 
     /// Format explanation for display
     pub fn format(self: *DependencyExplanation, writer: anytype) !void {
-        try writer.print("Package {s} {} is required because:\n", .{
+        try writer.print("Package {s} {f} is required because:\n", .{
             self.target.name,
             self.target.version,
         });
@@ -320,22 +320,22 @@ pub const DependencyExplanation = struct {
             for (path.items, 0..) |step, j| {
                 const indent = "    " ** (j + 1);
                 switch (step.reason) {
-                    .direct => try writer.print("{s}{s} {} (directly requested)\n", .{
+                    .direct => try writer.print("{s}{s} {f} (directly requested)\n", .{
                         indent,
                         step.package.name,
                         step.package.version,
                     }),
-                    .dependency => try writer.print("{s}{s} {} (dependency of previous)\n", .{
+                    .dependency => try writer.print("{s}{s} {f} (dependency of previous)\n", .{
                         indent,
                         step.package.name,
                         step.package.version,
                     }),
-                    .virtual => try writer.print("{s}{s} {} (provides virtual)\n", .{
+                    .virtual => try writer.print("{s}{s} {f} (provides virtual)\n", .{
                         indent,
                         step.package.name,
                         step.package.version,
                     }),
-                    .feature => try writer.print("{s}{s} {} (required by feature)\n", .{
+                    .feature => try writer.print("{s}{s} {f} (required by feature)\n", .{
                         indent,
                         step.package.name,
                         step.package.version,
@@ -520,12 +520,12 @@ pub const AdvancedResolver = struct {
         // Check if target is directly requested
         for (direct_requests) |req| {
             if (std.mem.eql(u8, req, target.name)) {
-                var path = std.ArrayList(DependencyStep).init(self.allocator);
-                try path.append(.{
+                var path: std.ArrayList(DependencyStep) = .empty;
+                try path.append(self.allocator, .{
                     .package = target,
                     .reason = .direct,
                 });
-                try explanation.paths.append(path);
+                try explanation.paths.append(self.allocator, path);
             }
         }
 
@@ -553,7 +553,7 @@ test "PreferenceHandler.matchesPattern" {
 }
 
 test "VirtualProviderIndex" {
-    const allocator = std.testing.allocator;
+    const _allocator = std.testing.allocator;
     var index = VirtualProviderIndex.empty;
     defer index.deinit();
 
@@ -576,7 +576,7 @@ test "VirtualProviderIndex" {
 }
 
 test "FeatureResolver.basic" {
-    const allocator = std.testing.allocator;
+    const _allocator = std.testing.allocator;
     var resolver = FeatureResolver.empty;
     defer resolver.deinit();
 

@@ -113,9 +113,9 @@ pub const BuildRecipe = struct {
             .name = "",
             .version = Version{ .major = 0, .minor = 0, .patch = 0 },
             .source = Source{},
-            .build_deps = std.ArrayList(Dependency).empty,
-            .runtime_deps = std.ArrayList(Dependency).empty,
-            .phases = std.ArrayList(BuildPhase).empty,
+            .build_deps = .empty,
+            .runtime_deps = .empty,
+            .phases = .empty,
             .output = OutputConfig{},
         };
     }
@@ -130,24 +130,24 @@ pub const BuildRecipe = struct {
         for (self.build_deps.items) |*dep| {
             self.allocator.free(dep.name);
         }
-        self.build_deps.deinit();
+        self.build_deps.deinit(self.allocator);
 
         for (self.runtime_deps.items) |*dep| {
             self.allocator.free(dep.name);
         }
-        self.runtime_deps.deinit();
+        self.runtime_deps.deinit(self.allocator);
 
         for (self.phases.items) |*phase| {
             phase.deinit(self.allocator);
         }
-        self.phases.deinit();
+        self.phases.deinit(self.allocator);
 
         self.output.deinit(self.allocator);
     }
 
     /// Parse a build recipe from YAML content
     pub fn parse(allocator: std.mem.Allocator, content: []const u8) !BuildRecipe {
-        var recipe = BuildRecipe.empty;
+        var recipe = BuildRecipe.init(allocator);
         errdefer recipe.deinit();
 
         var lines = std.mem.splitSequence(u8, content, "\n");
@@ -223,9 +223,9 @@ pub const BuildRecipe = struct {
                             .constraint = VersionConstraint{ .any = {} },
                         };
                         if (current_section == .build_deps) {
-                            try recipe.build_deps.append(dep);
+                            try recipe.build_deps.append(allocator, dep);
                         } else {
-                            try recipe.runtime_deps.append(dep);
+                            try recipe.runtime_deps.append(allocator, dep);
                         }
                     }
                 },
@@ -237,7 +237,7 @@ pub const BuildRecipe = struct {
                             .name = phase_name,
                             .command = "",
                         };
-                        try recipe.phases.append(phase);
+                        try recipe.phases.append(allocator, phase);
                         current_phase = &recipe.phases.items[recipe.phases.items.len - 1];
                         in_phase_block = true;
                         phase_indent = indent;
@@ -428,8 +428,8 @@ pub const BuildSandbox = struct {
 
     /// Get the environment as a null-terminated array for spawn
     pub fn getEnvp(self: *BuildSandbox) ![]const [*:0]const u8 {
-        var envp = std.ArrayList([*:0]const u8).init(self.allocator);
-        errdefer envp.deinit();
+        var envp: std.ArrayList([*:0]const u8) = .empty;
+        errdefer envp.deinit(self.allocator);
 
         var iter = self.env_vars.iterator();
         while (iter.next()) |entry| {
@@ -438,10 +438,10 @@ pub const BuildSandbox = struct {
                 "{s}={s}",
                 .{ entry.key_ptr.*, entry.value_ptr.* },
             );
-            try envp.append(env_str.ptr);
+            try envp.append(self.allocator, env_str.ptr);
         }
 
-        return envp.toOwnedSlice();
+        return envp.toOwnedSlice(self.allocator);
     }
 };
 
@@ -559,7 +559,7 @@ pub const SecureBuildSandbox = struct {
             .allocator = allocator,
             .zfs_handle = zfs_handle,
             .config = config,
-            .active_mounts = std.ArrayList(SandboxMount).empty,
+            .active_mounts = .empty,
         };
     }
 
@@ -608,29 +608,29 @@ pub const SecureBuildSandbox = struct {
 
         // Build jail command
         // jail -c name=<name> path=<path> persist allow.raw_sockets=0 ...
-        var args = std.ArrayList([]const u8).init(self.allocator);
-        defer args.deinit();
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(self.allocator);
 
-        try args.append("jail");
-        try args.append("-c");
-        try args.append(try std.fmt.allocPrint(self.allocator, "name={s}", .{self.jail_name.?}));
-        try args.append(try std.fmt.allocPrint(self.allocator, "path={s}", .{base.mount_point}));
-        try args.append("persist");
-        try args.append(try std.fmt.allocPrint(self.allocator, "securelevel={d}", .{self.config.securelevel}));
-        try args.append(try std.fmt.allocPrint(self.allocator, "allow.raw_sockets={d}", .{@as(u8, if (self.config.allow_raw_sockets) 1 else 0)}));
-        try args.append(try std.fmt.allocPrint(self.allocator, "allow.set_hostname=0", .{}));
-        try args.append(try std.fmt.allocPrint(self.allocator, "allow.mount={d}", .{@as(u8, if (self.config.allow_mount) 1 else 0)}));
-        try args.append(try std.fmt.allocPrint(self.allocator, "allow.sysvipc=0", .{}));
+        try args.append(self.allocator, "jail");
+        try args.append(self.allocator, "-c");
+        try args.append(self.allocator, try std.fmt.allocPrint(self.allocator, "name={s}", .{self.jail_name.?}));
+        try args.append(self.allocator, try std.fmt.allocPrint(self.allocator, "path={s}", .{base.mount_point}));
+        try args.append(self.allocator, "persist");
+        try args.append(self.allocator, try std.fmt.allocPrint(self.allocator, "securelevel={d}", .{self.config.securelevel}));
+        try args.append(self.allocator, try std.fmt.allocPrint(self.allocator, "allow.raw_sockets={d}", .{@as(u8, if (self.config.allow_raw_sockets) 1 else 0)}));
+        try args.append(self.allocator, try std.fmt.allocPrint(self.allocator, "allow.set_hostname=0", .{}));
+        try args.append(self.allocator, try std.fmt.allocPrint(self.allocator, "allow.mount={d}", .{@as(u8, if (self.config.allow_mount) 1 else 0)}));
+        try args.append(self.allocator, try std.fmt.allocPrint(self.allocator, "allow.sysvipc=0", .{}));
 
         // Network restrictions
         switch (self.config.network_policy) {
             .none => {
-                try args.append("ip4=disable");
-                try args.append("ip6=disable");
+                try args.append(self.allocator, "ip4=disable");
+                try args.append(self.allocator, "ip6=disable");
             },
             .fetch_only, .full => {
-                try args.append("ip4=inherit");
-                try args.append("ip6=inherit");
+                try args.append(self.allocator, "ip4=inherit");
+                try args.append(self.allocator, "ip6=inherit");
             },
         }
 
@@ -715,7 +715,7 @@ pub const SecureBuildSandbox = struct {
             return BuildError.MountFailed;
         }
 
-        try self.active_mounts.append(.{
+        try self.active_mounts.append(self.allocator, .{
             .source = "tmpfs",
             .target = try self.allocator.dupe(u8, target),
             .read_only = false,
@@ -750,7 +750,7 @@ pub const SecureBuildSandbox = struct {
         try ruleset_child.spawn();
         _ = try ruleset_child.wait();
 
-        try self.active_mounts.append(.{
+        try self.active_mounts.append(self.allocator, .{
             .source = "devfs",
             .target = try self.allocator.dupe(u8, target),
             .read_only = false,
@@ -765,18 +765,18 @@ pub const SecureBuildSandbox = struct {
         // Create target directory
         try std.fs.cwd().makePath(target);
 
-        var args = std.ArrayList([]const u8).init(self.allocator);
-        defer args.deinit();
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(self.allocator);
 
-        try args.append("mount");
-        try args.append("-t");
-        try args.append("nullfs");
+        try args.append(self.allocator, "mount");
+        try args.append(self.allocator, "-t");
+        try args.append(self.allocator, "nullfs");
         if (read_only) {
-            try args.append("-o");
-            try args.append("ro");
+            try args.append(self.allocator, "-o");
+            try args.append(self.allocator, "ro");
         }
-        try args.append(source);
-        try args.append(target);
+        try args.append(self.allocator, source);
+        try args.append(self.allocator, target);
 
         var child = std.process.Child.init(args.items, self.allocator);
 
@@ -788,7 +788,7 @@ pub const SecureBuildSandbox = struct {
             return BuildError.MountFailed;
         }
 
-        try self.active_mounts.append(.{
+        try self.active_mounts.append(self.allocator, .{
             .source = try self.allocator.dupe(u8, source),
             .target = try self.allocator.dupe(u8, target),
             .read_only = read_only,
@@ -868,18 +868,18 @@ pub const SecureBuildSandbox = struct {
 
         try self.auditLog("execute", "Running: {s}", .{command});
 
-        var args = std.ArrayList([]const u8).init(self.allocator);
-        defer args.deinit();
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(self.allocator);
 
         if (self.jail_name) |jail_name| {
             // Execute inside jail
-            try args.append("jexec");
-            try args.append(jail_name);
+            try args.append(self.allocator, "jexec");
+            try args.append(self.allocator, jail_name);
         }
 
-        try args.append("/bin/sh");
-        try args.append("-c");
-        try args.append(command);
+        try args.append(self.allocator, "/bin/sh");
+        try args.append(self.allocator, "-c");
+        try args.append(self.allocator, command);
 
         var child = std.process.Child.init(args.items, self.allocator);
         child.cwd = working_dir orelse base.source_dir;
@@ -898,7 +898,8 @@ pub const SecureBuildSandbox = struct {
         const file = self.audit_file orelse return;
         const timestamp = std.time.timestamp();
 
-        var writer = file.writer();
+        var write_buf: [4096]u8 = undefined;
+        var writer = file.writer(&write_buf);
         try writer.print("[{d}] [{s}] ", .{ timestamp, event });
         try writer.print(fmt, args);
         try writer.writeByte('\n');
@@ -950,7 +951,7 @@ pub const SecureBuildSandbox = struct {
                 self.allocator.free(mount.source);
             }
         }
-        self.active_mounts.deinit();
+        self.active_mounts.deinit(self.allocator);
 
         // Destroy base sandbox
         if (self.base_sandbox) |base| {
@@ -1246,19 +1247,19 @@ pub const Builder = struct {
     fn cloneGit(self: *Builder, sandbox: *BuildSandbox, git_url: []const u8, git_ref: ?[]const u8) !void {
         std.debug.print("  Cloning: {s}\n", .{git_url});
 
-        var args = std.ArrayList([]const u8).init(self.allocator);
-        defer args.deinit();
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(self.allocator);
 
-        try args.append("git");
-        try args.append("clone");
+        try args.append(self.allocator, "git");
+        try args.append(self.allocator, "clone");
         if (git_ref) |ref| {
-            try args.append("--branch");
-            try args.append(ref);
+            try args.append(self.allocator, "--branch");
+            try args.append(self.allocator, ref);
         }
-        try args.append("--depth");
-        try args.append("1");
-        try args.append(git_url);
-        try args.append(sandbox.source_dir);
+        try args.append(self.allocator, "--depth");
+        try args.append(self.allocator, "1");
+        try args.append(self.allocator, git_url);
+        try args.append(self.allocator, sandbox.source_dir);
 
         var child = std.process.Child.init(args.items, self.allocator);
 

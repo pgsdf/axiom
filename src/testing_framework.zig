@@ -60,7 +60,7 @@ pub const TestResults = struct {
     pub fn init(allocator: Allocator) Self {
         return .{
             .allocator = allocator,
-            .cases = std.ArrayList(TestCase).empty,
+            .cases = .empty,
             .passed = 0,
             .failed = 0,
             .skipped = 0,
@@ -73,11 +73,11 @@ pub const TestResults = struct {
         for (self.cases.items) |*case| {
             case.deinit(self.allocator);
         }
-        self.cases.deinit();
+        self.cases.deinit(self.allocator);
     }
 
     pub fn addCase(self: *Self, case: TestCase) !void {
-        try self.cases.append(case);
+        try self.cases.append(self.allocator, case);
         switch (case.status) {
             .passed => self.passed += 1,
             .failed => self.failed += 1,
@@ -394,12 +394,12 @@ pub const MockZfs = struct {
     pub fn list(self: *Self) ![]const []const u8 {
         try self.checkFailure(.list);
 
-        var names = std.ArrayList([]const u8).init(self.allocator);
+        var names: std.ArrayList([]const u8) = .empty;
         var iter = self.datasets.iterator();
         while (iter.next()) |entry| {
-            try names.append(try self.allocator.dupe(u8, entry.key_ptr.*));
+            try names.append(self.allocator, try self.allocator.dupe(u8, entry.key_ptr.*));
         }
-        return names.toOwnedSlice();
+        return names.toOwnedSlice(self.allocator);
     }
 
     /// Check if dataset exists
@@ -757,7 +757,7 @@ pub const TestFixture = struct {
 
 // Built-in tests
 test "MockZfs.create" {
-    const allocator = std.testing.allocator;
+    const _allocator = std.testing.allocator;
     var mock = MockZfs.empty;
     defer mock.deinit();
 
@@ -766,7 +766,7 @@ test "MockZfs.create" {
 }
 
 test "MockZfs.destroy" {
-    const allocator = std.testing.allocator;
+    const _allocator = std.testing.allocator;
     var mock = MockZfs.empty;
     defer mock.deinit();
 
@@ -776,7 +776,7 @@ test "MockZfs.destroy" {
 }
 
 test "MockZfs.failure_injection" {
-    const allocator = std.testing.allocator;
+    const _allocator = std.testing.allocator;
     var mock = MockZfs.empty;
     defer mock.deinit();
 

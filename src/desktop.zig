@@ -179,8 +179,8 @@ pub const DesktopIntegration = struct {
         pkg_root: []const u8,
         entry: DesktopEntry,
     ) ![]const u8 {
-        var output = std.ArrayList(u8).init(self.allocator);
-        defer output.deinit();
+        var output: std.ArrayList(u8) = .empty;
+        defer output.deinit(self.allocator);
 
         const writer = output.writer();
 
@@ -265,7 +265,7 @@ pub const DesktopIntegration = struct {
             }
         }
 
-        return try output.toOwnedSlice();
+        return try output.toOwnedSlice(self.allocator);
     }
 
     fn getDesktopFilePath(self: *DesktopIntegration, pkg_id: PackageId) ![]const u8 {
@@ -412,8 +412,8 @@ pub const DesktopIntegration = struct {
 
     /// List all installed desktop integrations
     pub fn listInstalled(self: *DesktopIntegration) ![]InstalledDesktopEntry {
-        var entries = std.ArrayList(InstalledDesktopEntry).init(self.allocator);
-        defer entries.deinit();
+        var entries: std.ArrayList(InstalledDesktopEntry) = .empty;
+        defer entries.deinit(self.allocator);
 
         const apps_dir = try std.fs.path.join(self.allocator, &[_][]const u8{
             self.xdg_data_home,
@@ -422,7 +422,7 @@ pub const DesktopIntegration = struct {
         defer self.allocator.free(apps_dir);
 
         var dir = std.fs.cwd().openDir(apps_dir, .{ .iterate = true }) catch {
-            return try entries.toOwnedSlice();
+            return try entries.toOwnedSlice(self.allocator);
         };
         defer dir.close();
 
@@ -431,7 +431,7 @@ pub const DesktopIntegration = struct {
             if (entry.kind == .file and std.mem.startsWith(u8, entry.name, "axiom-")) {
                 if (std.mem.endsWith(u8, entry.name, ".desktop")) {
                     const pkg_name = entry.name[6 .. entry.name.len - 8];
-                    try entries.append(.{
+                    try entries.append(self.allocator, .{
                         .package_name = try self.allocator.dupe(u8, pkg_name),
                         .desktop_file = try std.fs.path.join(self.allocator, &[_][]const u8{
                             apps_dir,
@@ -442,7 +442,7 @@ pub const DesktopIntegration = struct {
             }
         }
 
-        return try entries.toOwnedSlice();
+        return try entries.toOwnedSlice(self.allocator);
     }
 };
 

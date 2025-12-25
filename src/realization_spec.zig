@@ -304,8 +304,8 @@ pub const RealizationSpec = struct {
     pub fn init(allocator: Allocator) RealizationSpec {
         return .{
             .allocator = allocator,
-            .directory_rules = std.ArrayList(DirectoryRule).empty,
-            .output_selections = std.ArrayList(OutputSelection).empty,
+            .directory_rules = .empty,
+            .output_selections = .empty,
             .abi_boundary = AbiBoundary.initDefault(),
         };
     }
@@ -442,9 +442,9 @@ pub const AbiReport = struct {
     pub fn init(allocator: Allocator) AbiReport {
         return .{
             .allocator = allocator,
-            .system_lib_violations = std.ArrayList(Violation).empty,
-            .missing_dependencies = std.ArrayList([]const u8).empty,
-            .warnings = std.ArrayList([]const u8).empty,
+            .system_lib_violations = .empty,
+            .missing_dependencies = .empty,
+            .warnings = .empty,
         };
     }
 
@@ -535,8 +535,8 @@ pub const EnvironmentMetadata = struct {
     abi_verified: bool = false,
 
     /// Serialize to YAML format
-    pub fn toYaml(self: *const EnvironmentMetadata, allocator: Allocator) ![]u8 {
-        var buffer = std.ArrayList(u8).empty;
+    pub fn toYaml(self: *const EnvironmentMetadata, _: Allocator) ![]u8 {
+        var buffer = .empty;
         const writer = buffer.writer();
 
         try writer.print("name: {s}\n", .{self.name});

@@ -51,7 +51,7 @@ pub fn main() !void {
         // Check if package already exists
         const exists = try pkg_store.packageExists(pkg_id);
         if (!exists) {
-            std.debug.print("Creating package: {s} {}\n", .{ pkg_info.name, pkg_info.version });
+            std.debug.print("Creating package: {s} {f}\n", .{ pkg_info.name, pkg_info.version });
 
             // Create temporary package files
             const temp_dir = try std.fmt.allocPrint(allocator, "/tmp/axiom-pkg-{s}", .{pkg_info.name});
@@ -66,7 +66,8 @@ pub fn main() !void {
 
             const file = try std.fs.cwd().createFile(test_file, .{});
             defer file.close();
-            try file.writer().print("Test package: {s}\n", .{pkg_info.name});
+            var write_buf: [256]u8 = undefined;
+            try file.writer(&write_buf).print("Test package: {s}\n", .{pkg_info.name});
 
             // Create manifests
             const pkg_manifest = manifest.Manifest{
@@ -96,7 +97,7 @@ pub fn main() !void {
             // Add package to store
             try pkg_store.addPackage(pkg_id, temp_dir, pkg_manifest, deps_manifest, prov);
         } else {
-            std.debug.print("Package already exists: {s} {}\n", .{ pkg_info.name, pkg_info.version });
+            std.debug.print("Package already exists: {s} {f}\n", .{ pkg_info.name, pkg_info.version });
         }
     }
 

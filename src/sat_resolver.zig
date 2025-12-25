@@ -44,7 +44,7 @@ pub const ConflictExplanation = struct {
     pub fn format(self: ConflictExplanation, writer: anytype) !void {
         switch (self.reason) {
             .version_conflict => {
-                try writer.print("Version conflict: {s} {} conflicts with {s} {}", .{
+                try writer.print("Version conflict: {s} {f} conflicts with {s} {f}", .{
                     self.package_a,
                     self.version_a,
                     self.package_b,
@@ -143,7 +143,7 @@ pub const SATResolver = struct {
 
         var avail_iter = self.available_packages.valueIterator();
         while (avail_iter.next()) |list| {
-            list.deinit();
+            list.deinit(self.allocator);
         }
         self.available_packages.deinit();
 
@@ -172,9 +172,9 @@ pub const SATResolver = struct {
         // Add to package -> candidates mapping
         const result = try self.pkg_to_var.getOrPut(id.name);
         if (!result.found_existing) {
-            result.value_ptr.* = std.ArrayList(PackageCandidate).init(self.allocator);
+            result.value_ptr.* = .empty;
         }
-        try result.value_ptr.append(candidate);
+        try result.value_ptr.append(self.allocator, candidate);
 
         // Add to variable -> package mapping
         try self.var_to_pkg.put(variable, candidate);
@@ -182,9 +182,9 @@ pub const SATResolver = struct {
         // Track available packages
         const avail_result = try self.available_packages.getOrPut(id.name);
         if (!avail_result.found_existing) {
-            avail_result.value_ptr.* = std.ArrayList(PackageId).init(self.allocator);
+            avail_result.value_ptr.* = .empty;
         }
-        try avail_result.value_ptr.append(id);
+        try avail_result.value_ptr.append(self.allocator, id);
 
         // Add preference for newer versions (higher weight for newer)
         const version_weight = self.calculateVersionWeight(id.version);
@@ -237,12 +237,12 @@ pub const SATResolver = struct {
         };
 
         // Collect satisfying versions
-        var satisfying = std.ArrayList(Literal).init(self.allocator);
-        defer satisfying.deinit();
+        var satisfying: std.ArrayList(Literal) = .empty;
+        defer satisfying.deinit(self.allocator);
 
         for (candidates.items) |candidate| {
             if (request.constraint.satisfies(candidate.id.version)) {
-                try satisfying.append(Literal.positive(candidate.variable));
+                try satisfying.append(self.allocator, Literal.positive(candidate.variable));
 
                 // Boost preference for directly requested packages
                 try self.optimizer.preferTrue(candidate.variable, DIRECT_DEPENDENCY_WEIGHT);
@@ -285,15 +285,15 @@ pub const SATResolver = struct {
                 // If this package is selected, at least one satisfying dep must be selected
                 const dep_candidates = self.pkg_to_var.get(dep.name) orelse continue;
 
-                var satisfying = std.ArrayList(Literal).init(self.allocator);
-                defer satisfying.deinit();
+                var satisfying: std.ArrayList(Literal) = .empty;
+                defer satisfying.deinit(self.allocator);
 
                 // NOT(this) is always an option (if we don't select this, constraint is satisfied)
-                try satisfying.append(Literal.negative(candidate.variable));
+                try satisfying.append(self.allocator, Literal.negative(candidate.variable));
 
                 for (dep_candidates.items) |dep_cand| {
                     if (dep.constraint.satisfies(dep_cand.id.version)) {
-                        try satisfying.append(Literal.positive(dep_cand.variable));
+                        try satisfying.append(self.allocator, Literal.positive(dep_cand.variable));
                     }
                 }
 
@@ -325,37 +325,37 @@ pub const SATResolver = struct {
 
     /// Extract selected packages from SAT solution
     fn extractPackages(self: *SATResolver, solution: []bool) ![]PackageId {
-        var selected = std.ArrayList(PackageId).init(self.allocator);
-        errdefer selected.deinit();
+        var selected: std.ArrayList(PackageId) = .empty;
+        errdefer selected.deinit(self.allocator);
 
         var iter = self.var_to_pkg.iterator();
         while (iter.next()) |entry| {
             const variable = entry.key_ptr.*;
             if (variable < solution.len and solution[variable]) {
                 const candidate = entry.value_ptr.*;
-                try selected.append(candidate.id);
+                try selected.append(self.allocator, candidate.id);
             }
         }
 
-        return try selected.toOwnedSlice();
+        return try selected.toOwnedSlice(self.allocator);
     }
 
     /// Generate human-readable explanation for UNSAT result
     fn generateExplanation(self: *SATResolver) !ResolutionFailure {
-        var explanations = std.ArrayList(ConflictExplanation).init(self.allocator);
-        var suggestions = std.ArrayList([]const u8).init(self.allocator);
+        var explanations: std.ArrayList(ConflictExplanation) = .empty;
+        var suggestions: std.ArrayList([]const u8) = .empty;
 
         // Analyze the conflict (simplified - full UNSAT core would be more detailed)
         // For now, we provide general suggestions
 
-        try suggestions.append(try self.allocator.dupe(u8, "Try relaxing version constraints"));
-        try suggestions.append(try self.allocator.dupe(u8, "Check for conflicting packages in your profile"));
-        try suggestions.append(try self.allocator.dupe(u8, "Ensure all required packages are available in the store"));
+        try suggestions.append(self.allocator, try self.allocator.dupe(u8, "Try relaxing version constraints"));
+        try suggestions.append(self.allocator, try self.allocator.dupe(u8, "Check for conflicting packages in your profile"));
+        try suggestions.append(self.allocator, try self.allocator.dupe(u8, "Ensure all required packages are available in the store"));
 
         return .{
             .allocator = self.allocator,
-            .explanations = try explanations.toOwnedSlice(),
-            .suggestions = try suggestions.toOwnedSlice(),
+            .explanations = try explanations.toOwnedSlice(self.allocator),
+            .suggestions = try suggestions.toOwnedSlice(self.allocator),
         };
     }
 };
@@ -372,7 +372,7 @@ pub fn buildResolverFromStore(
     allocator: std.mem.Allocator,
     pkg_store: *PackageStore,
 ) !SATResolver {
-    var resolver = SATResolver.empty;
+    var resolver = SATResolver.init(allocator);
     errdefer resolver.deinit();
 
     // Get all packages from store
@@ -392,22 +392,22 @@ pub fn buildResolverFromStore(
         defer manifest.freeManifest(pkg_manifest, allocator);
 
         // Convert dependencies
-        var deps = std.ArrayList(PackageCandidate.Dependency).empty;
-        defer deps.deinit();
+        var deps: std.ArrayList(PackageCandidate.Dependency) = .empty;
+        defer deps.deinit(allocator);
 
         for (pkg_manifest.dependencies) |dep| {
-            try deps.append(.{
+            try deps.append(allocator, .{
                 .name = try allocator.dupe(u8, dep.name),
                 .constraint = dep.version,
             });
         }
 
         // Convert conflicts
-        var conflicts = std.ArrayList([]const u8).empty;
-        defer conflicts.deinit();
+        var conflicts: std.ArrayList([]const u8) = .empty;
+        defer conflicts.deinit(allocator);
 
         for (pkg_manifest.conflicts) |conflict| {
-            try conflicts.append(try allocator.dupe(u8, conflict.name));
+            try conflicts.append(allocator, try allocator.dupe(u8, conflict.name));
         }
 
         try resolver.registerPackage(
@@ -424,7 +424,7 @@ pub fn buildResolverFromStore(
 test "SATResolver basic resolution" {
     const allocator = std.testing.allocator;
 
-    var resolver = SATResolver.empty;
+    var resolver = SATResolver.init(allocator);
     defer resolver.deinit();
 
     // Register package A version 1.0.0
@@ -471,9 +471,9 @@ test "SATResolver basic resolution" {
 }
 
 test "SATResolver conflict detection" {
-    const allocator = std.testing.allocator;
+    const _allocator = std.testing.allocator;
 
-    var resolver = SATResolver.empty;
+    var resolver = SATResolver.init(_allocator);
     defer resolver.deinit();
 
     // Register package A that conflicts with B

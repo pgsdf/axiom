@@ -120,21 +120,21 @@ pub const BootstrapManager = struct {
 
     /// Check bootstrap status - which required packages are present
     pub fn checkStatus(self: *Self) !BootstrapStatus {
-        var installed = std.ArrayList([]const u8).init(self.allocator);
-        var missing = std.ArrayList([]const u8).init(self.allocator);
+        var installed: std.ArrayList([]const u8) = .empty;
+        var missing: std.ArrayList([]const u8) = .empty;
 
         for (REQUIRED_BOOTSTRAP_PACKAGES) |pkg_name| {
             if (try self.isPackageInstalled(pkg_name)) {
-                try installed.append(pkg_name);
+                try installed.append(self.allocator, pkg_name);
             } else {
-                try missing.append(pkg_name);
+                try missing.append(self.allocator, pkg_name);
             }
         }
 
         return BootstrapStatus{
             .is_bootstrapped = missing.items.len == 0,
-            .installed_packages = try installed.toOwnedSlice(),
-            .missing_packages = try missing.toOwnedSlice(),
+            .installed_packages = try installed.toOwnedSlice(self.allocator),
+            .missing_packages = try missing.toOwnedSlice(self.allocator),
             .bootstrap_path = config.DEFAULT_MOUNTPOINT ++ "/store/pkg",
         };
     }
@@ -249,14 +249,14 @@ pub const BootstrapManager = struct {
         std.debug.print("Creating bootstrap tarball: {s}\n", .{output_path});
 
         // Determine which packages to export
-        var packages_to_export = std.ArrayList([]const u8).init(self.allocator);
-        defer packages_to_export.deinit();
+        var packages_to_export: std.ArrayList([]const u8) = .empty;
+        defer packages_to_export.deinit(self.allocator);
 
         if (options.packages) |pkgs| {
             // Use specified packages
             for (pkgs) |pkg| {
                 if (try self.isPackageInstalled(pkg)) {
-                    try packages_to_export.append(pkg);
+                    try packages_to_export.append(self.allocator, pkg);
                 } else {
                     std.debug.print("  Warning: Package '{s}' not found, skipping\n", .{pkg});
                 }
@@ -265,14 +265,14 @@ pub const BootstrapManager = struct {
             // Use minimal set
             for (MINIMAL_BOOTSTRAP_PACKAGES) |pkg| {
                 if (try self.isPackageInstalled(pkg)) {
-                    try packages_to_export.append(pkg);
+                    try packages_to_export.append(self.allocator, pkg);
                 }
             }
         } else {
             // Use full required set
             for (REQUIRED_BOOTSTRAP_PACKAGES) |pkg| {
                 if (try self.isPackageInstalled(pkg)) {
-                    try packages_to_export.append(pkg);
+                    try packages_to_export.append(self.allocator, pkg);
                 }
             }
         }
@@ -302,14 +302,14 @@ pub const BootstrapManager = struct {
         try std.fs.makeDirAbsolute(packages_staging);
 
         // Copy each package to staging
-        var package_entries = std.ArrayList(BootstrapPackage).init(self.allocator);
-        defer package_entries.deinit();
+        var package_entries: std.ArrayList(BootstrapPackage) = .empty;
+        defer package_entries.deinit(self.allocator);
 
         for (packages_to_export.items) |pkg_name| {
             std.debug.print("  Staging: {s}\n", .{pkg_name});
 
             const pkg_info = try self.stagePackage(pkg_name, packages_staging);
-            try package_entries.append(pkg_info);
+            try package_entries.append(self.allocator, pkg_info);
         }
 
         // Generate bootstrap.yaml
@@ -432,7 +432,8 @@ pub const BootstrapManager = struct {
         var file = try std.fs.createFileAbsolute(metadata_path, .{});
         defer file.close();
 
-        var writer = file.writer();
+        var write_buf: [4096]u8 = undefined;
+        var writer = file.writer(&write_buf);
 
         // Get system info
         const os_version = options.os_version orelse "14.2";
@@ -480,24 +481,24 @@ pub const BootstrapManager = struct {
         };
 
         // Build tar command
-        var args = std.ArrayList([]const u8).init(self.allocator);
-        defer args.deinit();
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(self.allocator);
 
-        try args.append("tar");
-        try args.append("-c");
+        try args.append(self.allocator, "tar");
+        try args.append(self.allocator, "-c");
 
         if (compression == .zstd) {
-            try args.append("--zstd");
+            try args.append(self.allocator, "--zstd");
         } else if (compress_flag.len > 0) {
             const flag = try std.fmt.allocPrint(self.allocator, "-{s}", .{compress_flag});
-            try args.append(flag);
+            try args.append(self.allocator, flag);
         }
 
-        try args.append("-f");
-        try args.append(output_path);
-        try args.append("-C");
-        try args.append(source_dir);
-        try args.append(".");
+        try args.append(self.allocator, "-f");
+        try args.append(self.allocator, output_path);
+        try args.append(self.allocator, "-C");
+        try args.append(self.allocator, source_dir);
+        try args.append(self.allocator, ".");
 
         var child = std.process.Child.init(args.items, self.allocator);
         _ = try child.spawnAndWait();
@@ -537,7 +538,7 @@ pub const BootstrapManager = struct {
             .packages = &[_]BootstrapPackage{},
         };
 
-        var packages = std.ArrayList(BootstrapPackage).init(self.allocator);
+        var packages: std.ArrayList(BootstrapPackage) = .empty;
         var current_pkg: ?BootstrapPackage = null;
         var in_packages_section = false;
 
@@ -559,7 +560,7 @@ pub const BootstrapManager = struct {
                 if (std.mem.startsWith(u8, trimmed, "- name:")) {
                     // Save previous package if exists
                     if (current_pkg) |pkg| {
-                        try packages.append(pkg);
+                        try packages.append(self.allocator, pkg);
                     }
 
                     const name_value = std.mem.trim(u8, trimmed[7..], " \t\"");
@@ -611,10 +612,10 @@ pub const BootstrapManager = struct {
 
         // Don't forget the last package
         if (current_pkg) |pkg| {
-            try packages.append(pkg);
+            try packages.append(self.allocator, pkg);
         }
 
-        metadata.packages = try packages.toOwnedSlice();
+        metadata.packages = try packages.toOwnedSlice(self.allocator);
         return metadata;
     }
 

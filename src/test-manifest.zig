@@ -24,7 +24,7 @@ pub fn main() !void {
     try pkg_manifest.validate();
 
     std.debug.print("  Name: {s}\n", .{pkg_manifest.name});
-    std.debug.print("  Version: {}\n", .{pkg_manifest.version});
+    std.debug.print("  Version: {f}\n", .{pkg_manifest.version});
     std.debug.print("  Revision: {d}\n", .{pkg_manifest.revision});
     if (pkg_manifest.description) |desc| {
         std.debug.print("  Description: {s}\n", .{desc});

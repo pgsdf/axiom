@@ -121,10 +121,10 @@ pub const BundleManifest = struct {
     provenance: ?Provenance = null,
 
     pub fn serialize(self: BundleManifest, allocator: std.mem.Allocator) ![]const u8 {
-        var output = std.ArrayList(u8).empty;
-        defer output.deinit();
+        var output: std.ArrayList(u8) = .empty;
+        defer output.deinit(allocator);
 
-        const writer = output.writer();
+        const writer = output.writer(allocator);
 
         try writer.print("format_version: {d}\n", .{self.format_version});
         try writer.print("name: {s}\n", .{self.name});
@@ -152,7 +152,7 @@ pub const BundleManifest = struct {
             try writer.print("signature: {s}\n", .{sig});
         }
 
-        return try output.toOwnedSlice();
+        return try output.toOwnedSlice(allocator);
     }
 };
 
@@ -221,15 +221,15 @@ pub const BundleBuilder = struct {
         var pkg_closure: ?Closure = null;
         defer if (pkg_closure) |*c| c.deinit();
 
-        var included_packages = std.ArrayList(PackageId).init(self.allocator);
-        defer included_packages.deinit();
+        var included_packages: std.ArrayList(PackageId) = .empty;
+        defer included_packages.deinit(self.allocator);
 
-        try included_packages.append(pkg_id);
+        try included_packages.append(self.allocator, pkg_id);
 
         if (config.include_closure) {
             pkg_closure = try self.closure_computer.computeForPackage(pkg_id);
             for (pkg_closure.?.topo_order.items) |dep_id| {
-                try included_packages.append(dep_id);
+                try included_packages.append(self.allocator, dep_id);
             }
         }
 
@@ -336,18 +336,18 @@ pub const BundleBuilder = struct {
         const output_file = try std.fs.cwd().createFile(output_path, .{});
         defer output_file.close();
 
-        var send_args = std.ArrayList([]const u8).init(self.allocator);
-        defer send_args.deinit();
+        var send_args: std.ArrayList([]const u8) = .empty;
+        defer send_args.deinit(self.allocator);
 
-        try send_args.append("zfs");
-        try send_args.append("send");
+        try send_args.append(self.allocator, "zfs");
+        try send_args.append(self.allocator, "send");
 
         // Add compression flag based on config
         if (config.compression != .none) {
-            try send_args.append("-c");
+            try send_args.append(self.allocator, "-c");
         }
 
-        try send_args.append(dataset);
+        try send_args.append(self.allocator, dataset);
 
         var send_child = std.process.Child.init(send_args.items, self.allocator);
         send_child.stdout_behavior = .Pipe;
@@ -399,15 +399,15 @@ pub const BundleBuilder = struct {
         var pkg_closure: ?Closure = null;
         defer if (pkg_closure) |*c| c.deinit();
 
-        var included_packages = std.ArrayList(PackageId).init(self.allocator);
-        defer included_packages.deinit();
+        var included_packages: std.ArrayList(PackageId) = .empty;
+        defer included_packages.deinit(self.allocator);
 
-        try included_packages.append(pkg_id);
+        try included_packages.append(self.allocator, pkg_id);
 
         if (config.include_closure) {
             pkg_closure = try self.closure_computer.computeForPackage(pkg_id);
             for (pkg_closure.?.topo_order.items) |dep_id| {
-                try included_packages.append(dep_id);
+                try included_packages.append(self.allocator, dep_id);
             }
         }
 
@@ -437,18 +437,18 @@ pub const BundleBuilder = struct {
             .lz4 => "--lz4",
         };
 
-        var tar_args = std.ArrayList([]const u8).init(self.allocator);
-        defer tar_args.deinit();
+        var tar_args: std.ArrayList([]const u8) = .empty;
+        defer tar_args.deinit(self.allocator);
 
-        try tar_args.append(tar_cmd);
-        try tar_args.append("-cf");
-        try tar_args.append(output_path);
+        try tar_args.append(self.allocator, tar_cmd);
+        try tar_args.append(self.allocator, "-cf");
+        try tar_args.append(self.allocator, output_path);
         if (compress_flag.len > 0) {
-            try tar_args.append(compress_flag);
+            try tar_args.append(self.allocator, compress_flag);
         }
-        try tar_args.append("-C");
-        try tar_args.append(staging_dir);
-        try tar_args.append(".");
+        try tar_args.append(self.allocator, "-C");
+        try tar_args.append(self.allocator, staging_dir);
+        try tar_args.append(self.allocator, ".");
 
         var tar_child = std.process.Child.init(tar_args.items, self.allocator);
         _ = try tar_child.spawnAndWait();
@@ -479,15 +479,15 @@ pub const BundleBuilder = struct {
         var pkg_closure: ?Closure = null;
         defer if (pkg_closure) |*c| c.deinit();
 
-        var included_packages = std.ArrayList(PackageId).init(self.allocator);
-        defer included_packages.deinit();
+        var included_packages: std.ArrayList(PackageId) = .empty;
+        defer included_packages.deinit(self.allocator);
 
-        try included_packages.append(pkg_id);
+        try included_packages.append(self.allocator, pkg_id);
 
         if (config.include_closure) {
             pkg_closure = try self.closure_computer.computeForPackage(pkg_id);
             for (pkg_closure.?.topo_order.items) |dep_id| {
-                try included_packages.append(dep_id);
+                try included_packages.append(self.allocator, dep_id);
             }
         }
 
@@ -572,10 +572,10 @@ pub const BundleBuilder = struct {
         entry_point: []const u8,
         packages: []const PackageId,
     ) !void {
-        var script = std.ArrayList(u8).init(self.allocator);
-        defer script.deinit();
+        var script: std.ArrayList(u8) = .empty;
+        defer script.deinit(self.allocator);
 
-        const writer = script.writer();
+        const writer = script.writer(self.allocator);
 
         try writer.print(
             \\#!/bin/sh
@@ -667,17 +667,17 @@ pub const BundleBuilder = struct {
             .gzip, .zstd, .lz4, .xz => "-z",
         };
 
-        var tar_args = std.ArrayList([]const u8).init(self.allocator);
-        defer tar_args.deinit();
+        var tar_args: std.ArrayList([]const u8) = .empty;
+        defer tar_args.deinit(self.allocator);
 
-        try tar_args.append("tar");
-        try tar_args.append("-c");
+        try tar_args.append(self.allocator, "tar");
+        try tar_args.append(self.allocator, "-c");
         if (compress_flag.len > 0) {
-            try tar_args.append(compress_flag);
+            try tar_args.append(self.allocator, compress_flag);
         }
-        try tar_args.append("-C");
-        try tar_args.append(staging_dir);
-        try tar_args.append(".");
+        try tar_args.append(self.allocator, "-C");
+        try tar_args.append(self.allocator, staging_dir);
+        try tar_args.append(self.allocator, ".");
 
         var tar_child = std.process.Child.init(tar_args.items, self.allocator);
         tar_child.stdout_behavior = .Pipe;
@@ -844,8 +844,8 @@ pub const SecureBundleManifest = struct {
         };
 
         var lines = std.mem.splitScalar(u8, data, '\n');
-        var packages_list = std.ArrayList(PackageId).empty;
-        defer packages_list.deinit();
+        var packages_list: std.ArrayList(PackageId) = .empty;
+        defer packages_list.deinit(allocator);
 
         var in_packages = false;
 
@@ -873,7 +873,7 @@ pub const SecureBundleManifest = struct {
                             ver_parts[idx] = std.fmt.parseInt(u32, part, 10) catch 0;
                             idx += 1;
                         }
-                        try packages_list.append(.{
+                        try packages_list.append(allocator, .{
                             .name = pkg_name,
                             .version = .{
                                 .major = ver_parts[0],
@@ -947,7 +947,7 @@ pub const SecureBundleManifest = struct {
             }
         }
 
-        result.packages = try packages_list.toOwnedSlice();
+        result.packages = try packages_list.toOwnedSlice(allocator);
         return result;
     }
 
@@ -1318,27 +1318,27 @@ pub const SecureBundleLauncher = struct {
         try file.seekTo(bundle_manifest.payload_offset);
 
         // Extract using tar with security options
-        var tar_args = std.ArrayList([]const u8).init(self.allocator);
-        defer tar_args.deinit();
+        var tar_args: std.ArrayList([]const u8) = .empty;
+        defer tar_args.deinit(self.allocator);
 
-        try tar_args.append("tar");
-        try tar_args.append("-x");
+        try tar_args.append(self.allocator, "tar");
+        try tar_args.append(self.allocator, "-x");
 
         // Compression flag
         switch (bundle_manifest.compression) {
-            .gzip => try tar_args.append("-z"),
-            .xz => try tar_args.append("-J"),
-            .zstd => try tar_args.append("--zstd"),
-            .lz4 => try tar_args.append("--lz4"),
+            .gzip => try tar_args.append(self.allocator, "-z"),
+            .xz => try tar_args.append(self.allocator, "-J"),
+            .zstd => try tar_args.append(self.allocator, "--zstd"),
+            .lz4 => try tar_args.append(self.allocator, "--lz4"),
             .none => {},
         }
 
-        try tar_args.append("-C");
-        try tar_args.append(extract_dir);
+        try tar_args.append(self.allocator, "-C");
+        try tar_args.append(self.allocator, extract_dir);
 
         // Security options: strip setuid/setgid, don't follow symlinks outside
-        try tar_args.append("--no-same-owner");
-        try tar_args.append("--no-same-permissions");
+        try tar_args.append(self.allocator, "--no-same-owner");
+        try tar_args.append(self.allocator, "--no-same-permissions");
 
         var tar_child = std.process.Child.init(tar_args.items, self.allocator);
         tar_child.stdin_behavior = .Pipe;
@@ -1404,12 +1404,12 @@ pub const SecureBundleLauncher = struct {
         defer self.allocator.free(exec_path);
 
         // Build argv
-        var argv = std.ArrayList([]const u8).init(self.allocator);
-        defer argv.deinit();
+        var argv: std.ArrayList([]const u8) = .empty;
+        defer argv.deinit(self.allocator);
 
-        try argv.append(exec_path);
+        try argv.append(self.allocator, exec_path);
         for (args) |arg| {
-            try argv.append(arg);
+            try argv.append(self.allocator, arg);
         }
 
         // Set environment

@@ -278,7 +278,7 @@ pub const MockPackageStore = struct {
 
     fn listPackages(ctx: *anyopaque, allocator: std.mem.Allocator) anyerror![]PackageId {
         const self: *MockPackageStore = @ptrCast(@alignCast(ctx));
-        var result = std.ArrayList(PackageId).empty;
+        var result = .empty;
         var iter = self.packages.iterator();
         while (iter.next()) |entry| {
             try result.append(entry.value_ptr.id);
@@ -319,8 +319,8 @@ pub const BufferedOutput = struct {
 
     pub fn init(allocator: std.mem.Allocator) BufferedOutput {
         return .{
-            .lines = std.ArrayList([]const u8).empty,
-            .errors = std.ArrayList([]const u8).empty,
+            .lines = .empty,
+            .errors = .empty,
             .allocator = allocator,
         };
     }

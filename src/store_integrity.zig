@@ -110,11 +110,11 @@ pub const IntegrityReport = struct {
 
     pub fn init(allocator: Allocator) IntegrityReport {
         return .{
-            .orphaned_datasets = std.ArrayList([]const u8).empty,
-            .missing_manifests = std.ArrayList([]const u8).empty,
-            .hash_mismatches = std.ArrayList(HashMismatch).empty,
-            .broken_references = std.ArrayList(BrokenRef).empty,
-            .partial_imports = std.ArrayList([]const u8).empty,
+            .orphaned_datasets = .empty,
+            .missing_manifests = .empty,
+            .hash_mismatches = .empty,
+            .broken_references = .empty,
+            .partial_imports = .empty,
             .allocator = allocator,
         };
     }
@@ -123,30 +123,30 @@ pub const IntegrityReport = struct {
         for (self.orphaned_datasets.items) |item| {
             self.allocator.free(item);
         }
-        self.orphaned_datasets.deinit();
+        self.orphaned_datasets.deinit(self.allocator);
 
         for (self.missing_manifests.items) |item| {
             self.allocator.free(item);
         }
-        self.missing_manifests.deinit();
+        self.missing_manifests.deinit(self.allocator);
 
         for (self.hash_mismatches.items) |item| {
             self.allocator.free(item.package_path);
             self.allocator.free(item.expected_hash);
             self.allocator.free(item.actual_hash);
         }
-        self.hash_mismatches.deinit();
+        self.hash_mismatches.deinit(self.allocator);
 
         for (self.broken_references.items) |item| {
             self.allocator.free(item.source_name);
             self.allocator.free(item.missing_package);
         }
-        self.broken_references.deinit();
+        self.broken_references.deinit(self.allocator);
 
         for (self.partial_imports.items) |item| {
             self.allocator.free(item);
         }
-        self.partial_imports.deinit();
+        self.partial_imports.deinit(self.allocator);
 
         if (self.summary.len > 0) {
             self.allocator.free(self.summary);
@@ -275,7 +275,7 @@ pub const StoreIntegrity = struct {
             // Look for .pending files
             if (std.mem.endsWith(u8, entry.name, ".pending")) {
                 const full_path = try std.fs.path.join(self.allocator, &.{ txlog_path, entry.name });
-                try report.partial_imports.append(full_path);
+                try report.partial_imports.append(self.allocator, full_path);
             }
         }
     }
@@ -305,7 +305,7 @@ pub const StoreIntegrity = struct {
             const manifest_file = std.fs.openFileAbsolute(manifest_path, .{}) catch {
                 // Missing manifest
                 const dup_path = try self.allocator.dupe(u8, package_path);
-                try report.missing_manifests.append(dup_path);
+                try report.missing_manifests.append(self.allocator, dup_path);
                 continue;
             };
             manifest_file.close();
@@ -378,7 +378,7 @@ pub const StoreIntegrity = struct {
 
                         std.fs.accessAbsolute(pkg_path, .{}) catch {
                             // Package doesn't exist - broken reference
-                            try report.broken_references.append(.{
+                            try report.broken_references.append(self.allocator, .{
                                 .source_type = .profile,
                                 .source_name = try self.allocator.dupe(u8, entry.name),
                                 .missing_package = try self.allocator.dupe(u8, pkg_name),
@@ -424,7 +424,7 @@ pub const StoreIntegrity = struct {
 
                     // Check if target exists
                     std.fs.accessAbsolute(link_target, .{}) catch {
-                        try report.broken_references.append(.{
+                        try report.broken_references.append(self.allocator, .{
                             .source_type = .environment,
                             .source_name = try self.allocator.dupe(u8, entry.name),
                             .missing_package = try self.allocator.dupe(u8, pkg_entry.name),
@@ -570,8 +570,8 @@ pub const RefCounter = struct {
 
     /// Get detailed reference sources for a package
     pub fn getRefSources(self: *RefCounter, package_name: []const u8) !std.ArrayList(RefSource) {
-        var sources = std.ArrayList(RefSource).init(self.allocator);
-        errdefer sources.deinit();
+        var sources: std.ArrayList(RefSource) = .empty;
+        errdefer sources.deinit(self.allocator);
 
         // Get profile references
         try self.getProfileRefSources(package_name, &sources);
@@ -678,7 +678,7 @@ pub const RefCounter = struct {
             defer self.allocator.free(lock_path);
 
             if (try self.lockFileContainsPackage(lock_path, package_name)) {
-                try sources.append(.{
+                try sources.append(self.allocator, .{
                     .source_type = .profile,
                     .name = try self.allocator.dupe(u8, entry.name),
                 });
@@ -710,7 +710,7 @@ pub const RefCounter = struct {
                 continue;
             };
 
-            try sources.append(.{
+            try sources.append(self.allocator, .{
                 .source_type = .environment,
                 .name = try self.allocator.dupe(u8, entry.name),
             });
@@ -907,8 +907,8 @@ pub const TransactionLog = struct {
 
     /// Get all pending transactions (for recovery)
     pub fn getPending(self: *TransactionLog) !std.ArrayList(Entry) {
-        var entries = std.ArrayList(Entry).init(self.allocator);
-        errdefer entries.deinit();
+        var entries: std.ArrayList(Entry) = .empty;
+        errdefer entries.deinit(self.allocator);
 
         var dir = std.fs.openDirAbsolute(self.log_path, .{ .iterate = true }) catch {
             return entries;
@@ -953,7 +953,7 @@ pub const TransactionLog = struct {
                 }
             }
 
-            try entries.append(.{
+            try entries.append(self.allocator, .{
                 .sequence = seq,
                 .operation = op,
                 .package_path = try self.allocator.dupe(u8, pkg_path),
@@ -1003,7 +1003,7 @@ test "IntegrityReport.hasIssues" {
 
     try std.testing.expect(!report.hasIssues());
 
-    try report.orphaned_datasets.append(try allocator.dupe(u8, "/test/orphan"));
+    try report.orphaned_datasets.append(allocator, try allocator.dupe(u8, "/test/orphan"));
     try std.testing.expect(report.hasIssues());
 }
 

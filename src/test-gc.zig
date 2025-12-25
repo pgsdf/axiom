@@ -79,7 +79,7 @@ fn runMockTest(allocator: std.mem.Allocator) !void {
 
     // Simulate package scanning
     std.debug.print("Phase 1: Scanning package store...\n", .{});
-    
+
     var all_packages: std.ArrayList(types.PackageId) = .empty;
     defer {
         for (all_packages.items) |pkg| {

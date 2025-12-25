@@ -112,7 +112,7 @@ pub fn main() !void {
     }
 
     std.debug.print("  Name: {s}\n", .{pkg_meta.manifest.name});
-    std.debug.print("  Version: {}\n", .{pkg_meta.manifest.version});
+    std.debug.print("  Version: {f}\n", .{pkg_meta.manifest.version});
     std.debug.print("  Dataset: {s}\n", .{pkg_meta.dataset_path});
 
     // Clean up - remove test package

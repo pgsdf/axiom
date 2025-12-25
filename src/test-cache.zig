@@ -4,15 +4,15 @@ const cache = @import("cache.zig");
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const _allocator = gpa.allocator();
 
     std.debug.print("Cache Module Tests\n", .{});
     std.debug.print("==================\n\n", .{});
 
     // Test CacheConfig initialization
     std.debug.print("1. Testing CacheConfig initialization...\n", .{});
-    var config = cache.CacheConfig.init(allocator);
-    defer config.deinit(allocator);
+    var config = cache.CacheConfig.init(_allocator);
+    defer config.deinit(_allocator);
     std.debug.print("   ✓ CacheConfig created\n", .{});
     std.debug.print("   Local cache path: {s}\n", .{config.local.path});
     std.debug.print("   Max size: {d} bytes\n", .{config.local.max_size_bytes});
@@ -39,8 +39,8 @@ pub fn main() !void {
     std.debug.print("\n4. Testing configuration file handling...\n", .{});
 
     // Try loading from non-existent file (should not error)
-    var config2 = cache.CacheConfig.init(allocator);
-    defer config2.deinit(allocator);
+    var config2 = cache.CacheConfig.init(_allocator);
+    defer config2.deinit(_allocator);
     config2.loadFromFile("/tmp/nonexistent-cache-config.yaml") catch {};
     std.debug.print("   ✓ loadFromFile handles missing file gracefully\n", .{});
 
