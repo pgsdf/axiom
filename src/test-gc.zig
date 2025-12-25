@@ -108,7 +108,7 @@ fn runMockTest(allocator: std.mem.Allocator) !void {
     // Simulate profile references
     std.debug.print("\nPhase 2: Finding references...\n", .{});
     
-    var referenced = std.StringHashMap(bool).empty;
+    var referenced = std.StringHashMap(bool).init(allocator);
     defer {
         var key_iter = referenced.keyIterator();
         while (key_iter.next()) |key| {

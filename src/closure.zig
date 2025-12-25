@@ -51,10 +51,10 @@ pub const Closure = struct {
         return .{
             .allocator = allocator,
             .roots = std.ArrayList(PackageId).empty,
-            .entries = std.StringHashMap(ClosureEntry).empty,
+            .entries = std.StringHashMap(ClosureEntry).init(allocator),
             .topo_order = std.ArrayList(PackageId).empty,
             .total_size = 0,
-            .base_packages = std.StringHashMap(void).empty,
+            .base_packages = std.StringHashMap(void).init(allocator),
         };
     }
 
@@ -109,7 +109,7 @@ pub const ClosureComputer = struct {
         var computer = ClosureComputer{
             .allocator = allocator,
             .pkg_store = pkg_store,
-            .base_packages = std.StringHashMap(void).empty,
+            .base_packages = std.StringHashMap(void).init(allocator),
         };
 
         // Initialize default base packages

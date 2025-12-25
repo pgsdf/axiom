@@ -81,8 +81,8 @@ pub fn main() !void {
     var verifier = signature.Verifier.init(allocator, &trust_store, .warn);
 
     // Initialize cache subsystems
-    var cache_config = cache.CacheConfig.empty;
-    defer cache_config.deinit();
+    var cache_config = cache.CacheConfig.init(allocator);
+    defer cache_config.deinit(allocator);
     cache_config.loadFromFile(config.DEFAULT_CONFIG_DIR ++ "/cache.yaml") catch |err| {
         errors.logConfigLoadOptional(@src(), err, config.DEFAULT_CONFIG_DIR ++ "/cache.yaml");
     }; // Ignore if doesn't exist

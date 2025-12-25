@@ -130,7 +130,7 @@ pub const ResolvedFeatures = struct {
         return .{
             .allocator = allocator,
             .package_name = package_name,
-            .enabled = std.StringHashMap(void).empty,
+            .enabled = std.StringHashMap(void).init(allocator),
             .feature_deps = std.ArrayList(Dependency).empty,
         };
     }
@@ -161,7 +161,7 @@ pub const FeatureResolver = struct {
     pub fn init(allocator: Allocator) FeatureResolver {
         return .{
             .allocator = allocator,
-            .package_features = std.StringHashMap(ResolvedFeatures).empty,
+            .package_features = std.StringHashMap(ResolvedFeatures).init(allocator),
         };
     }
 
@@ -363,8 +363,8 @@ pub const PreferenceHandler = struct {
     pub fn init(allocator: Allocator) PreferenceHandler {
         return .{
             .allocator = allocator,
-            .pins = std.StringHashMap(Pin).empty,
-            .preferences = std.StringHashMap(Preference).empty,
+            .pins = std.StringHashMap(Pin).init(allocator),
+            .preferences = std.StringHashMap(Preference).init(allocator),
         };
     }
 

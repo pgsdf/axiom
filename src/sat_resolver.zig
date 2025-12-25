@@ -122,21 +122,21 @@ pub const SATResolver = struct {
     const DIRECT_DEPENDENCY_WEIGHT: u32 = 50;
 
     pub fn init(allocator: std.mem.Allocator) SATResolver {
-        var solver = Solver.empty;
+        var solver = Solver.init(allocator);
         return .{
             .allocator = allocator,
             .solver = solver,
             .optimizer = Optimizer.init(allocator, &solver),
-            .pkg_to_var = std.StringHashMap(std.ArrayList(PackageCandidate)).empty,
-            .var_to_pkg = std.AutoHashMap(u32, PackageCandidate).empty,
-            .available_packages = std.StringHashMap(std.ArrayList(PackageId)).empty,
+            .pkg_to_var = std.StringHashMap(std.ArrayList(PackageCandidate)).init(allocator),
+            .var_to_pkg = std.AutoHashMap(u32, PackageCandidate).init(allocator),
+            .available_packages = std.StringHashMap(std.ArrayList(PackageId)).init(allocator),
         };
     }
 
     pub fn deinit(self: *SATResolver) void {
         var pkg_iter = self.pkg_to_var.valueIterator();
         while (pkg_iter.next()) |list| {
-            list.deinit();
+            list.deinit(self.allocator);
         }
         self.pkg_to_var.deinit();
         self.var_to_pkg.deinit();

@@ -64,7 +64,7 @@ pub const PackageVersions = struct {
 
     pub fn init(allocator: Allocator) PackageVersions {
         return .{
-            .versions = std.StringHashMap(PackageVersionEntry).empty,
+            .versions = std.StringHashMap(PackageVersionEntry).init(allocator),
         };
     }
 
@@ -111,7 +111,7 @@ pub const CacheIndex = struct {
             .format_version = "",
             .cache_id = "",
             .updated_at = "",
-            .packages = std.StringHashMap(PackageVersions).empty,
+            .packages = std.StringHashMap(PackageVersions).init(allocator),
             .signature = null,
         };
     }

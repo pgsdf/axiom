@@ -328,19 +328,19 @@ pub const ZfsHandle = struct {
         }
 
         // Build argument list for direct execve (no shell)
-        var args = std.ArrayList([]const u8).empty;
-        defer args.deinit();
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(allocator);
 
         // Track allocated strings that need to be freed after execution
-        var allocated_args = std.ArrayList([]const u8).empty;
+        var allocated_args: std.ArrayList([]const u8) = .empty;
         defer {
             for (allocated_args.items) |s| allocator.free(s);
-            allocated_args.deinit();
+            allocated_args.deinit(allocator);
         }
 
-        try args.append("zfs");
-        try args.append("create");
-        try args.append("-p");
+        try args.append(allocator, "zfs");
+        try args.append(allocator, "create");
+        try args.append(allocator, "-p");
 
         // Add properties if provided (validated)
         if (props) |p| {
@@ -350,17 +350,17 @@ pub const ZfsHandle = struct {
                     return ZfsError.InvalidPropertyName;
                 }
                 const comp_opt = try std.fmt.allocPrint(allocator, "compression={s}", .{comp});
-                try allocated_args.append(comp_opt);
-                try args.append("-o");
-                try args.append(comp_opt);
+                try allocated_args.append(allocator, comp_opt);
+                try args.append(allocator, "-o");
+                try args.append(allocator, comp_opt);
             }
             if (p.atime != null and !p.atime.?) {
-                try args.append("-o");
-                try args.append("atime=off");
+                try args.append(allocator, "-o");
+                try args.append(allocator, "atime=off");
             }
         }
 
-        try args.append(path);
+        try args.append(allocator, path);
 
         // Use direct execve - no shell involved
         var child = std.process.Child.init(args.items, allocator);
@@ -1563,7 +1563,7 @@ pub const ThreadSafeZfs = struct {
     /// Initialize the thread-safe ZFS wrapper
     pub fn init(allocator: std.mem.Allocator) ThreadSafeZfs {
         return .{
-            .error_contexts = std.AutoHashMap(std.Thread.Id, ZfsErrorContext).empty,
+            .error_contexts = std.AutoHashMap(std.Thread.Id, ZfsErrorContext).init(allocator),
         };
     }
 

@@ -258,7 +258,7 @@ pub const MockPackageStore = struct {
 
     pub fn init(allocator: std.mem.Allocator) MockPackageStore {
         return .{
-            .packages = std.StringHashMap(PackageStore.PackageInfo).empty,
+            .packages = std.StringHashMap(PackageStore.PackageInfo).init(allocator),
             .store_path = "/mock/store",
         };
     }

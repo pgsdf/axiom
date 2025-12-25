@@ -384,7 +384,7 @@ pub const BuildSandbox = struct {
         try std.fs.cwd().makePath(output_dir);
 
         // Set up environment variables
-        var env_vars = std.StringHashMap([]const u8).empty;
+        var env_vars = std.StringHashMap([]const u8).init(allocator);
         try env_vars.put(try allocator.dupe(u8, "OUTPUT"), try allocator.dupe(u8, output_dir));
         try env_vars.put(try allocator.dupe(u8, "SRCDIR"), try allocator.dupe(u8, source_dir));
         try env_vars.put(try allocator.dupe(u8, "JOBS"), try std.fmt.allocPrint(allocator, "{d}", .{@as(u32, 4)}));

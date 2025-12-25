@@ -951,7 +951,7 @@ fn parseHttpRequest(allocator: Allocator, data: []const u8) !CacheRequest {
     else
         .GET;
 
-    var headers = std.StringHashMap([]const u8).empty;
+    var headers = std.StringHashMap([]const u8).init(allocator);
     errdefer headers.deinit();
 
     // Parse headers

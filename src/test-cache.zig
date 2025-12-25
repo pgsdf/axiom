@@ -11,8 +11,8 @@ pub fn main() !void {
 
     // Test CacheConfig initialization
     std.debug.print("1. Testing CacheConfig initialization...\n", .{});
-    var config = cache.CacheConfig.empty;
-    defer config.deinit();
+    var config = cache.CacheConfig.init(allocator);
+    defer config.deinit(allocator);
     std.debug.print("   ✓ CacheConfig created\n", .{});
     std.debug.print("   Local cache path: {s}\n", .{config.local.path});
     std.debug.print("   Max size: {d} bytes\n", .{config.local.max_size_bytes});
@@ -39,8 +39,8 @@ pub fn main() !void {
     std.debug.print("\n4. Testing configuration file handling...\n", .{});
 
     // Try loading from non-existent file (should not error)
-    var config2 = cache.CacheConfig.empty;
-    defer config2.deinit();
+    var config2 = cache.CacheConfig.init(allocator);
+    defer config2.deinit(allocator);
     config2.loadFromFile("/tmp/nonexistent-cache-config.yaml") catch {};
     std.debug.print("   ✓ loadFromFile handles missing file gracefully\n", .{});
 

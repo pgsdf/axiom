@@ -529,8 +529,8 @@ pub const TrustStore = struct {
     pub fn init(allocator: std.mem.Allocator, store_path: []const u8) TrustStore {
         return TrustStore{
             .allocator = allocator,
-            .keys = std.StringHashMap(PublicKey).empty,
-            .trusted = std.StringHashMap(bool).empty,
+            .keys = std.StringHashMap(PublicKey).init(allocator),
+            .trusted = std.StringHashMap(bool).init(allocator),
             .store_path = store_path,
         };
     }
