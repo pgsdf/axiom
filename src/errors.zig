@@ -107,12 +107,8 @@ pub const ErrorInfo = struct {
 
     pub fn format(
         self: ErrorInfo,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
-        _ = fmt;
-        _ = options;
         try writer.print("[{s}] {s}:{d} in {s}: {s}", .{
             self.category.toString(),
             self.source_file,
