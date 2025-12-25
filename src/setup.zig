@@ -165,24 +165,24 @@ pub const SetupWizard = struct {
         var stdout_buf: [4096]u8 = undefined;
         const stdout = stdout_file.writer(&stdout_buf);
 
-        try stdout.print("\n", .{});
-        try stdout.print("===========================================\n", .{});
-        try stdout.print("        Axiom Setup Wizard\n", .{});
-        try stdout.print("===========================================\n", .{});
-        try stdout.print("\n", .{});
+        std.debug.print("\n", .{});
+        std.debug.print("===========================================\n", .{});
+        std.debug.print("        Axiom Setup Wizard\n", .{});
+        std.debug.print("===========================================\n", .{});
+        std.debug.print("\n", .{});
 
         // Check for root privileges
         if (!self.isRoot()) {
-            try stdout.print("Error: Setup requires root privileges.\n", .{});
-            try stdout.print("Please run: sudo axiom setup\n", .{});
+            std.debug.print("Error: Setup requires root privileges.\n", .{});
+            std.debug.print("Please run: sudo axiom setup\n", .{});
             return SetupError.RootRequired;
         }
 
         // Check if ZFS is available
         if (!self.zfsAvailable()) {
-            try stdout.print("Error: ZFS is not available on this system.\n", .{});
-            try stdout.print("Please install ZFS first:\n", .{});
-            try stdout.print("  pkg install openzfs\n", .{});
+            std.debug.print("Error: ZFS is not available on this system.\n", .{});
+            std.debug.print("Please install ZFS first:\n", .{});
+            std.debug.print("  pkg install openzfs\n", .{});
             return SetupError.ZfsNotAvailable;
         }
 
@@ -190,90 +190,90 @@ pub const SetupWizard = struct {
         const status = try self.checkStatus();
 
         if (status.isComplete()) {
-            try stdout.print("Axiom is already fully configured!\n", .{});
-            try stdout.print("\n", .{});
-            try self.printStatus(status);
-            try stdout.print("\nRun 'axiom help' to get started.\n", .{});
+            std.debug.print("Axiom is already fully configured!\n", .{});
+            std.debug.print("\n", .{});
+            self.printStatus(status);
+            std.debug.print("\nRun 'axiom help' to get started.\n", .{});
             return;
         }
 
         if (!status.pool_exists) {
-            try stdout.print("Error: ZFS pool '{s}' does not exist.\n", .{self.pool});
-            try stdout.print("\n", .{});
-            try stdout.print("Available pools:\n", .{});
+            std.debug.print("Error: ZFS pool '{s}' does not exist.\n", .{self.pool});
+            std.debug.print("\n", .{});
+            std.debug.print("Available pools:\n", .{});
             try self.listPools();
-            try stdout.print("\n", .{});
-            try stdout.print("To use a different pool, run:\n", .{});
-            try stdout.print("  axiom setup --pool <pool-name>\n", .{});
+            std.debug.print("\n", .{});
+            std.debug.print("To use a different pool, run:\n", .{});
+            std.debug.print("  axiom setup --pool <pool-name>\n", .{});
             return SetupError.PoolNotFound;
         }
 
         if (status.isPartial() and !self.force) {
-            try stdout.print("Warning: Axiom is partially configured.\n", .{});
-            try stdout.print("\n", .{});
-            try self.printStatus(status);
-            try stdout.print("\n", .{});
-            try stdout.print("To continue setup, run:\n", .{});
-            try stdout.print("  axiom setup --force\n", .{});
-            try stdout.print("\n", .{});
-            try stdout.print("Or to start fresh, first clean up:\n", .{});
+            std.debug.print("Warning: Axiom is partially configured.\n", .{});
+            std.debug.print("\n", .{});
+            self.printStatus(status);
+            std.debug.print("\n", .{});
+            std.debug.print("To continue setup, run:\n", .{});
+            std.debug.print("  axiom setup --force\n", .{});
+            std.debug.print("\n", .{});
+            std.debug.print("Or to start fresh, first clean up:\n", .{});
 
             const base = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ self.pool, self.dataset });
             defer self.allocator.free(base);
-            try stdout.print("  zfs destroy -r {s}\n", .{base});
+            std.debug.print("  zfs destroy -r {s}\n", .{base});
             return SetupError.DatasetExists;
         }
 
         // Show configuration
-        try stdout.print("Configuration:\n", .{});
-        try stdout.print("  Pool:       {s}\n", .{self.pool});
-        try stdout.print("  Dataset:    {s}/{s}\n", .{ self.pool, self.dataset });
-        try stdout.print("  Mountpoint: {s}\n", .{self.mountpoint});
-        try stdout.print("  Config dir: {s}\n", .{self.config_dir});
-        try stdout.print("  Cache dir:  {s}\n", .{self.cache_dir});
-        try stdout.print("\n", .{});
+        std.debug.print("Configuration:\n", .{});
+        std.debug.print("  Pool:       {s}\n", .{self.pool});
+        std.debug.print("  Dataset:    {s}/{s}\n", .{ self.pool, self.dataset });
+        std.debug.print("  Mountpoint: {s}\n", .{self.mountpoint});
+        std.debug.print("  Config dir: {s}\n", .{self.config_dir});
+        std.debug.print("  Cache dir:  {s}\n", .{self.cache_dir});
+        std.debug.print("\n", .{});
 
         // Confirm with user in interactive mode
         if (self.interactive) {
-            try stdout.print("This will create the following ZFS datasets:\n", .{});
-            try stdout.print("  {s}/{s}           (mountpoint: {s})\n", .{ self.pool, self.dataset, self.mountpoint });
-            try stdout.print("  {s}/{s}/store     (mountpoint: {s}/store)\n", .{ self.pool, self.dataset, self.mountpoint });
-            try stdout.print("  {s}/{s}/store/pkg (mountpoint: {s}/store/pkg)\n", .{ self.pool, self.dataset, self.mountpoint });
-            try stdout.print("  {s}/{s}/profiles  (mountpoint: {s}/profiles)\n", .{ self.pool, self.dataset, self.mountpoint });
-            try stdout.print("  {s}/{s}/env       (mountpoint: {s}/env)\n", .{ self.pool, self.dataset, self.mountpoint });
-            try stdout.print("  {s}/{s}/builds    (mountpoint: {s}/builds)\n", .{ self.pool, self.dataset, self.mountpoint });
-            try stdout.print("\n", .{});
+            std.debug.print("This will create the following ZFS datasets:\n", .{});
+            std.debug.print("  {s}/{s}           (mountpoint: {s})\n", .{ self.pool, self.dataset, self.mountpoint });
+            std.debug.print("  {s}/{s}/store     (mountpoint: {s}/store)\n", .{ self.pool, self.dataset, self.mountpoint });
+            std.debug.print("  {s}/{s}/store/pkg (mountpoint: {s}/store/pkg)\n", .{ self.pool, self.dataset, self.mountpoint });
+            std.debug.print("  {s}/{s}/profiles  (mountpoint: {s}/profiles)\n", .{ self.pool, self.dataset, self.mountpoint });
+            std.debug.print("  {s}/{s}/env       (mountpoint: {s}/env)\n", .{ self.pool, self.dataset, self.mountpoint });
+            std.debug.print("  {s}/{s}/builds    (mountpoint: {s}/builds)\n", .{ self.pool, self.dataset, self.mountpoint });
+            std.debug.print("\n", .{});
 
             if (!try self.confirm("Proceed with setup?")) {
-                try stdout.print("Setup cancelled.\n", .{});
+                std.debug.print("Setup cancelled.\n", .{});
                 return SetupError.Cancelled;
             }
-            try stdout.print("\n", .{});
+            std.debug.print("\n", .{});
         }
 
         // Perform setup
         try self.performSetup(status);
 
-        try stdout.print("\n", .{});
-        try stdout.print("===========================================\n", .{});
-        try stdout.print("        Setup Complete!\n", .{});
-        try stdout.print("===========================================\n", .{});
-        try stdout.print("\n", .{});
-        try stdout.print("Next steps:\n", .{});
-        try stdout.print("\n", .{});
-        try stdout.print("  Bootstrap build tools (required for building from ports):\n", .{});
-        try stdout.print("    axiom ports-import devel/m4\n", .{});
-        try stdout.print("    axiom ports-import devel/gmake\n", .{});
-        try stdout.print("\n", .{});
-        try stdout.print("  Then import packages and create your environment:\n", .{});
-        try stdout.print("    1. Import packages:      axiom ports-import shells/bash\n", .{});
-        try stdout.print("    2. Create a profile:     axiom profile-create myprofile\n", .{});
-        try stdout.print("    3. Add packages:         axiom profile-add-package myprofile bash\n", .{});
-        try stdout.print("    4. Resolve dependencies: axiom resolve myprofile\n", .{});
-        try stdout.print("    5. Create environment:   axiom realize myenv myprofile\n", .{});
-        try stdout.print("    6. Activate:             source {s}/env/myenv/activate\n", .{self.mountpoint});
-        try stdout.print("\n", .{});
-        try stdout.print("For more help: axiom help\n", .{});
+        std.debug.print("\n", .{});
+        std.debug.print("===========================================\n", .{});
+        std.debug.print("        Setup Complete!\n", .{});
+        std.debug.print("===========================================\n", .{});
+        std.debug.print("\n", .{});
+        std.debug.print("Next steps:\n", .{});
+        std.debug.print("\n", .{});
+        std.debug.print("  Bootstrap build tools (required for building from ports):\n", .{});
+        std.debug.print("    axiom ports-import devel/m4\n", .{});
+        std.debug.print("    axiom ports-import devel/gmake\n", .{});
+        std.debug.print("\n", .{});
+        std.debug.print("  Then import packages and create your environment:\n", .{});
+        std.debug.print("    1. Import packages:      axiom ports-import shells/bash\n", .{});
+        std.debug.print("    2. Create a profile:     axiom profile-create myprofile\n", .{});
+        std.debug.print("    3. Add packages:         axiom profile-add-package myprofile bash\n", .{});
+        std.debug.print("    4. Resolve dependencies: axiom resolve myprofile\n", .{});
+        std.debug.print("    5. Create environment:   axiom realize myenv myprofile\n", .{});
+        std.debug.print("    6. Activate:             source {s}/env/myenv/activate\n", .{self.mountpoint});
+        std.debug.print("\n", .{});
+        std.debug.print("For more help: axiom help\n", .{});
     }
 
     /// Perform the actual setup
@@ -287,22 +287,22 @@ pub const SetupWizard = struct {
 
         // Step 1: Create base dataset (if not exists)
         if (!status.base_dataset_exists) {
-            try stdout.print("[1/8] Creating base dataset {s}...\n", .{base});
+            std.debug.print("[1/8] Creating base dataset {s}...\n", .{base});
             try self.zfsCreate(base);
         } else {
-            try stdout.print("[1/8] Base dataset exists, skipping...\n", .{});
+            std.debug.print("[1/8] Base dataset exists, skipping...\n", .{});
         }
 
         // Step 2: Set mountpoint BEFORE creating children (critical!)
         if (!status.mountpoint_correct) {
-            try stdout.print("[2/8] Setting mountpoint to {s}...\n", .{self.mountpoint});
+            std.debug.print("[2/8] Setting mountpoint to {s}...\n", .{self.mountpoint});
             try self.zfsSetProperty(base, "mountpoint", self.mountpoint);
         } else {
-            try stdout.print("[2/8] Mountpoint already correct, skipping...\n", .{});
+            std.debug.print("[2/8] Mountpoint already correct, skipping...\n", .{});
         }
 
         // Step 3: Set recommended properties
-        try stdout.print("[3/8] Setting ZFS properties (compression=lz4, atime=off)...\n", .{});
+        std.debug.print("[3/8] Setting ZFS properties (compression=lz4, atime=off)...\n", .{});
         self.zfsSetProperty(base, "compression", "lz4") catch {};
         self.zfsSetProperty(base, "atime", "off") catch {};
 
@@ -311,10 +311,10 @@ pub const SetupWizard = struct {
         defer self.allocator.free(store_base);
 
         if (!self.zfsDatasetExists(store_base)) {
-            try stdout.print("[4/8] Creating store dataset...\n", .{});
+            std.debug.print("[4/8] Creating store dataset...\n", .{});
             try self.zfsCreate(store_base);
         } else {
-            try stdout.print("[4/8] Store dataset exists, skipping...\n", .{});
+            std.debug.print("[4/8] Store dataset exists, skipping...\n", .{});
         }
 
         // Step 5: Create store/pkg dataset
@@ -322,10 +322,10 @@ pub const SetupWizard = struct {
         defer self.allocator.free(store_pkg);
 
         if (!status.store_dataset_exists) {
-            try stdout.print("[5/8] Creating package store dataset...\n", .{});
+            std.debug.print("[5/8] Creating package store dataset...\n", .{});
             try self.zfsCreate(store_pkg);
         } else {
-            try stdout.print("[5/8] Package store dataset exists, skipping...\n", .{});
+            std.debug.print("[5/8] Package store dataset exists, skipping...\n", .{});
         }
 
         // Step 6: Create profiles dataset
@@ -333,10 +333,10 @@ pub const SetupWizard = struct {
         defer self.allocator.free(profiles);
 
         if (!status.profiles_dataset_exists) {
-            try stdout.print("[6/8] Creating profiles dataset...\n", .{});
+            std.debug.print("[6/8] Creating profiles dataset...\n", .{});
             try self.zfsCreate(profiles);
         } else {
-            try stdout.print("[6/8] Profiles dataset exists, skipping...\n", .{});
+            std.debug.print("[6/8] Profiles dataset exists, skipping...\n", .{});
         }
 
         // Step 7: Create env and builds datasets
@@ -347,15 +347,15 @@ pub const SetupWizard = struct {
         defer self.allocator.free(builds);
 
         if (!status.env_dataset_exists or !status.builds_dataset_exists) {
-            try stdout.print("[7/8] Creating env and builds datasets...\n", .{});
+            std.debug.print("[7/8] Creating env and builds datasets...\n", .{});
             if (!status.env_dataset_exists) try self.zfsCreate(env);
             if (!status.builds_dataset_exists) try self.zfsCreate(builds);
         } else {
-            try stdout.print("[7/8] Env and builds datasets exist, skipping...\n", .{});
+            std.debug.print("[7/8] Env and builds datasets exist, skipping...\n", .{});
         }
 
         // Step 8: Create config directories
-        try stdout.print("[8/8] Creating configuration directories...\n", .{});
+        std.debug.print("[8/8] Creating configuration directories...\n", .{});
         if (!status.config_dir_exists) {
             try self.createDirectory(self.config_dir);
         }
@@ -365,23 +365,20 @@ pub const SetupWizard = struct {
     }
 
     /// Print current status
-    fn printStatus(self: *SetupWizard, status: SetupStatus) !void {
-        const stdout_file = std.fs.File.stdout();
-        var stdout_buf: [4096]u8 = undefined;
-        const stdout = stdout_file.writer(&stdout_buf);
+    fn printStatus(self: *SetupWizard, status: SetupStatus) void {
         const check = "\xe2\x9c\x93"; // Unicode checkmark
         const cross = "\xe2\x9c\x97"; // Unicode cross
 
-        try stdout.print("Current Status:\n", .{});
-        try stdout.print("  {s} Pool '{s}'\n", .{ if (status.pool_exists) check else cross, self.pool });
-        try stdout.print("  {s} Base dataset ({s}/{s})\n", .{ if (status.base_dataset_exists) check else cross, self.pool, self.dataset });
-        try stdout.print("  {s} Mountpoint correct ({s})\n", .{ if (status.mountpoint_correct) check else cross, self.mountpoint });
-        try stdout.print("  {s} Store dataset\n", .{if (status.store_dataset_exists) check else cross});
-        try stdout.print("  {s} Profiles dataset\n", .{if (status.profiles_dataset_exists) check else cross});
-        try stdout.print("  {s} Env dataset\n", .{if (status.env_dataset_exists) check else cross});
-        try stdout.print("  {s} Builds dataset\n", .{if (status.builds_dataset_exists) check else cross});
-        try stdout.print("  {s} Config directory ({s})\n", .{ if (status.config_dir_exists) check else cross, self.config_dir });
-        try stdout.print("  {s} Cache directory ({s})\n", .{ if (status.cache_dir_exists) check else cross, self.cache_dir });
+        std.debug.print("Current Status:\n", .{});
+        std.debug.print("  {s} Pool '{s}'\n", .{ if (status.pool_exists) check else cross, self.pool });
+        std.debug.print("  {s} Base dataset ({s}/{s})\n", .{ if (status.base_dataset_exists) check else cross, self.pool, self.dataset });
+        std.debug.print("  {s} Mountpoint correct ({s})\n", .{ if (status.mountpoint_correct) check else cross, self.mountpoint });
+        std.debug.print("  {s} Store dataset\n", .{if (status.store_dataset_exists) check else cross});
+        std.debug.print("  {s} Profiles dataset\n", .{if (status.profiles_dataset_exists) check else cross});
+        std.debug.print("  {s} Env dataset\n", .{if (status.env_dataset_exists) check else cross});
+        std.debug.print("  {s} Builds dataset\n", .{if (status.builds_dataset_exists) check else cross});
+        std.debug.print("  {s} Config directory ({s})\n", .{ if (status.config_dir_exists) check else cross, self.config_dir });
+        std.debug.print("  {s} Cache directory ({s})\n", .{ if (status.cache_dir_exists) check else cross, self.cache_dir });
     }
 
     /// Ask for user confirmation
@@ -394,7 +391,7 @@ pub const SetupWizard = struct {
         var stdin_buf: [256]u8 = undefined;
         const stdin = stdin_file.reader(&stdin_buf);
 
-        try stdout.print("{s} [y/N]: ", .{prompt});
+        std.debug.print("{s} [y/N]: ", .{prompt});
 
         var buf: [256]u8 = undefined;
         const line = stdin.readUntilDelimiterOrEof(&buf, '\n') catch {
@@ -454,7 +451,7 @@ pub const SetupWizard = struct {
         while (lines.next()) |line| {
             const trimmed = std.mem.trim(u8, line, " \t\r");
             if (trimmed.len > 0) {
-                try stdout.print("  - {s}\n", .{trimmed});
+                std.debug.print("  - {s}\n", .{trimmed});
             }
         }
     }
@@ -490,7 +487,7 @@ pub const SetupWizard = struct {
             var stdout_buf: [4096]u8 = undefined;
             const stdout = stdout_file.writer(&stdout_buf);
             if (stderr_output) |stderr| {
-                try stdout.print("Error creating dataset: {s}\n", .{stderr});
+                std.debug.print("Error creating dataset: {s}\n", .{stderr});
             }
             return SetupError.CreateFailed;
         }
@@ -519,7 +516,7 @@ pub const SetupWizard = struct {
             var stdout_buf: [4096]u8 = undefined;
             const stdout = stdout_file.writer(&stdout_buf);
             if (stderr_output) |stderr| {
-                try stdout.print("Error setting property: {s}\n", .{stderr});
+                std.debug.print("Error setting property: {s}\n", .{stderr});
             }
             return SetupError.PropertyFailed;
         }
@@ -605,7 +602,7 @@ pub fn runSetup(allocator: std.mem.Allocator, args: []const []const u8) !void {
         } else if (std.mem.eql(u8, arg, "--check") or std.mem.eql(u8, arg, "-c")) {
             // Just check status and exit
             const status = try wizard.checkStatus();
-            try wizard.printStatus(status);
+            wizard.printStatus(status);
             if (status.isComplete()) {
                 std.debug.print("\nSetup is complete.\n", .{});
             } else if (status.isPartial()) {
