@@ -489,16 +489,20 @@ pub const ServiceManager = struct {
 
         // Read stdout and stderr
         if (child.stdout) |stdout_pipe| {
-            var reader = stdout_pipe.reader();
-            reader.readAllArrayList(&stdout, 64 * 1024) catch |err| {
+            if (stdout_pipe.readToEndAlloc(self.allocator, 64 * 1024)) |stdout_data| {
+                stdout.appendSlice(self.allocator, stdout_data) catch {};
+                self.allocator.free(stdout_data);
+            } else |err| {
                 errors.logCollectionError(@src(), err, "read service stdout");
-            };
+            }
         }
         if (child.stderr) |stderr_pipe| {
-            var reader = stderr_pipe.reader();
-            reader.readAllArrayList(&stderr, 64 * 1024) catch |err| {
+            if (stderr_pipe.readToEndAlloc(self.allocator, 64 * 1024)) |stderr_data| {
+                stderr.appendSlice(self.allocator, stderr_data) catch {};
+                self.allocator.free(stderr_data);
+            } else |err| {
                 errors.logCollectionError(@src(), err, "read service stderr");
-            };
+            }
         }
 
         const term = try child.wait();
