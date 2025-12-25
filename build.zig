@@ -268,25 +268,15 @@ pub fn build(b: *std.Build) void {
     test_full_step.dependOn(&run_zfs_tests.step);
 
     // ==================== CI Step ====================
-    // Unified CI step that runs tests in correct order
-
     const ci_step = b.step("ci", "Run CI test suite (build + unit tests)");
-
-    // First: Build all artifacts to ensure compilation succeeds
     ci_step.dependOn(b.getInstallStep());
-
-    // Second: Run unit tests that don't require root
     ci_step.dependOn(&run_types_tests.step);
     ci_step.dependOn(&run_manifest_tests.step);
     ci_step.dependOn(&run_signature_tests.step);
-
-    // Third: Run test executables that have mock modes
     const run_test_manifest_exe = b.addRunArtifact(test_manifest);
     ci_step.dependOn(&run_test_manifest_exe.step);
 
     // ==================== CI-Full Step ====================
-    // Full CI for environments with root and ZFS
-
     const ci_full_step = b.step("ci-full", "Run full CI suite (requires root + ZFS)");
     ci_full_step.dependOn(b.getInstallStep());
     ci_full_step.dependOn(&run_types_tests.step);
@@ -294,8 +284,6 @@ pub fn build(b: *std.Build) void {
     ci_full_step.dependOn(&run_signature_tests.step);
     ci_full_step.dependOn(&run_resolver_tests.step);
     ci_full_step.dependOn(&run_zfs_tests.step);
-
-    // Run test executables
     const run_test_store_exe = b.addRunArtifact(test_store);
     const run_test_gc_exe = b.addRunArtifact(test_gc);
     const run_test_import_exe = b.addRunArtifact(test_import);
@@ -307,8 +295,6 @@ pub fn build(b: *std.Build) void {
     ci_full_step.dependOn(&run_test_signature_exe.step);
 
     // ==================== Check Step ====================
-    // Quick compilation check without running tests
-
     const check_step = b.step("check", "Check compilation without running tests");
     check_step.dependOn(&exe.step);
     check_step.dependOn(&test_manifest.step);
