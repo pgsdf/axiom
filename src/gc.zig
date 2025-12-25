@@ -285,7 +285,7 @@ pub const GarbageCollector = struct {
             if (dry_run) {
                 std.debug.print("  DRY RUN - Would remove:\n", .{});
                 for (to_remove.items) |pkg| {
-                    std.debug.print("    - {s} {} (rev {d}) [{s}]\n", .{
+                    std.debug.print("    - {s} {f} (rev {d}) [{s}]\n", .{
                         pkg.name,
                         pkg.version,
                         pkg.revision,
@@ -311,7 +311,7 @@ pub const GarbageCollector = struct {
                 defer if (txn_log) |*tl| tl.deinit();
 
                 for (to_remove.items, 0..) |pkg, i| {
-                    std.debug.print("  [{d}/{d}] Removing {s} {} (rev {d}) [{s}]\n", .{
+                    std.debug.print("  [{d}/{d}] Removing {s} {f} (rev {d}) [{s}]\n", .{
                         i + 1,
                         to_remove.items.len,
                         pkg.name,
@@ -326,7 +326,7 @@ pub const GarbageCollector = struct {
                     stats.space_freed += estimated_size;
 
                     // Build package path for transaction logging
-                    const pkg_path = std.fmt.allocPrint(self.allocator, "{s}/{}/{d}/{s}", .{
+                    const pkg_path = std.fmt.allocPrint(self.allocator, "{s}/{f}/{d}/{s}", .{
                         pkg.name,
                         pkg.version,
                         pkg.revision,
@@ -387,7 +387,7 @@ pub const GarbageCollector = struct {
     
     /// Generate a unique key for a package
     fn packageKey(self: *GarbageCollector, pkg: PackageId) ![]u8 {
-        return std.fmt.allocPrint(self.allocator, "{s}/{}/{d}/{s}", .{
+        return std.fmt.allocPrint(self.allocator, "{s}/{f}/{d}/{s}", .{
             pkg.name,
             pkg.version,
             pkg.revision,

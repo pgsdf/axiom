@@ -1326,17 +1326,36 @@ pub fn exportPublicKey(allocator: std.mem.Allocator, key: PublicKey, path: []con
     const file = try std.fs.cwd().createFile(path, .{});
     defer file.close();
 
-    var write_buf: [4096]u8 = undefined;
-    const writer = file.writer(&write_buf);
-    try writer.writeAll("# Axiom Public Key\n");
-    try writer.print("key_id: {s}\n", .{key.key_id});
-    try writer.print("key_data: {s}\n", .{std.fmt.fmtSliceHexLower(&key.key_data)});
-    if (key.owner) |o| try writer.print("owner: \"{s}\"\n", .{o});
-    if (key.email) |e| try writer.print("email: \"{s}\"\n", .{e});
-    try writer.print("created: {d}\n", .{key.created});
-    if (key.expires) |exp| try writer.print("expires: {d}\n", .{exp});
+    try file.writeAll("# Axiom Public Key\n");
 
-    _ = allocator;
+    const key_id_line = try std.fmt.allocPrint(allocator, "key_id: {s}\n", .{key.key_id});
+    defer allocator.free(key_id_line);
+    try file.writeAll(key_id_line);
+
+    const key_data_line = try std.fmt.allocPrint(allocator, "key_data: {x}\n", .{key.key_data});
+    defer allocator.free(key_data_line);
+    try file.writeAll(key_data_line);
+
+    if (key.owner) |o| {
+        const owner_line = try std.fmt.allocPrint(allocator, "owner: \"{s}\"\n", .{o});
+        defer allocator.free(owner_line);
+        try file.writeAll(owner_line);
+    }
+    if (key.email) |e| {
+        const email_line = try std.fmt.allocPrint(allocator, "email: \"{s}\"\n", .{e});
+        defer allocator.free(email_line);
+        try file.writeAll(email_line);
+    }
+
+    const created_line = try std.fmt.allocPrint(allocator, "created: {d}\n", .{key.created});
+    defer allocator.free(created_line);
+    try file.writeAll(created_line);
+
+    if (key.expires) |exp| {
+        const expires_line = try std.fmt.allocPrint(allocator, "expires: {d}\n", .{exp});
+        defer allocator.free(expires_line);
+        try file.writeAll(expires_line);
+    }
 }
 
 /// Import public key from file

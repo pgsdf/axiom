@@ -148,7 +148,7 @@ pub const RealizationEngine = struct {
         defer env_files.deinit();
 
         for (lock.resolved, 0..) |pkg, i| {
-            std.debug.print("  [{d}/{d}] {s} {}\n", .{
+            std.debug.print("  [{d}/{d}] {s} {f}\n", .{
                 i + 1,
                 lock.resolved.len,
                 pkg.id.name,
@@ -311,7 +311,7 @@ pub const RealizationEngine = struct {
         defer env_files.deinit();
 
         for (lock.resolved, 0..) |pkg, i| {
-            std.debug.print("  [{d}/{d}] {s} {}\n", .{
+            std.debug.print("  [{d}/{d}] {s} {f}\n", .{
                 i + 1,
                 lock.resolved.len,
                 pkg.id.name,

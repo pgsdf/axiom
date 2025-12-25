@@ -163,15 +163,16 @@ pub const SecureTarExtractor = struct {
     fn extractGzip(self: *SecureTarExtractor, file: std.fs.File) !void {
         // In Zig 0.15, use flate.Decompressor for gzip format
         // Gzip uses deflate compression with a header/trailer
-        var read_buf: [4096]u8 = undefined;
-        const reader = file.reader(&read_buf);
 
-        // Skip gzip header (10 bytes minimum)
+        // Read gzip header (10 bytes minimum) directly from file
         // Magic: 1f 8b, Method: 08 (deflate), Flags, Mtime (4), XFL, OS
         var header: [10]u8 = undefined;
-        _ = reader.readAll(&header) catch {
+        const header_read = file.readAll(&header) catch {
             return ExtractionError.MalformedArchive;
         };
+        if (header_read != 10) {
+            return ExtractionError.MalformedArchive;
+        }
 
         // Verify gzip magic
         if (header[0] != 0x1f or header[1] != 0x8b) {
@@ -182,27 +183,39 @@ pub const SecureTarExtractor = struct {
         const flags = header[3];
         if (flags & 0x04 != 0) { // FEXTRA
             var len_buf: [2]u8 = undefined;
-            _ = reader.readAll(&len_buf) catch return ExtractionError.MalformedArchive;
+            _ = file.readAll(&len_buf) catch return ExtractionError.MalformedArchive;
             const extra_len = std.mem.readInt(u16, &len_buf, .little);
-            reader.skipBytes(extra_len, .{}) catch return ExtractionError.MalformedArchive;
+            var skip_buf: [256]u8 = undefined;
+            var remaining = extra_len;
+            while (remaining > 0) {
+                const to_read = @min(remaining, skip_buf.len);
+                const read_count = file.read(skip_buf[0..to_read]) catch return ExtractionError.MalformedArchive;
+                if (read_count == 0) return ExtractionError.MalformedArchive;
+                remaining -= @intCast(read_count);
+            }
         }
         if (flags & 0x08 != 0) { // FNAME - skip null-terminated string
+            var byte_buf: [1]u8 = undefined;
             while (true) {
-                const b = reader.readByte() catch return ExtractionError.MalformedArchive;
-                if (b == 0) break;
+                const n = file.read(&byte_buf) catch return ExtractionError.MalformedArchive;
+                if (n == 0 or byte_buf[0] == 0) break;
             }
         }
         if (flags & 0x10 != 0) { // FCOMMENT - skip null-terminated string
+            var byte_buf: [1]u8 = undefined;
             while (true) {
-                const b = reader.readByte() catch return ExtractionError.MalformedArchive;
-                if (b == 0) break;
+                const n = file.read(&byte_buf) catch return ExtractionError.MalformedArchive;
+                if (n == 0 or byte_buf[0] == 0) break;
             }
         }
-        if (flags & 0x02 != 0) { // FHCRC
-            reader.skipBytes(2, .{}) catch return ExtractionError.MalformedArchive;
+        if (flags & 0x02 != 0) { // FHCRC - skip 2 bytes
+            var skip_buf: [2]u8 = undefined;
+            _ = file.readAll(&skip_buf) catch return ExtractionError.MalformedArchive;
         }
 
-        // Now decompress the deflate stream
+        // Now create reader and decompress the deflate stream
+        var read_buf: [4096]u8 = undefined;
+        const reader = file.reader(&read_buf);
         var decompress = std.compress.flate.decompressor(.raw, reader);
         try self.extractTar(decompress.reader());
     }
