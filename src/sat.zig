@@ -498,7 +498,7 @@ pub const Optimizer = struct {
         return .{
             .solver = solver,
             .allocator = allocator,
-            .soft_clauses: std.ArrayList(SoftClause) = .empty,
+            .soft_clauses = .empty,
         };
     }
 

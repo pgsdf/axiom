@@ -404,7 +404,7 @@ pub const Signature = struct {
     pub fn toYaml(self: Signature, allocator: std.mem.Allocator) ![]u8 {
         var result: std.ArrayList(u8) = .empty;
         defer result.deinit(allocator);
-        const writer = result.writer();
+        const writer = result.writer(allocator);
 
         try writer.writeAll("# Axiom Package Signature\n");
         try writer.print("version: {d}\n", .{self.version});
@@ -1489,7 +1489,7 @@ pub const MultiSignatureConfig = struct {
     pub fn toYaml(self: MultiSignatureConfig, allocator: std.mem.Allocator) ![]u8 {
         var result: std.ArrayList(u8) = .empty;
         defer result.deinit(allocator);
-        const writer = result.writer();
+        const writer = result.writer(allocator);
 
         try writer.writeAll("# Multi-Party Signing Policy\n");
         try writer.print("threshold: {d}\n", .{self.threshold});
@@ -1564,7 +1564,7 @@ pub const MultiSignature = struct {
     pub fn toYaml(self: MultiSignature, allocator: std.mem.Allocator) ![]u8 {
         var result: std.ArrayList(u8) = .empty;
         defer result.deinit(allocator);
-        const writer = result.writer();
+        const writer = result.writer(allocator);
 
         try writer.writeAll("# Axiom Multi-Party Signature\n");
         try writer.print("version: {d}\n", .{self.version});

@@ -48,10 +48,9 @@ pub fn main() !void {
     std.debug.print("Run actual garbage collection? (y/N): ", .{});
 
     var buffer: [10]u8 = undefined;
-    const stdin_file = std.fs.File.stdin();
-    var stdin_buf: [256]u8 = undefined;
-    const stdin = stdin_file.reader(&stdin_buf);
-    const input = try stdin.readUntilDelimiterOrEof(&buffer, '\n');
+    const stdin_file = std.io.getStdIn();
+    const bytes_read = stdin_file.read(&buffer) catch 0;
+    const input: ?[]u8 = if (bytes_read > 0) buffer[0..bytes_read] else null;
     
     if (input) |line| {
         if (line.len > 0 and (line[0] == 'y' or line[0] == 'Y')) {
@@ -119,15 +118,15 @@ fn runMockTest(allocator: std.mem.Allocator) !void {
 
     // Mock: bash 5.2.0 and git 2.43.0 are referenced
     // Create keys for referenced packages
-    const key1 = try std.fmt.allocPrint(allocator, "{s}/{}/{d}/{s}", .{
+    const key1 = try std.fmt.allocPrint(allocator, "{s}/{f}/{d}/{s}", .{
         all_packages.items[0].name,
         all_packages.items[0].version,
         all_packages.items[0].revision,
         all_packages.items[0].build_id,
     });
     try referenced.put(key1, true);
-    
-    const key2 = try std.fmt.allocPrint(allocator, "{s}/{}/{d}/{s}", .{
+
+    const key2 = try std.fmt.allocPrint(allocator, "{s}/{f}/{d}/{s}", .{
         all_packages.items[2].name,
         all_packages.items[2].version,
         all_packages.items[2].revision,
@@ -145,7 +144,7 @@ fn runMockTest(allocator: std.mem.Allocator) !void {
     defer unreferenced.deinit(allocator);
 
     for (all_packages.items) |pkg| {
-        const key = try std.fmt.allocPrint(allocator, "{s}/{}/{d}/{s}", .{
+        const key = try std.fmt.allocPrint(allocator, "{s}/{f}/{d}/{s}", .{
             pkg.name,
             pkg.version,
             pkg.revision,
@@ -163,7 +162,7 @@ fn runMockTest(allocator: std.mem.Allocator) !void {
     // Show what would be removed
     std.debug.print("\nPhase 4: Packages to remove:\n", .{});
     for (unreferenced.items) |pkg| {
-        std.debug.print("  - {s} {} (rev {d})\n", .{
+        std.debug.print("  - {s} {f} (rev {d})\n", .{
             pkg.name,
             pkg.version,
             pkg.revision,
