@@ -3646,7 +3646,6 @@ pub const CLI = struct {
     // Shell completions
 
     fn generateCompletions(self: *CLI, args: []const []const u8) !void {
-        _ = self;
         if (args.len < 1) {
             std.debug.print("Usage: axiom completions <shell>\n", .{});
             std.debug.print("\nSupported shells:\n", .{});
