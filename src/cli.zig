@@ -1608,11 +1608,7 @@ pub const CLI = struct {
                     std.debug.print("\nConflicts detected:\n", .{});
                     for (failure.explanations) |exp| {
                         std.debug.print("  • ", .{});
-                        const stderr_file = std.fs.File.stderr();
-                        var stderr_buf: [4096]u8 = undefined;
-                        const writer = stderr_file.writer(&stderr_buf);
-                        exp.format(writer) catch {};
-                        writer.flush() catch {};
+                        exp.print();
                         std.debug.print("\n", .{});
                     }
                 }
@@ -3888,11 +3884,7 @@ pub const CLI = struct {
                     std.debug.print("\nConflicts detected:\n", .{});
                     for (failure.explanations) |exp| {
                         std.debug.print("  • ", .{});
-                        const stderr_file = std.fs.File.stderr();
-                        var stderr_buf: [4096]u8 = undefined;
-                        const writer = stderr_file.writer(&stderr_buf);
-                        exp.format(writer) catch {};
-                        writer.flush() catch {};
+                        exp.print();
                         std.debug.print("\n", .{});
                     }
                 }
