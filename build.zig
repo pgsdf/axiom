@@ -11,17 +11,17 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/axiom-cli.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
 
     // Add src/ to include path for stub headers
     exe.root_module.addIncludePath(b.path("src"));
 
-    // Link against libc and libzfs
-    exe.root_module.linkLibC();
-    exe.root_module.linkSystemLibrary("zfs");
-    exe.root_module.linkSystemLibrary("nvpair");
-    exe.root_module.linkSystemLibrary("zfs_core");
+    // Link against libzfs
+    exe.root_module.linkSystemLibrary("zfs", .{});
+    exe.root_module.linkSystemLibrary("nvpair", .{});
+    exe.root_module.linkSystemLibrary("zfs_core", .{});
 
     b.installArtifact(exe);
 
@@ -32,6 +32,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/test-manifest.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
     b.installArtifact(test_manifest);
@@ -43,13 +44,13 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/test-store.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
     test_store.root_module.addIncludePath(b.path("src"));
-    test_store.root_module.linkLibC();
-    test_store.root_module.linkSystemLibrary("zfs");
-    test_store.root_module.linkSystemLibrary("nvpair");
-    test_store.root_module.linkSystemLibrary("zfs_core");
+    test_store.root_module.linkSystemLibrary("zfs", .{});
+    test_store.root_module.linkSystemLibrary("nvpair", .{});
+    test_store.root_module.linkSystemLibrary("zfs_core", .{});
     b.installArtifact(test_store);
 
     // Profile management test executable
@@ -59,13 +60,13 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/test-profile.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
     test_profile.root_module.addIncludePath(b.path("src"));
-    test_profile.root_module.linkLibC();
-    test_profile.root_module.linkSystemLibrary("zfs");
-    test_profile.root_module.linkSystemLibrary("nvpair");
-    test_profile.root_module.linkSystemLibrary("zfs_core");
+    test_profile.root_module.linkSystemLibrary("zfs", .{});
+    test_profile.root_module.linkSystemLibrary("nvpair", .{});
+    test_profile.root_module.linkSystemLibrary("zfs_core", .{});
     b.installArtifact(test_profile);
 
     // Dependency resolver test executable
@@ -75,13 +76,13 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/test-resolver.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
     test_resolver.root_module.addIncludePath(b.path("src"));
-    test_resolver.root_module.linkLibC();
-    test_resolver.root_module.linkSystemLibrary("zfs");
-    test_resolver.root_module.linkSystemLibrary("nvpair");
-    test_resolver.root_module.linkSystemLibrary("zfs_core");
+    test_resolver.root_module.linkSystemLibrary("zfs", .{});
+    test_resolver.root_module.linkSystemLibrary("nvpair", .{});
+    test_resolver.root_module.linkSystemLibrary("zfs_core", .{});
     b.installArtifact(test_resolver);
 
     // Realization engine test executable
@@ -91,13 +92,13 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/test-realization.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
     test_realization.root_module.addIncludePath(b.path("src"));
-    test_realization.root_module.linkLibC();
-    test_realization.root_module.linkSystemLibrary("zfs");
-    test_realization.root_module.linkSystemLibrary("nvpair");
-    test_realization.root_module.linkSystemLibrary("zfs_core");
+    test_realization.root_module.linkSystemLibrary("zfs", .{});
+    test_realization.root_module.linkSystemLibrary("nvpair", .{});
+    test_realization.root_module.linkSystemLibrary("zfs_core", .{});
     b.installArtifact(test_realization);
 
     // ZFS integration test executable (original main.zig)
@@ -107,13 +108,13 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
     zfs_test.root_module.addIncludePath(b.path("src"));
-    zfs_test.root_module.linkLibC();
-    zfs_test.root_module.linkSystemLibrary("zfs");
-    zfs_test.root_module.linkSystemLibrary("nvpair");
-    zfs_test.root_module.linkSystemLibrary("zfs_core");
+    zfs_test.root_module.linkSystemLibrary("zfs", .{});
+    zfs_test.root_module.linkSystemLibrary("nvpair", .{});
+    zfs_test.root_module.linkSystemLibrary("zfs_core", .{});
     b.installArtifact(zfs_test);
 
     // Garbage collector test executable
@@ -123,13 +124,13 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/test-gc.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
     test_gc.root_module.addIncludePath(b.path("src"));
-    test_gc.root_module.linkLibC();
-    test_gc.root_module.linkSystemLibrary("zfs");
-    test_gc.root_module.linkSystemLibrary("nvpair");
-    test_gc.root_module.linkSystemLibrary("zfs_core");
+    test_gc.root_module.linkSystemLibrary("zfs", .{});
+    test_gc.root_module.linkSystemLibrary("nvpair", .{});
+    test_gc.root_module.linkSystemLibrary("zfs_core", .{});
     b.installArtifact(test_gc);
 
     // Import test executable
@@ -139,13 +140,13 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/test-import.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
     test_import.root_module.addIncludePath(b.path("src"));
-    test_import.root_module.linkLibC();
-    test_import.root_module.linkSystemLibrary("zfs");
-    test_import.root_module.linkSystemLibrary("nvpair");
-    test_import.root_module.linkSystemLibrary("zfs_core");
+    test_import.root_module.linkSystemLibrary("zfs", .{});
+    test_import.root_module.linkSystemLibrary("nvpair", .{});
+    test_import.root_module.linkSystemLibrary("zfs_core", .{});
     b.installArtifact(test_import);
 
     // Signature test executable
@@ -155,10 +156,10 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/test-signature.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
     test_signature.root_module.addIncludePath(b.path("src"));
-    test_signature.root_module.linkLibC();
     b.installArtifact(test_signature);
 
     // Cache test executable
@@ -168,13 +169,13 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/test-cache.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
     test_cache.root_module.addIncludePath(b.path("src"));
-    test_cache.root_module.linkLibC();
-    test_cache.root_module.linkSystemLibrary("zfs");
-    test_cache.root_module.linkSystemLibrary("nvpair");
-    test_cache.root_module.linkSystemLibrary("zfs_core");
+    test_cache.root_module.linkSystemLibrary("zfs", .{});
+    test_cache.root_module.linkSystemLibrary("nvpair", .{});
+    test_cache.root_module.linkSystemLibrary("zfs_core", .{});
     b.installArtifact(test_cache);
 
     // Run command
@@ -195,13 +196,13 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/zfs.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
     zfs_tests.root_module.addIncludePath(b.path("src"));
-    zfs_tests.root_module.linkLibC();
-    zfs_tests.root_module.linkSystemLibrary("zfs");
-    zfs_tests.root_module.linkSystemLibrary("nvpair");
-    zfs_tests.root_module.linkSystemLibrary("zfs_core");
+    zfs_tests.root_module.linkSystemLibrary("zfs", .{});
+    zfs_tests.root_module.linkSystemLibrary("nvpair", .{});
+    zfs_tests.root_module.linkSystemLibrary("zfs_core", .{});
 
     // Types module unit tests (version constraints, etc.)
     const types_tests = b.addTest(.{
@@ -209,6 +210,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/types.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
 
@@ -218,6 +220,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/manifest.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
 
@@ -227,13 +230,13 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/resolver.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
     resolver_tests.root_module.addIncludePath(b.path("src"));
-    resolver_tests.root_module.linkLibC();
-    resolver_tests.root_module.linkSystemLibrary("zfs");
-    resolver_tests.root_module.linkSystemLibrary("nvpair");
-    resolver_tests.root_module.linkSystemLibrary("zfs_core");
+    resolver_tests.root_module.linkSystemLibrary("zfs", .{});
+    resolver_tests.root_module.linkSystemLibrary("nvpair", .{});
+    resolver_tests.root_module.linkSystemLibrary("zfs_core", .{});
 
     // Signature module unit tests (no ZFS needed)
     const signature_tests = b.addTest(.{
@@ -241,9 +244,9 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/signature.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
-    signature_tests.root_module.linkLibC();
 
     // ==================== Test Steps ====================
 
