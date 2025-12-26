@@ -1936,17 +1936,10 @@ pub const CLI = struct {
         var graph = try self.buildDependencyGraph(lock);
         defer graph.deinit();
 
-        // Output the graph
-        const stdout_file = std.fs.File.stdout();
-        var stdout_buf: [4096]u8 = undefined;
-        var file_buf: [4096]u8 = undefined;
-        var file_handle: ?std.fs.File = null;
-
-        if (output_file) |path| {
-            file_handle = try std.fs.cwd().createFile(path, .{});
-        }
-
-        const writer = if (file_handle) |fh| fh.writer(&file_buf) else stdout_file.writer(&stdout_buf);
+        // Build output into a buffer
+        var output_buffer: std.ArrayList(u8) = .empty;
+        defer output_buffer.deinit(self.allocator);
+        const writer = output_buffer.writer(self.allocator);
 
         switch (format) {
             .tree => try self.outputTreeFormat(writer, graph, lock, max_depth),
@@ -1954,9 +1947,15 @@ pub const CLI = struct {
             .json => try self.outputJsonFormat(writer, graph, lock),
         }
 
-        if (file_handle) |fh| {
-            fh.close();
-            std.debug.print("Graph written to: {s}\n", .{output_file.?});
+        // Write output to file or stdout
+        if (output_file) |path| {
+            const file_handle = try std.fs.cwd().createFile(path, .{});
+            defer file_handle.close();
+            _ = try file_handle.writeAll(output_buffer.items);
+            std.debug.print("Graph written to: {s}\n", .{path});
+        } else {
+            const stdout_file = std.io.getStdOut();
+            _ = try stdout_file.writeAll(output_buffer.items);
         }
     }
 
