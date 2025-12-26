@@ -1836,37 +1836,33 @@ pub const CLI = struct {
         // Confirm
         std.debug.print("Are you sure? (y/N): ", .{});
 
-        var buffer: [10]u8 = undefined;
+        var buffer: [256]u8 = undefined;
         const stdin_file = std.fs.File.stdin();
-        var stdin_buf: [256]u8 = undefined;
-        const stdin = stdin_file.reader(&stdin_buf);
-        const input = try stdin.readUntilDelimiterOrEof(&buffer, '\n');
-        
-        if (input) |line| {
-            if (line.len > 0 and (line[0] == 'y' or line[0] == 'Y')) {
-                self.realization.destroy(env_name) catch |err| {
-                    if (err == zfs.ZfsError.DatasetBusy) {
-                        std.debug.print("Error: Environment '{s}' is busy.\n\n", .{env_name});
-                        std.debug.print("The dataset may be mounted or in use. Try:\n", .{});
-                        std.debug.print("  1. Deactivate the environment: deactivate\n", .{});
-                        std.debug.print("  2. Unmount manually: zfs unmount zroot/axiom/env/{s}\n", .{env_name});
-                        std.debug.print("  3. Retry: axiom env-destroy {s}\n", .{env_name});
-                        return;
-                    }
-                    if (err == zfs.ZfsError.DatasetNotFound) {
-                        std.debug.print("Error: Environment '{s}' does not exist.\n", .{env_name});
-                        return;
-                    }
-                    if (err == zfs.ZfsError.PermissionDenied) {
-                        std.debug.print("Error: Permission denied. Run with sudo.\n", .{});
-                        return;
-                    }
-                    return err;
-                };
-                std.debug.print("✓ Environment destroyed\n", .{});
-            } else {
-                std.debug.print("Cancelled\n", .{});
-            }
+        const bytes_read = stdin_file.read(&buffer) catch 0;
+
+        if (bytes_read > 0 and (buffer[0] == 'y' or buffer[0] == 'Y')) {
+            self.realization.destroy(env_name) catch |err| {
+                if (err == zfs.ZfsError.DatasetBusy) {
+                    std.debug.print("Error: Environment '{s}' is busy.\n\n", .{env_name});
+                    std.debug.print("The dataset may be mounted or in use. Try:\n", .{});
+                    std.debug.print("  1. Deactivate the environment: deactivate\n", .{});
+                    std.debug.print("  2. Unmount manually: zfs unmount zroot/axiom/env/{s}\n", .{env_name});
+                    std.debug.print("  3. Retry: axiom env-destroy {s}\n", .{env_name});
+                    return;
+                }
+                if (err == zfs.ZfsError.DatasetNotFound) {
+                    std.debug.print("Error: Environment '{s}' does not exist.\n", .{env_name});
+                    return;
+                }
+                if (err == zfs.ZfsError.PermissionDenied) {
+                    std.debug.print("Error: Permission denied. Run with sudo.\n", .{});
+                    return;
+                }
+                return err;
+            };
+            std.debug.print("✓ Environment destroyed\n", .{});
+        } else {
+            std.debug.print("Cancelled\n", .{});
         }
     }
 
@@ -4139,22 +4135,18 @@ pub const CLI = struct {
         // Confirm
         std.debug.print("Are you sure? (y/N): ", .{});
 
-        var buffer: [10]u8 = undefined;
+        var buffer: [256]u8 = undefined;
         const stdin_file = std.fs.File.stdin();
-        var stdin_buf: [256]u8 = undefined;
-        const stdin = stdin_file.reader(&stdin_buf);
-        const input = try stdin.readUntilDelimiterOrEof(&buffer, '\n');
+        const bytes_read = stdin_file.read(&buffer) catch 0;
 
-        if (input) |line| {
-            if (line.len > 0 and (line[0] == 'y' or line[0] == 'Y')) {
-                self.user_realization.?.destroy(env_name) catch |err| {
-                    std.debug.print("Error destroying environment: {}\n", .{err});
-                    return;
-                };
-                std.debug.print("Environment destroyed\n", .{});
-            } else {
-                std.debug.print("Cancelled\n", .{});
-            }
+        if (bytes_read > 0 and (buffer[0] == 'y' or buffer[0] == 'Y')) {
+            self.user_realization.?.destroy(env_name) catch |err| {
+                std.debug.print("Error destroying environment: {}\n", .{err});
+                return;
+            };
+            std.debug.print("Environment destroyed\n", .{});
+        } else {
+            std.debug.print("Cancelled\n", .{});
         }
     }
 
@@ -4240,22 +4232,18 @@ pub const CLI = struct {
         // Confirm
         std.debug.print("Are you sure? (y/N): ", .{});
 
-        var buffer: [10]u8 = undefined;
+        var buffer: [256]u8 = undefined;
         const stdin_file = std.fs.File.stdin();
-        var stdin_buf: [256]u8 = undefined;
-        const stdin = stdin_file.reader(&stdin_buf);
-        const input = try stdin.readUntilDelimiterOrEof(&buffer, '\n');
+        const bytes_read = stdin_file.read(&buffer) catch 0;
 
-        if (input) |line| {
-            if (line.len > 0 and (line[0] == 'y' or line[0] == 'Y')) {
-                self.multi_user_mgr.?.removeUser(self.user_ctx.?.*, username) catch |err| {
-                    std.debug.print("Error removing user data: {}\n", .{err});
-                    return;
-                };
-                std.debug.print("User data removed\n", .{});
-            } else {
-                std.debug.print("Cancelled\n", .{});
-            }
+        if (bytes_read > 0 and (buffer[0] == 'y' or buffer[0] == 'Y')) {
+            self.multi_user_mgr.?.removeUser(self.user_ctx.?.*, username) catch |err| {
+                std.debug.print("Error removing user data: {}\n", .{err});
+                return;
+            };
+            std.debug.print("User data removed\n", .{});
+        } else {
+            std.debug.print("Cancelled\n", .{});
         }
     }
 
