@@ -1954,7 +1954,7 @@ pub const CLI = struct {
             _ = try file_handle.writeAll(output_buffer.items);
             std.debug.print("Graph written to: {s}\n", .{path});
         } else {
-            const stdout_file = std.io.getStdOut();
+            const stdout_file = std.fs.File.stdout();
             _ = try stdout_file.writeAll(output_buffer.items);
         }
     }
