@@ -537,7 +537,7 @@ pub const EnvironmentMetadata = struct {
     /// Serialize to YAML format
     pub fn toYaml(self: *const EnvironmentMetadata, allocator: Allocator) ![]u8 {
         var buffer: std.ArrayList(u8) = .empty;
-        const writer = buffer.writer();
+        const writer = buffer.writer(allocator);
 
         try writer.print("name: {s}\n", .{self.name});
         try writer.print("profile: {s}\n", .{self.profile_name});
