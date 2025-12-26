@@ -44,7 +44,7 @@ pub const ConflictExplanation = struct {
     pub fn format(self: ConflictExplanation, writer: anytype) !void {
         switch (self.reason) {
             .version_conflict => {
-                try writer.print("Version conflict: {s} {f} conflicts with {s} {f}", .{
+                try std.fmt.format(writer, "Version conflict: {s} {f} conflicts with {s} {f}", .{
                     self.package_a,
                     self.version_a,
                     self.package_b,
@@ -52,19 +52,19 @@ pub const ConflictExplanation = struct {
                 });
             },
             .dependency_conflict => {
-                try writer.print("Dependency conflict: {s} requires incompatible version of {s}", .{
+                try std.fmt.format(writer, "Dependency conflict: {s} requires incompatible version of {s}", .{
                     self.package_a,
                     self.package_b,
                 });
             },
             .mutual_exclusion => {
-                try writer.print("Mutual exclusion: {s} and {s} cannot be installed together", .{
+                try std.fmt.format(writer, "Mutual exclusion: {s} and {s} cannot be installed together", .{
                     self.package_a,
                     self.package_b,
                 });
             },
             .unsatisfiable_dependency => {
-                try writer.print("Unsatisfiable: {s} requires {s} which has no valid version", .{
+                try std.fmt.format(writer, "Unsatisfiable: {s} requires {s} which has no valid version", .{
                     self.package_a,
                     self.package_b,
                 });
