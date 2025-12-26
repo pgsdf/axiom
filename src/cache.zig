@@ -384,7 +384,7 @@ pub const CacheClient = struct {
 
     /// Build URL for package endpoint
     fn buildPackageUrl(self: *Self, base_url: []const u8, pkg_id: PackageId) ![]u8 {
-        return std.fmt.allocPrint(self.allocator, "{s}/v1/packages/{s}/{}/{d}/{s}", .{
+        return std.fmt.allocPrint(self.allocator, "{s}/v1/packages/{s}/{f}/{d}/{s}", .{
             base_url,
             pkg_id.name,
             pkg_id.version,
@@ -395,7 +395,7 @@ pub const CacheClient = struct {
 
     /// Build URL for manifest endpoint
     fn buildManifestUrl(self: *Self, base_url: []const u8, pkg_id: PackageId) ![]u8 {
-        return std.fmt.allocPrint(self.allocator, "{s}/v1/packages/{s}/{}/{d}/{s}/manifest", .{
+        return std.fmt.allocPrint(self.allocator, "{s}/v1/packages/{s}/{f}/{d}/{s}/manifest", .{
             base_url,
             pkg_id.name,
             pkg_id.version,
@@ -406,7 +406,7 @@ pub const CacheClient = struct {
 
     /// Build URL for signature endpoint
     fn buildSignatureUrl(self: *Self, base_url: []const u8, pkg_id: PackageId) ![]u8 {
-        return std.fmt.allocPrint(self.allocator, "{s}/v1/packages/{s}/{}/{d}/{s}/signature", .{
+        return std.fmt.allocPrint(self.allocator, "{s}/v1/packages/{s}/{f}/{d}/{s}/signature", .{
             base_url,
             pkg_id.name,
             pkg_id.version,
@@ -1040,7 +1040,7 @@ pub fn pushPackage(
     try zfs_handle.sendToFile(snapshot, tmp_path);
 
     // Upload to cache server
-    const url = try std.fmt.allocPrint(allocator, "{s}/v1/packages/{s}/{}/{d}/{s}", .{
+    const url = try std.fmt.allocPrint(allocator, "{s}/v1/packages/{s}/{f}/{d}/{s}", .{
         push_url,
         pkg_id.name,
         pkg_id.version,
