@@ -82,7 +82,7 @@ pub const DatasetPaths = struct {
         };
 
         // Build the validated path
-        const path = try std.fmt.allocPrint(allocator, "{s}/{s}/{}/{d}/{s}", .{
+        const path = try std.fmt.allocPrint(allocator, "{s}/{s}/{f}/{d}/{s}", .{
             self.store_root,
             pkg.name,
             pkg.version,
@@ -111,7 +111,7 @@ pub const DatasetPaths = struct {
         allocator: std.mem.Allocator,
         pkg: PackageId,
     ) ![]u8 {
-        return std.fmt.allocPrint(allocator, "{s}/{s}/{}/{d}/{s}", .{
+        return std.fmt.allocPrint(allocator, "{s}/{s}/{f}/{d}/{s}", .{
             self.store_root,
             pkg.name,
             pkg.version,
@@ -127,7 +127,7 @@ pub const DatasetPaths = struct {
         pkg: PackageId,
     ) ![]u8 {
         _ = self; // May be used for custom mount roots in future
-        return std.fmt.allocPrint(allocator, config.DEFAULT_MOUNTPOINT ++ "/store/pkg/{s}/{}/{d}/{s}", .{
+        return std.fmt.allocPrint(allocator, config.DEFAULT_MOUNTPOINT ++ "/store/pkg/{s}/{f}/{d}/{s}", .{
             pkg.name,
             pkg.version,
             pkg.revision,

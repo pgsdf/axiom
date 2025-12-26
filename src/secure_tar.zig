@@ -100,6 +100,8 @@ pub const SecureTarExtractor = struct {
         HardlinkEscape,
         /// Symlink chain too deep
         SymlinkChainTooDeep,
+        /// Unsupported archive format
+        UnsupportedFormat,
     };
 
     /// Initialize a secure tar extractor
