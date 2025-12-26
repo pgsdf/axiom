@@ -367,26 +367,36 @@ pub const PortsMigrator = struct {
             {
                 const file = try std.fs.cwd().createFile(LOCAL_SECRET_KEY_PATH, .{ .mode = 0o600 });
                 defer file.close();
-                var write_buf: [4096]u8 = undefined;
-                const writer = file.writer(&write_buf);
-                try writer.writeAll("# Axiom Local Signing Key (SECRET - keep private!)\n");
-                try writer.writeAll("# Generated automatically for signing locally-built packages\n");
+
+                var buffer: std.ArrayList(u8) = .empty;
+                defer buffer.deinit(self.allocator);
+                const writer = buffer.writer(self.allocator);
+
+                try writer.print("# Axiom Local Signing Key (SECRET - keep private!)\n", .{});
+                try writer.print("# Generated automatically for signing locally-built packages\n", .{});
                 try writer.print("key_id: {s}\n", .{key_id});
-                try writer.print("secret_key: {s}\n", .{std.fmt.fmtSliceHexLower(&key_pair.secret_key)});
+                try writer.print("secret_key: {x}\n", .{key_pair.secret_key});
+
+                _ = try file.writeAll(buffer.items);
             }
 
             // Save public key (can be shared)
             {
                 const file = try std.fs.cwd().createFile(LOCAL_PUBLIC_KEY_PATH, .{ .mode = 0o644 });
                 defer file.close();
-                var write_buf: [4096]u8 = undefined;
-                const writer = file.writer(&write_buf);
-                try writer.writeAll("# Axiom Local Signing Key (PUBLIC)\n");
-                try writer.writeAll("# This key is used to verify packages built on this machine\n");
+
+                var buffer: std.ArrayList(u8) = .empty;
+                defer buffer.deinit(self.allocator);
+                const writer = buffer.writer(self.allocator);
+
+                try writer.print("# Axiom Local Signing Key (PUBLIC)\n", .{});
+                try writer.print("# This key is used to verify packages built on this machine\n", .{});
                 try writer.print("key_id: {s}\n", .{key_id});
-                try writer.print("key_data: {s}\n", .{std.fmt.fmtSliceHexLower(&key_pair.public_key)});
+                try writer.print("key_data: {x}\n", .{key_pair.public_key});
                 try writer.print("owner: \"Local Build ({s})\"\n", .{hostname});
                 try writer.print("created: {d}\n", .{std.time.timestamp()});
+
+                _ = try file.writeAll(buffer.items);
             }
 
             // Add public key to trust store so verification passes

@@ -1592,7 +1592,7 @@ pub const MultiSignature = struct {
         try writer.writeAll("\nfiles:\n");
         for (self.files) |f| {
             try writer.print("  - path: \"{s}\"\n", .{f.path});
-            try writer.print("    sha256: {s}\n", .{std.fmt.fmtSliceHexLower(&f.hash)});
+            try writer.print("    sha256: {x}\n", .{f.hash});
         }
 
         try writer.writeAll("\nsignatures:\n");
@@ -1602,7 +1602,7 @@ pub const MultiSignature = struct {
                 try writer.print("    signer: \"{s}\"\n", .{name});
             }
             try writer.print("    timestamp: {d}\n", .{sig.timestamp});
-            try writer.print("    signature: {s}\n", .{std.fmt.fmtSliceHexLower(&sig.signature)});
+            try writer.print("    signature: {x}\n", .{sig.signature});
         }
 
         return result.toOwnedSlice(allocator);
