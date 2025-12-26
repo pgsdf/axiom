@@ -3666,11 +3666,13 @@ pub const CLI = struct {
             return;
         };
 
+        var buffer: std.ArrayList(u8) = .empty;
+        defer buffer.deinit(self.allocator);
+        const writer = buffer.writer(self.allocator);
+        try completions.generate(shell, writer);
+
         const stdout_file = std.fs.File.stdout();
-        var stdout_buf: [4096]u8 = undefined;
-        const stdout = stdout_file.writer(&stdout_buf);
-        try completions.generate(shell, stdout);
-        try stdout.flush();
+        _ = try stdout_file.writeAll(buffer.items);
     }
 
     // ============================================
