@@ -186,13 +186,13 @@ pub const SecureTarExtractor = struct {
 
     /// Extract zstd-compressed tar
     fn extractZstd(self: *SecureTarExtractor, file: std.fs.File) !void {
-        // Zstd requires a window buffer for decompression (up to 8MB for max window size)
-        var window_buffer: [1 << 23]u8 = undefined; // 8MB window buffer
-        var read_buf: [4096]u8 = undefined;
-        var decompress = std.compress.zstd.decompressor(file.reader(&read_buf), .{
-            .window_buffer = &window_buffer,
-        });
-        try self.extractTar(decompress.reader());
+        // Zstd decompression disabled for Zig 0.15 compatibility
+        // The std.compress.zstd API has changed
+        _ = self;
+        _ = file;
+        std.debug.print("SecureTarExtractor: Zstd decompression not yet supported in this build\n", .{});
+        std.debug.print("Please extract the archive manually: zstd -dc <file> | tar -xf -\n", .{});
+        return ExtractionError.UnsupportedFormat;
     }
 
     /// Extract from a tar reader using std.tar.iterator
