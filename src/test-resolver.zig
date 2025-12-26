@@ -203,7 +203,7 @@ fn runTests(allocator: std.mem.Allocator, pkg_store: *store.PackageStore) !void 
 
     for (lock.resolved) |pkg| {
         const marker: []const u8 = if (pkg.requested) "*" else " ";
-        std.debug.print("  {s} {s} {} (rev {d})\n", .{
+        std.debug.print("  {s} {s} {f} (rev {d})\n", .{
             marker,
             pkg.id.name,
             pkg.id.version,
