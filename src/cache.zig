@@ -257,16 +257,17 @@ pub const CacheConfig = struct {
         var file = try std.fs.createFileAbsolute(path, .{});
         defer file.close();
 
-        var write_buf: [4096]u8 = undefined;
-        var writer = file.writer(&write_buf);
+        var buffer: std.ArrayList(u8) = .empty;
+        defer buffer.deinit(self.allocator);
+        const writer = buffer.writer(self.allocator);
 
         // Write caches
-        try writer.writeAll("caches:\n");
+        try writer.print("caches:\n", .{});
         for (self.caches.items) |cache| {
             try writer.print("  - url: {s}\n", .{cache.url});
             try writer.print("    priority: {d}\n", .{cache.priority});
             if (cache.trusted_keys.len > 0) {
-                try writer.writeAll("    trusted_keys:\n");
+                try writer.print("    trusted_keys:\n", .{});
                 for (cache.trusted_keys) |key| {
                     try writer.print("      - {s}\n", .{key});
                 }
@@ -274,13 +275,13 @@ pub const CacheConfig = struct {
         }
 
         // Write local cache config
-        try writer.writeAll("\nlocal_cache:\n");
+        try writer.print("\nlocal_cache:\n", .{});
         try writer.print("  path: {s}\n", .{self.local.path});
         try writer.print("  max_size: {d}\n", .{self.local.max_size_bytes});
         try writer.print("  cleanup_policy: {s}\n", .{@tagName(self.local.cleanup_policy)});
 
         // Write push config
-        try writer.writeAll("\npush:\n");
+        try writer.print("\npush:\n", .{});
         try writer.print("  enabled: {}\n", .{self.push.enabled});
         if (self.push.url) |url| {
             try writer.print("  url: {s}\n", .{url});
@@ -288,6 +289,8 @@ pub const CacheConfig = struct {
         if (self.push.key_path) |key| {
             try writer.print("  key: {s}\n", .{key});
         }
+
+        _ = try file.writeAll(buffer.items);
     }
 };
 
