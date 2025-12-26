@@ -352,7 +352,7 @@ pub const ServiceManager = struct {
         // Look for <service_name>_enable="YES"
         var enable_var: std.ArrayList(u8) = .empty;
         defer enable_var.deinit(self.allocator);
-        try enable_var.writer().print("{s}_enable", .{service_name});
+        try enable_var.writer(self.allocator).print("{s}_enable", .{service_name});
 
         if (std.mem.indexOf(u8, content, enable_var.items)) |idx| {
             const rest = content[idx..];
