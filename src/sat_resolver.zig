@@ -44,30 +44,34 @@ pub const ConflictExplanation = struct {
     pub fn format(self: ConflictExplanation, writer: anytype) !void {
         switch (self.reason) {
             .version_conflict => {
-                try std.fmt.format(writer, "Version conflict: {s} {f} conflicts with {s} {f}", .{
-                    self.package_a,
-                    self.version_a,
-                    self.package_b,
-                    self.version_b,
-                });
+                try writer.writeAll("Version conflict: ");
+                try writer.writeAll(self.package_a);
+                try writer.writeAll(" ");
+                try self.version_a.format(writer);
+                try writer.writeAll(" conflicts with ");
+                try writer.writeAll(self.package_b);
+                try writer.writeAll(" ");
+                try self.version_b.format(writer);
             },
             .dependency_conflict => {
-                try std.fmt.format(writer, "Dependency conflict: {s} requires incompatible version of {s}", .{
-                    self.package_a,
-                    self.package_b,
-                });
+                try writer.writeAll("Dependency conflict: ");
+                try writer.writeAll(self.package_a);
+                try writer.writeAll(" requires incompatible version of ");
+                try writer.writeAll(self.package_b);
             },
             .mutual_exclusion => {
-                try std.fmt.format(writer, "Mutual exclusion: {s} and {s} cannot be installed together", .{
-                    self.package_a,
-                    self.package_b,
-                });
+                try writer.writeAll("Mutual exclusion: ");
+                try writer.writeAll(self.package_a);
+                try writer.writeAll(" and ");
+                try writer.writeAll(self.package_b);
+                try writer.writeAll(" cannot be installed together");
             },
             .unsatisfiable_dependency => {
-                try std.fmt.format(writer, "Unsatisfiable: {s} requires {s} which has no valid version", .{
-                    self.package_a,
-                    self.package_b,
-                });
+                try writer.writeAll("Unsatisfiable: ");
+                try writer.writeAll(self.package_a);
+                try writer.writeAll(" requires ");
+                try writer.writeAll(self.package_b);
+                try writer.writeAll(" which has no valid version");
             },
         }
     }
