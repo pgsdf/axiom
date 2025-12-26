@@ -2770,11 +2770,16 @@ pub const CLI = struct {
         {
             const secret_file = try std.fs.cwd().createFile(secret_path, .{ .mode = 0o600 });
             defer secret_file.close();
-            var write_buf: [4096]u8 = undefined;
-            const writer = secret_file.writer(&write_buf);
-            try writer.writeAll("# Axiom Secret Key - KEEP PRIVATE!\n");
-            try std.fmt.format(writer,"key_id: {s}\n", .{key_id});
-            try std.fmt.format(writer,"secret_key: {s}\n", .{std.fmt.fmtSliceHexLower(&key_pair.secret_key)});
+
+            var buffer: std.ArrayList(u8) = .empty;
+            defer buffer.deinit(self.allocator);
+            const writer = buffer.writer(self.allocator);
+
+            try writer.print("# Axiom Secret Key - KEEP PRIVATE!\n", .{});
+            try writer.print("key_id: {s}\n", .{key_id});
+            try writer.print("secret_key: {s}\n", .{std.fmt.fmtSliceHexLower(&key_pair.secret_key)});
+
+            _ = try secret_file.writeAll(buffer.items);
         }
 
         // Save public key
