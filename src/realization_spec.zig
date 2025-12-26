@@ -314,22 +314,22 @@ pub const RealizationSpec = struct {
         for (self.directory_rules.items) |*rule| {
             rule.deinit(self.allocator);
         }
-        self.directory_rules.deinit();
+        self.directory_rules.deinit(self.allocator);
 
         for (self.output_selections.items) |*sel| {
             sel.deinit(self.allocator);
         }
-        self.output_selections.deinit();
+        self.output_selections.deinit(self.allocator);
     }
 
     /// Add a directory rule
     pub fn addRule(self: *RealizationSpec, rule: DirectoryRule) !void {
-        try self.directory_rules.append(rule);
+        try self.directory_rules.append(self.allocator, rule);
     }
 
     /// Add output selection for a package
     pub fn selectOutputs(self: *RealizationSpec, package: []const u8, outputs: []const []const u8) !void {
-        try self.output_selections.append(.{
+        try self.output_selections.append(self.allocator, .{
             .package = try self.allocator.dupe(u8, package),
             .outputs = blk: {
                 var out = try self.allocator.alloc([]const u8, outputs.len);
@@ -343,7 +343,7 @@ pub const RealizationSpec = struct {
 
     /// Set merge strategy for a directory pattern
     pub fn setStrategy(self: *RealizationSpec, pattern: []const u8, strategy: MergeStrategy) !void {
-        try self.directory_rules.append(.{
+        try self.directory_rules.append(self.allocator, .{
             .pattern = try self.allocator.dupe(u8, pattern),
             .strategy = strategy,
         });
@@ -449,19 +449,19 @@ pub const AbiReport = struct {
     }
 
     pub fn deinit(self: *AbiReport) void {
-        self.system_lib_violations.deinit();
+        self.system_lib_violations.deinit(self.allocator);
         for (self.missing_dependencies.items) |d| {
             self.allocator.free(d);
         }
-        self.missing_dependencies.deinit();
+        self.missing_dependencies.deinit(self.allocator);
         for (self.warnings.items) |w| {
             self.allocator.free(w);
         }
-        self.warnings.deinit();
+        self.warnings.deinit(self.allocator);
     }
 
     pub fn addViolation(self: *AbiReport, library: []const u8, found_in: []const u8, expected: []const u8) !void {
-        try self.system_lib_violations.append(.{
+        try self.system_lib_violations.append(self.allocator, .{
             .library = library,
             .found_in = found_in,
             .expected = expected,
@@ -470,7 +470,7 @@ pub const AbiReport = struct {
     }
 
     pub fn addWarning(self: *AbiReport, warning: []const u8) !void {
-        try self.warnings.append(try self.allocator.dupe(u8, warning));
+        try self.warnings.append(self.allocator, try self.allocator.dupe(u8, warning));
     }
 
     pub fn format(self: *const AbiReport, writer: anytype) !void {

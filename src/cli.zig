@@ -1743,7 +1743,7 @@ pub const CLI = struct {
 
                 // Apply to all packages in lock
                 for (lock.resolved) |pkg| {
-                    try spec.output_selections.append(.{
+                    try spec.output_selections.append(self.allocator, .{
                         .package = pkg.id.name,
                         .outputs = outputs_list.items,
                     });
@@ -4023,7 +4023,7 @@ pub const CLI = struct {
                 }
 
                 for (lock.resolved) |pkg| {
-                    try spec.output_selections.append(.{
+                    try spec.output_selections.append(self.allocator, .{
                         .package = pkg.id.name,
                         .outputs = outputs_list.items,
                     });
