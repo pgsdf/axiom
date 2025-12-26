@@ -145,7 +145,7 @@ pub const Provenance = struct {
         hasher.final(&hash);
 
         const hex = try allocator.alloc(u8, 64);
-        _ = std.fmt.bufPrint(hex, "{s}", .{std.fmt.fmtSliceHexLower(&hash)}) catch unreachable;
+        _ = std.fmt.bufPrint(hex, "{x}", .{hash}) catch unreachable;
         return hex;
     }
 
@@ -162,7 +162,7 @@ pub const Provenance = struct {
         hasher.final(&hash);
 
         const hex = try allocator.alloc(u8, 64);
-        _ = std.fmt.bufPrint(hex, "{s}", .{std.fmt.fmtSliceHexLower(&hash)}) catch unreachable;
+        _ = std.fmt.bufPrint(hex, "{x}", .{hash}) catch unreachable;
         return hex;
     }
 };
@@ -553,7 +553,7 @@ pub const ProvenanceVerifier = struct {
         hasher.final(&hash);
 
         const hex = try self.allocator.alloc(u8, 64);
-        _ = std.fmt.bufPrint(hex, "{s}", .{std.fmt.fmtSliceHexLower(&hash)}) catch unreachable;
+        _ = std.fmt.bufPrint(hex, "{x}", .{hash}) catch unreachable;
         return hex;
     }
 

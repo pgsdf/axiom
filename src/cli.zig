@@ -2777,7 +2777,7 @@ pub const CLI = struct {
 
             try writer.print("# Axiom Secret Key - KEEP PRIVATE!\n", .{});
             try writer.print("key_id: {s}\n", .{key_id});
-            try writer.print("secret_key: {s}\n", .{std.fmt.fmtSliceHexLower(&key_pair.secret_key)});
+            try writer.print("secret_key: {x}\n", .{key_pair.secret_key});
 
             _ = try secret_file.writeAll(buffer.items);
         }
