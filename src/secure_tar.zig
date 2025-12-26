@@ -175,13 +175,13 @@ pub const SecureTarExtractor = struct {
 
     /// Extract xz-compressed tar
     fn extractXz(self: *SecureTarExtractor, file: std.fs.File) !void {
-        var read_buf: [4096]u8 = undefined;
-        var decompress = std.compress.xz.decompress(self.allocator, file.reader(&read_buf)) catch |err| {
-            std.debug.print("SecureTarExtractor: XZ decompression init failed: {}\n", .{err});
-            return ExtractionError.MalformedArchive;
-        };
-        defer decompress.deinit();
-        try self.extractTar(decompress.reader());
+        // XZ decompression disabled for Zig 0.15 compatibility
+        // The std.compress.xz API expects reader types with .Error member
+        _ = self;
+        _ = file;
+        std.debug.print("SecureTarExtractor: XZ decompression not yet supported in this build\n", .{});
+        std.debug.print("Please extract the archive manually: xz -dc <file> | tar -xf -\n", .{});
+        return ExtractionError.UnsupportedFormat;
     }
 
     /// Extract zstd-compressed tar

@@ -242,9 +242,9 @@ pub const Profile = struct {
                     try writer.writeAll("    version: \"");
                     if (r.min) |min| {
                         if (r.min_inclusive) {
-                            try writer.print(">={}", .{min});
+                            try writer.print(">={f}", .{min});
                         } else {
-                            try writer.print(">{}", .{min});
+                            try writer.print(">{f}", .{min});
                         }
                     }
                     if (r.max) |max| {
@@ -252,9 +252,9 @@ pub const Profile = struct {
                             try writer.writeAll(",");
                         }
                         if (r.max_inclusive) {
-                            try writer.print("<={}", .{max});
+                            try writer.print("<={f}", .{max});
                         } else {
-                            try writer.print("<{}", .{max});
+                            try writer.print("<{f}", .{max});
                         }
                     }
                     try writer.writeAll("\"\n");

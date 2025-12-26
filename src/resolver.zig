@@ -821,7 +821,7 @@ pub const Resolver = struct {
         // Phase 29: Show stats if enabled
         if (self.show_stats) {
             if (self.last_stats) |stats| {
-                std.debug.print("\n{}\n", .{stats});
+                std.debug.print("\n{f}\n", .{stats});
             }
         }
 
@@ -1363,7 +1363,7 @@ pub const Resolver = struct {
             if (candidate.kernel_compat) |kc| {
                 const compat_result = kernelIsCompatible(&self.kernel_ctx, &kc);
                 if (!compat_result.compatible) {
-                    std.debug.print("  ⚠ Skipping {s}@{} - {s}", .{
+                    std.debug.print("  ⚠ Skipping {s}@{f} - {s}", .{
                         pkg_name,
                         candidate.id.version,
                         compat_result.getMessage(),
@@ -1621,17 +1621,17 @@ fn pickBestCandidate(candidates: []Candidate) Candidate {
 /// Print a version constraint for debugging output
 fn printVersionConstraint(constraint: VersionConstraint) void {
     switch (constraint) {
-        .exact => |v| std.debug.print("={}", .{v}),
-        .tilde => |v| std.debug.print("~{}", .{v}),
-        .caret => |v| std.debug.print("^{}", .{v}),
+        .exact => |v| std.debug.print("={f}", .{v}),
+        .tilde => |v| std.debug.print("~{f}", .{v}),
+        .caret => |v| std.debug.print("^{f}", .{v}),
         .any => std.debug.print("*", .{}),
         .range => |r| {
             if (r.min) |min| {
-                std.debug.print("{s}{}", .{ if (r.min_inclusive) ">=" else ">", min });
+                std.debug.print("{s}{f}", .{ if (r.min_inclusive) ">=" else ">", min });
             }
             if (r.max) |max| {
                 if (r.min != null) std.debug.print(",", .{});
-                std.debug.print("{s}{}", .{ if (r.max_inclusive) "<=" else "<", max });
+                std.debug.print("{s}{f}", .{ if (r.max_inclusive) "<=" else "<", max });
             }
         },
     }
