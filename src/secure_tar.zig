@@ -195,30 +195,14 @@ pub const SecureTarExtractor = struct {
         return ExtractionError.UnsupportedFormat;
     }
 
-    /// Extract from a tar reader using std.tar.iterator
+    /// Extract from a tar reader
+    /// NOTE: Disabled for Zig 0.15 - std.tar.iterator API has changed
     fn extractTar(self: *SecureTarExtractor, reader: anytype) !void {
-        // Allocate buffers for tar iterator
-        var file_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
-        var link_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
-
-        var tar_iter = std.tar.iterator(reader, .{
-            .file_name_buffer = &file_name_buffer,
-            .link_name_buffer = &link_name_buffer,
-            .diagnostics = null,
-        });
-
-        while (true) {
-            const entry = tar_iter.next() catch |err| {
-                std.debug.print("SecureTarExtractor: Tar iteration error: {}\n", .{err});
-                return ExtractionError.MalformedArchive;
-            };
-
-            if (entry == null) break;
-            const file_entry = entry.?;
-
-            // Validate and extract the entry
-            try self.processEntry(file_entry);
-        }
+        _ = self;
+        _ = reader;
+        std.debug.print("SecureTarExtractor: Tar extraction not yet supported in this build\n", .{});
+        std.debug.print("Please extract the archive manually: tar -xf <file>\n", .{});
+        return ExtractionError.UnsupportedFormat;
     }
 
     /// Process a single tar entry with security validation
