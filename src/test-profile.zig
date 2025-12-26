@@ -33,17 +33,17 @@ pub fn main() !void {
     for (test_profile.packages) |pkg| {
         std.debug.print("  - {s}: ", .{pkg.name});
         switch (pkg.constraint) {
-            .exact => |v| std.debug.print("={}\n", .{v}),
-            .tilde => |v| std.debug.print("~{}\n", .{v}),
-            .caret => |v| std.debug.print("^{}\n", .{v}),
+            .exact => |v| std.debug.print("={f}\n", .{v}),
+            .tilde => |v| std.debug.print("~{f}\n", .{v}),
+            .caret => |v| std.debug.print("^{f}\n", .{v}),
             .any => std.debug.print("*\n", .{}),
             .range => |r| {
                 if (r.min) |min| {
-                    std.debug.print("{s}{}", .{ if (r.min_inclusive) ">=" else ">", min });
+                    std.debug.print("{s}{f}", .{ if (r.min_inclusive) ">=" else ">", min });
                 }
                 if (r.max) |max| {
                     if (r.min != null) std.debug.print(",", .{});
-                    std.debug.print("{s}{}", .{ if (r.max_inclusive) "<=" else "<", max });
+                    std.debug.print("{s}{f}", .{ if (r.max_inclusive) "<=" else "<", max });
                 }
                 std.debug.print("\n", .{});
             },
@@ -69,7 +69,7 @@ pub fn main() !void {
     std.debug.print("Resolved packages ({d}):\n", .{test_lock.resolved.len});
     for (test_lock.resolved) |pkg| {
         const marker: []const u8 = if (pkg.requested) "*" else " ";
-        std.debug.print("  {s} {s} {} (rev {d}, build {s})\n", .{
+        std.debug.print("  {s} {s} {f} (rev {d}, build {s})\n", .{
             marker,
             pkg.id.name,
             pkg.id.version,

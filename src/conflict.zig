@@ -80,12 +80,12 @@ pub const ConflictConfig = struct {
     }
 
     pub fn deinit(self: *ConflictConfig) void {
-        self.rules.deinit();
+        self.rules.deinit(self.allocator);
     }
 
     /// Add a rule for handling conflicts in specific paths
     pub fn addRule(self: *ConflictConfig, rule: ConflictRule) !void {
-        try self.rules.append(rule);
+        try self.rules.append(self.allocator, rule);
     }
 
     /// Find the best matching rule for a path
@@ -128,8 +128,8 @@ pub const ConflictTracker = struct {
     }
 
     pub fn deinit(self: *ConflictTracker) void {
-        self.conflicts.deinit();
-        self.resolutions.deinit();
+        self.conflicts.deinit(self.allocator);
+        self.resolutions.deinit(self.allocator);
     }
 
     /// Check if two files conflict
@@ -229,7 +229,7 @@ pub const ConflictTracker = struct {
 
     /// Record a detected conflict
     pub fn recordConflict(self: *ConflictTracker, conflict: FileConflict) !void {
-        try self.conflicts.append(conflict);
+        try self.conflicts.append(self.allocator, conflict);
     }
 
     /// Resolve a conflict according to policy
@@ -239,7 +239,7 @@ pub const ConflictTracker = struct {
     ) !ConflictResolution {
         // Check for path-specific rule
         if (self.config.findRule(conflict.path)) |rule| {
-            try self.resolutions.append(.{
+            try self.resolutions.append(self.allocator, .{
                 .path = conflict.path,
                 .conflict = conflict,
                 .resolution = rule.strategy,
@@ -262,7 +262,7 @@ pub const ConflictTracker = struct {
             .keep_both => .{ .keep_both = {} },
         };
 
-        try self.resolutions.append(.{
+        try self.resolutions.append(self.allocator, .{
             .path = conflict.path,
             .conflict = conflict,
             .resolution = resolution,

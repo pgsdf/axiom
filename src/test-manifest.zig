@@ -57,17 +57,17 @@ pub fn main() !void {
     for (deps_manifest.dependencies) |dep| {
         std.debug.print("    - {s}: ", .{dep.name});
         switch (dep.constraint) {
-            .exact => |v| std.debug.print("={}\n", .{v}),
-            .tilde => |v| std.debug.print("~{}\n", .{v}),
-            .caret => |v| std.debug.print("^{}\n", .{v}),
+            .exact => |v| std.debug.print("={f}\n", .{v}),
+            .tilde => |v| std.debug.print("~{f}\n", .{v}),
+            .caret => |v| std.debug.print("^{f}\n", .{v}),
             .any => std.debug.print("*\n", .{}),
             .range => |r| {
                 if (r.min) |min| {
-                    std.debug.print("{s}{}", .{ if (r.min_inclusive) ">=" else ">", min });
+                    std.debug.print("{s}{f}", .{ if (r.min_inclusive) ">=" else ">", min });
                 }
                 if (r.max) |max| {
                     if (r.min != null) std.debug.print(",", .{});
-                    std.debug.print("{s}{}", .{ if (r.max_inclusive) "<=" else "<", max });
+                    std.debug.print("{s}{f}", .{ if (r.max_inclusive) "<=" else "<", max });
                 }
                 std.debug.print("\n", .{});
             },

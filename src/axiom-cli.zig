@@ -100,7 +100,7 @@ pub fn main() !void {
     var builder = build.Builder.init(allocator, &zfs_handle, &pkg_store, &importer);
 
     // Initialize user context (for multi-user support)
-    var user_ctx = user.UserContext.empty catch |err| {
+    var user_ctx = user.UserContext.init(allocator) catch |err| {
         std.debug.print("Warning: Could not initialize user context: {}\n", .{err});
         std.debug.print("Some user-specific features may not work.\n", .{});
         // Continue without user context for basic operations

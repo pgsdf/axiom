@@ -1788,7 +1788,7 @@ pub const PortsMigrator = struct {
                 continue;
             };
 
-            const stdout = child.stdout.?.reader().readAllAlloc(self.allocator, 4096) catch "";
+            const stdout = child.stdout.?.readToEndAlloc(self.allocator, 4096) catch "";
             defer if (stdout.len > 0) self.allocator.free(stdout);
 
             const term = child.wait() catch {
@@ -4779,7 +4779,7 @@ pub const PortsMigrator = struct {
             return PortsError.ImportFailed;
         };
 
-        std.debug.print("  ✓ Package imported: {s}@{}\n", .{ pkg_id.name, pkg_id.version });
+        std.debug.print("  ✓ Package imported: {s}@{f}\n", .{ pkg_id.name, pkg_id.version });
 
         return pkg_id;
     }

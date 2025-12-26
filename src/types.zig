@@ -182,7 +182,7 @@ pub const PackageId = struct {
         self: PackageId,
         writer: anytype,
     ) !void {
-        try writer.print("{s}/{}/{d}/{s}", .{
+        try writer.print("{s}/{f}/{d}/{s}", .{
             self.name,
             self.version,
             self.revision,

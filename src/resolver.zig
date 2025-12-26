@@ -1084,7 +1084,7 @@ pub const Resolver = struct {
             }
 
             // Select this candidate
-            std.debug.print("  → Resolved {s} to {}\n", .{ pkg_name, candidate.id.version });
+            std.debug.print("  → Resolved {s} to {f}\n", .{ pkg_name, candidate.id.version });
             try ctx.resolved.put(pkg_name, candidate.id);
             try ctx.resolved_candidates.put(pkg_name, candidate);
 
@@ -1355,7 +1355,7 @@ pub const Resolver = struct {
             // Check for conflicts
             const has_conflict = try ctx.checkConflicts(candidate);
             if (has_conflict) {
-                std.debug.print("  ⚠ Skipping {s}@{} due to conflict\n", .{ pkg_name, candidate.id.version });
+                std.debug.print("  ⚠ Skipping {s}@{f} due to conflict\n", .{ pkg_name, candidate.id.version });
                 continue;
             }
 
@@ -1399,7 +1399,7 @@ pub const Resolver = struct {
 
             // Check if this candidate replaces an already resolved package
             if (ctx.checkReplaces(candidate)) |replaced| {
-                std.debug.print("  → {s}@{} replaces {s}\n", .{ pkg_name, candidate.id.version, replaced });
+                std.debug.print("  → {s}@{f} replaces {s}\n", .{ pkg_name, candidate.id.version, replaced });
                 // Remove the replaced package from resolved set
                 _ = ctx.resolved.remove(replaced);
                 _ = ctx.resolved_candidates.remove(replaced);
@@ -1422,7 +1422,7 @@ pub const Resolver = struct {
         }
 
         const final_choice = chosen.?;
-        std.debug.print("  → Resolved {s} to {}\n", .{ pkg_name, final_choice.id.version });
+        std.debug.print("  → Resolved {s} to {f}\n", .{ pkg_name, final_choice.id.version });
 
         // Add to resolved set
         try ctx.resolved.put(pkg_name, final_choice.id);

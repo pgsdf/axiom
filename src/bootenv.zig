@@ -541,12 +541,16 @@ pub const BootEnvManager = struct {
         defer stderr.deinit(self.allocator);
 
         if (child.stdout) |stdout_pipe| {
-            var reader = stdout_pipe.reader();
-            reader.readAllArrayList(&stdout, 64 * 1024) catch {};
+            if (stdout_pipe.readToEndAlloc(self.allocator, 64 * 1024)) |stdout_data| {
+                stdout.appendSlice(self.allocator, stdout_data) catch {};
+                self.allocator.free(stdout_data);
+            } else |_| {}
         }
         if (child.stderr) |stderr_pipe| {
-            var reader = stderr_pipe.reader();
-            reader.readAllArrayList(&stderr, 64 * 1024) catch {};
+            if (stderr_pipe.readToEndAlloc(self.allocator, 64 * 1024)) |stderr_data| {
+                stderr.appendSlice(self.allocator, stderr_data) catch {};
+                self.allocator.free(stderr_data);
+            } else |_| {}
         }
 
         const term = try child.wait();
