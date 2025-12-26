@@ -146,7 +146,7 @@ pub fn logNonCritical(
         .source_line = src.line,
         .source_fn = src.fn_name,
     };
-    std.log.warn("{}: {} (non-critical, continuing)", .{ info, err });
+    std.log.warn("{f}: {} (non-critical, continuing)", .{ info, err });
 }
 
 /// Log a non-critical error with a specific category
@@ -166,7 +166,7 @@ pub fn logNonCriticalWithCategory(
         .source_line = src.line,
         .source_fn = src.fn_name,
     };
-    std.log.warn("{}: {} (non-critical, continuing)", .{ info, err });
+    std.log.warn("{f}: {} (non-critical, continuing)", .{ info, err });
 }
 
 /// Log an error during process cleanup (waiting on child processes)
@@ -184,7 +184,7 @@ pub fn logProcessCleanup(
         .source_line = src.line,
         .source_fn = src.fn_name,
     };
-    std.log.warn("{}: {} (process cleanup, continuing)", .{ info, err });
+    std.log.warn("{f}: {} (process cleanup, continuing)", .{ info, err });
 }
 
 /// Log an error during file/directory cleanup
@@ -202,7 +202,7 @@ pub fn logFileCleanup(
         .source_line = src.line,
         .source_fn = src.fn_name,
     };
-    std.log.debug("{}: {} (cleanup, continuing)", .{ info, err });
+    std.log.debug("{f}: {} (cleanup, continuing)", .{ info, err });
 }
 
 /// Log an error during directory creation that may already exist
@@ -224,7 +224,7 @@ pub fn logMkdirBestEffort(
         .source_line = src.line,
         .source_fn = src.fn_name,
     };
-    std.log.warn("{}: {} (best effort, continuing)", .{ info, err });
+    std.log.warn("{f}: {} (best effort, continuing)", .{ info, err });
 }
 
 /// Log an error when loading optional configuration
@@ -247,7 +247,7 @@ pub fn logConfigLoadOptional(
         .source_line = src.line,
         .source_fn = src.fn_name,
     };
-    std.log.warn("{}: {}", .{ info, err });
+    std.log.warn("{f}: {}", .{ info, err });
 }
 
 /// Log an error during ZFS dataset cleanup
@@ -265,7 +265,7 @@ pub fn logZfsCleanup(
         .source_line = src.line,
         .source_fn = src.fn_name,
     };
-    std.log.warn("{}: {} (cleanup, continuing)", .{ info, err });
+    std.log.warn("{f}: {} (cleanup, continuing)", .{ info, err });
 }
 
 /// Log an error during service operations
@@ -284,7 +284,7 @@ pub fn logServiceOp(
         .source_line = src.line,
         .source_fn = src.fn_name,
     };
-    std.log.warn("{}: {} (service op, continuing)", .{ info, err });
+    std.log.warn("{f}: {} (service op, continuing)", .{ info, err });
 }
 
 /// Log an error during trust store operations
@@ -302,7 +302,7 @@ pub fn logTrustStoreOp(
         .source_line = src.line,
         .source_fn = src.fn_name,
     };
-    std.log.warn("{}: {} (trust store, continuing)", .{ info, err });
+    std.log.warn("{f}: {} (trust store, continuing)", .{ info, err });
 }
 
 /// Log an error during logging/audit operations (meta-logging)
@@ -338,7 +338,7 @@ pub fn logFormatError(
         .source_line = src.line,
         .source_fn = src.fn_name,
     };
-    std.log.warn("{}: {}", .{ info, err });
+    std.log.warn("{f}: {}", .{ info, err });
 }
 
 /// Log an error during data collection (non-critical append)
@@ -356,7 +356,7 @@ pub fn logCollectionError(
         .source_line = src.line,
         .source_fn = src.fn_name,
     };
-    std.log.warn("{}: {} (collection, continuing)", .{ info, err });
+    std.log.warn("{f}: {} (collection, continuing)", .{ info, err });
 }
 
 /// Log an error during hex parsing operations
@@ -374,7 +374,7 @@ pub fn logParseError(
         .source_line = src.line,
         .source_fn = src.fn_name,
     };
-    std.log.warn("{}: {} (parse, continuing)", .{ info, err });
+    std.log.warn("{f}: {} (parse, continuing)", .{ info, err });
 }
 
 // ============================================================================
@@ -537,7 +537,7 @@ test "ErrorInfo format" {
 
     var buf: [256]u8 = undefined;
     var stream = std.io.fixedBufferStream(&buf);
-    try std.fmt.format(stream.writer(), "{}", .{info});
+    try std.fmt.format(stream.writer(), "{f}", .{info});
     const result = stream.getWritten();
 
     try std.testing.expect(std.mem.indexOf(u8, result, "ZFS") != null);
