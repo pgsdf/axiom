@@ -39,7 +39,7 @@ pub const CacheInfo = struct {
         var buffer: std.ArrayList(u8) = .empty;
         errdefer buffer.deinit(allocator);
 
-        const writer = buffer.writer();
+        const writer = buffer.writer(allocator);
 
         try buffer.appendSlice(allocator, "{\"name\":\"");
         try validation.writeJsonEscaped(writer, self.name);
@@ -128,7 +128,7 @@ pub const PackageMeta = struct {
         var buffer: std.ArrayList(u8) = .empty;
         errdefer buffer.deinit(allocator);
 
-        const writer = buffer.writer();
+        const writer = buffer.writer(allocator);
 
         try buffer.appendSlice(allocator, "{\"name\":\"");
         try validation.writeJsonEscaped(writer, self.name);

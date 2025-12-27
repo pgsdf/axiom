@@ -72,7 +72,7 @@ pub const RuntimeManifest = struct {
         var output = std.ArrayList(u8).empty;
         defer output.deinit(allocator);
 
-        const writer = output.writer();
+        const writer = output.writer(allocator);
 
         try writer.print("name: {s}\n", .{self.name});
         try writer.print("version: {d}.{d}.{d}\n", .{

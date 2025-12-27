@@ -307,7 +307,7 @@ pub fn escapeJsonString(allocator: Allocator, input: []const u8) ![]const u8 {
             else => {
                 if (c < 0x20) {
                     // Other control characters - use \uXXXX notation
-                    try result.writer().print("\\u{x:0>4}", .{c});
+                    try result.writer(allocator).print("\\u{x:0>4}", .{c});
                 } else {
                     try result.append(allocator, c);
                 }
@@ -682,7 +682,7 @@ pub fn escapeYamlString(allocator: Allocator, input: []const u8) ![]const u8 {
             '\t' => try result.appendSlice(allocator, "\\t"),
             else => {
                 if (c < 0x20) {
-                    try result.writer().print("\\x{x:0>2}", .{c});
+                    try result.writer(allocator).print("\\x{x:0>2}", .{c});
                 } else {
                     try result.append(allocator, c);
                 }
