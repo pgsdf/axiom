@@ -6163,7 +6163,7 @@ pub const CLI = struct {
 
         // Print header
         std.debug.print("{s:<30} {s:<8} {s:<20} {s:<10}\n", .{ "NAME", "ACTIVE", "MOUNTPOINT", "SPACE" });
-        std.debug.print("{s:─<30} {s:─<8} {s:─<20} {s:─<10}\n", .{ "", "", "", "" });
+        std.debug.print("{s:-<30} {s:-<8} {s:-<20} {s:-<10}\n", .{ "", "", "", "" });
 
         // Print each boot environment
         for (envs) |env| {
@@ -6874,7 +6874,7 @@ pub const CLI = struct {
         std.debug.print("Remote Cache Sources\n", .{});
         std.debug.print("════════════════════════════════════════════════════════════════\n", .{});
         std.debug.print("{s:<4} {s:<40} {s:<10} {s:<10}\n", .{ "#", "URL", "PRIORITY", "ENABLED" });
-        std.debug.print("{s:─<4} {s:─<40} {s:─<10} {s:─<10}\n", .{ "", "", "", "" });
+        std.debug.print("{s:-<4} {s:-<40} {s:-<10} {s:-<10}\n", .{ "", "", "", "" });
 
         if (config.sources.len == 0) {
             std.debug.print("\n(no sources configured)\n", .{});
@@ -7216,7 +7216,7 @@ pub const CLI = struct {
             for (sources.items) |source| {
                 self.allocator.free(source.name);
             }
-            sources.deinit();
+            sources.deinit(self.allocator);
         }
 
         if (sources.items.len == 0) {
