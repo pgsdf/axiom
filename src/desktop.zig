@@ -182,7 +182,7 @@ pub const DesktopIntegration = struct {
         var output: std.ArrayList(u8) = .empty;
         defer output.deinit(self.allocator);
 
-        const writer = output.writer();
+        const writer = output.writer(self.allocator);
 
         try writer.print("[Desktop Entry]\n", .{});
         try writer.print("Type=Application\n", .{});

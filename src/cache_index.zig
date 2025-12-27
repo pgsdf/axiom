@@ -768,7 +768,7 @@ pub const CacheIndexManager = struct {
     /// Serialize index to YAML content
     fn serializeIndex(self: *Self, index: *const CacheIndex) ![]u8 {
         var buffer: std.ArrayList(u8) = .empty;
-        const writer = buffer.writer();
+        const writer = buffer.writer(self.allocator);
 
         try writer.print("format_version: \"{s}\"\n", .{index.format_version});
         try writer.print("cache_id: \"{s}\"\n", .{index.cache_id});

@@ -757,7 +757,7 @@ pub const PortsMigrator = struct {
     /// Generate deps.yaml content from port metadata
     pub fn generateDepsYaml(self: *PortsMigrator, meta: *const PortMetadata) ![]const u8 {
         var output: std.ArrayList(u8) = .empty;
-        const writer = output.writer();
+        const writer = output.writer(self.allocator);
 
         try writer.writeAll("# Generated from FreeBSD port: ");
         try writer.writeAll(meta.name);
@@ -820,7 +820,7 @@ pub const PortsMigrator = struct {
     /// Generate build.yaml recipe from port metadata
     pub fn generateBuildYaml(self: *PortsMigrator, meta: *const PortMetadata) ![]const u8 {
         var output: std.ArrayList(u8) = .empty;
-        const writer = output.writer();
+        const writer = output.writer(self.allocator);
 
         try writer.writeAll("# Generated from FreeBSD port\n");
         try writer.writeAll("# Manual review recommended before building\n\n");
@@ -5206,7 +5206,7 @@ pub const PortsMigrator = struct {
 
     fn generateManifestYaml(self: *PortsMigrator, meta: *const PortMetadata, origin: []const u8) ![]const u8 {
         var output: std.ArrayList(u8) = .empty;
-        const writer = output.writer();
+        const writer = output.writer(self.allocator);
 
         // Use mapPortNameAlloc to get correct package name (handles Python flavors)
         // e.g., devel/py-flit-core@py311 → py311-flit-core
@@ -5356,7 +5356,7 @@ pub const SkipReason = enum {
 /// Generate a migration report
 pub fn generateReport(allocator: std.mem.Allocator, results: []const MigrationResult) ![]const u8 {
     var output: std.ArrayList(u8) = .empty;
-    const writer = output.writer();
+    const writer = output.writer(allocator);
 
     var generated: u32 = 0;
     var built: u32 = 0;

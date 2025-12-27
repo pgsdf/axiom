@@ -748,7 +748,7 @@ pub fn createProvenance(
 /// Serialize provenance to YAML format
 pub fn serializeProvenance(allocator: Allocator, provenance: *const Provenance) ![]u8 {
     var buffer: std.ArrayList(u8) = .empty;
-    const writer = buffer.writer();
+    const writer = buffer.writer(allocator);
 
     try writer.print("format_version: \"{s}\"\n\n", .{provenance.format_version});
 

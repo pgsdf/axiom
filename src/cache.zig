@@ -889,7 +889,9 @@ pub const CacheServer = struct {
 
         try stream.writeAll("HTTP/1.1 200 OK\r\n");
         try stream.writeAll("Content-Type: text/yaml\r\n");
-        try stream.writer().print("Content-Length: {d}\r\n", .{content.len});
+        var content_len_buf: [64]u8 = undefined;
+        const content_len_str = std.fmt.bufPrint(&content_len_buf, "Content-Length: {d}\r\n", .{content.len}) catch unreachable;
+        try stream.writeAll(content_len_str);
         try stream.writeAll("\r\n");
         try stream.writeAll(content);
     }
@@ -913,7 +915,9 @@ pub const CacheServer = struct {
 
         try stream.writeAll("HTTP/1.1 200 OK\r\n");
         try stream.writeAll("Content-Type: text/yaml\r\n");
-        try stream.writer().print("Content-Length: {d}\r\n", .{content.len});
+        var sig_len_buf: [64]u8 = undefined;
+        const sig_len_str = std.fmt.bufPrint(&sig_len_buf, "Content-Length: {d}\r\n", .{content.len}) catch unreachable;
+        try stream.writeAll(sig_len_str);
         try stream.writeAll("\r\n");
         try stream.writeAll(content);
     }
@@ -963,9 +967,13 @@ pub const CacheServer = struct {
             else => "Error",
         };
 
-        try stream.writer().print("HTTP/1.1 {d} {s}\r\n", .{ status, status_text });
+        var status_buf: [64]u8 = undefined;
+        const status_str = std.fmt.bufPrint(&status_buf, "HTTP/1.1 {d} {s}\r\n", .{ status, status_text }) catch unreachable;
+        try stream.writeAll(status_str);
         try stream.writeAll("Content-Type: text/plain\r\n");
-        try stream.writer().print("Content-Length: {d}\r\n", .{message.len});
+        var len_buf: [64]u8 = undefined;
+        const len_str = std.fmt.bufPrint(&len_buf, "Content-Length: {d}\r\n", .{message.len}) catch unreachable;
+        try stream.writeAll(len_str);
         try stream.writeAll("\r\n");
         try stream.writeAll(message);
     }

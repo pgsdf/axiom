@@ -409,7 +409,7 @@ pub fn formatClosure(
     var output: std.ArrayList(u8) = .empty;
     defer output.deinit(allocator);
 
-    const writer = output.writer();
+    const writer = output.writer(allocator);
 
     try writer.print("Closure for: ", .{});
     for (closure.roots.items, 0..) |root, i| {

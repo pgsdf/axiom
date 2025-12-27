@@ -124,7 +124,7 @@ pub const BundleManifest = struct {
         var output: std.ArrayList(u8) = .empty;
         defer output.deinit(allocator);
 
-        const writer = output.writer();
+        const writer = output.writer(allocator);
 
         try writer.print("format_version: {d}\n", .{self.format_version});
         try writer.print("name: {s}\n", .{self.name});
