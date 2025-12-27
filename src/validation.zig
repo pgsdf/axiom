@@ -815,3 +815,135 @@ test "YAML needs quoting" {
     try std.testing.expect(!yamlNeedsQuoting("simple_value"));
     try std.testing.expect(!yamlNeedsQuoting("another-value"));
 }
+
+test "URL validation - scheme parsing" {
+    const http = UrlValidator.validate("http://example.com");
+    try std.testing.expectEqual(UrlValidator.Scheme.http, http.scheme);
+
+    const https = UrlValidator.validate("https://example.com");
+    try std.testing.expectEqual(UrlValidator.Scheme.https, https.scheme);
+
+    const file = UrlValidator.validate("file:///path/to/file");
+    try std.testing.expectEqual(UrlValidator.Scheme.file, file.scheme);
+    try std.testing.expect(file.host == null);
+}
+
+test "URL validation - host and port extraction" {
+    const result = UrlValidator.validate("http://example.com:8080/path?query=1");
+    try std.testing.expect(result.valid);
+    try std.testing.expectEqualStrings("example.com", result.host.?);
+    try std.testing.expectEqual(@as(u16, 8080), result.port.?);
+    try std.testing.expectEqualStrings("/path", result.path.?);
+    try std.testing.expectEqualStrings("query=1", result.query.?);
+}
+
+test "URL validation - IPv6 addresses" {
+    const result1 = UrlValidator.validate("http://[::1]:8080/path");
+    try std.testing.expect(result1.valid);
+    try std.testing.expectEqualStrings("[::1]", result1.host.?);
+    try std.testing.expectEqual(@as(u16, 8080), result1.port.?);
+
+    // Unterminated IPv6
+    const result2 = UrlValidator.validate("http://[::1/path");
+    try std.testing.expect(!result2.valid);
+}
+
+test "URL validation - userinfo rejection" {
+    const result = UrlValidator.validate("http://user:pass@example.com");
+    try std.testing.expect(!result.valid);
+    try std.testing.expectEqualStrings("Userinfo in URL not supported", result.error_message.?);
+}
+
+test "URL validation - port edge cases" {
+    // Port 0 not allowed
+    const result1 = UrlValidator.validate("http://example.com:0/path");
+    try std.testing.expect(!result1.valid);
+
+    // Invalid port number
+    const result2 = UrlValidator.validate("http://example.com:notaport/path");
+    try std.testing.expect(!result2.valid);
+}
+
+test "parseSize - error cases" {
+    try std.testing.expectError(SizeParseError.EmptyInput, parseSize("", .{}));
+    try std.testing.expectError(SizeParseError.InvalidCharacter, parseSize("abc", .{}));
+    try std.testing.expectError(SizeParseError.InvalidSuffix, parseSize("100X", .{}));
+}
+
+test "parseSize - all suffixes" {
+    try std.testing.expectEqual(@as(u64, 1024), try parseSize("1K", .{}));
+    try std.testing.expectEqual(@as(u64, 1048576), try parseSize("1M", .{}));
+    try std.testing.expectEqual(@as(u64, 1073741824), try parseSize("1G", .{}));
+    try std.testing.expectEqual(@as(u64, 1099511627776), try parseSize("1T", .{}));
+    try std.testing.expectEqual(@as(u64, 1024), try parseSize("1KB", .{}));
+    try std.testing.expectEqual(@as(u64, 1048576), try parseSize("1MB", .{}));
+    try std.testing.expectEqual(@as(u64, 1073741824), try parseSize("1GB", .{}));
+    try std.testing.expectEqual(@as(u64, 1099511627776), try parseSize("1TB", .{}));
+}
+
+test "parseTimestamp - negative values" {
+    // Negative not allowed by default
+    try std.testing.expectError(TimestampParseError.NegativeNotAllowed, parseTimestamp("-100", .{}));
+
+    // Negative allowed with option
+    const result = try parseTimestamp("-100", .{ .allow_negative = true, .min = -1000 });
+    try std.testing.expectEqual(@as(i64, -100), result);
+}
+
+test "parseTimestamp - error cases" {
+    try std.testing.expectError(TimestampParseError.EmptyInput, parseTimestamp("", .{}));
+    try std.testing.expectError(TimestampParseError.InvalidCharacter, parseTimestamp("abc", .{}));
+}
+
+test "parseInt - basic values" {
+    try std.testing.expectEqual(@as(i64, 42), try parseInt("42", .{}));
+    try std.testing.expectEqual(@as(i64, -42), try parseInt("-42", .{}));
+    try std.testing.expectEqual(@as(i64, 0), try parseInt("0", .{}));
+}
+
+test "parseInt - bounds checking" {
+    try std.testing.expectError(IntParseError.BelowMinimum, parseInt("-10", .{ .min = 0 }));
+    try std.testing.expectError(IntParseError.AboveMaximum, parseInt("100", .{ .max = 50 }));
+}
+
+test "parseInt - error cases" {
+    try std.testing.expectError(IntParseError.EmptyInput, parseInt("", .{}));
+    try std.testing.expectError(IntParseError.InvalidCharacter, parseInt("abc", .{}));
+    try std.testing.expectError(IntParseError.EmptyInput, parseInt("   ", .{}));
+}
+
+test "validatePath - hidden files" {
+    try validatePath(".hidden", .{ .allow_hidden = true });
+    try std.testing.expectError(PathValidationError.HiddenNotAllowed, validatePath(".hidden", .{ .allow_hidden = false }));
+    try std.testing.expectError(PathValidationError.HiddenNotAllowed, validatePath("/path/.hidden/file", .{ .allow_hidden = false }));
+}
+
+test "validatePath - max length" {
+    var long_path: [5000]u8 = undefined;
+    @memset(&long_path, 'a');
+    try std.testing.expectError(PathValidationError.PathTooLong, validatePath(&long_path, .{ .max_length = 4096 }));
+}
+
+test "validatePath - relative not allowed" {
+    try std.testing.expectError(PathValidationError.RelativeNotAllowed, validatePath("relative/path", .{ .allow_relative = false }));
+}
+
+test "escapeYamlString - basic" {
+    const allocator = std.testing.allocator;
+
+    const input = "Hello \"World\"\nTab:\tEnd";
+    const escaped = try escapeYamlString(allocator, input);
+    defer allocator.free(escaped);
+
+    try std.testing.expectEqualStrings("Hello \\\"World\\\"\\nTab:\\tEnd", escaped);
+}
+
+test "YAML needs quoting - edge cases" {
+    try std.testing.expect(yamlNeedsQuoting(""));
+    try std.testing.expect(yamlNeedsQuoting("null"));
+    try std.testing.expect(yamlNeedsQuoting("~"));
+    try std.testing.expect(yamlNeedsQuoting("-dash"));
+    try std.testing.expect(yamlNeedsQuoting("?question"));
+    try std.testing.expect(yamlNeedsQuoting(" space"));
+    try std.testing.expect(yamlNeedsQuoting("3.14"));
+}

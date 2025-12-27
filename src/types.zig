@@ -237,3 +237,107 @@ test "VersionConstraint.caret" {
     try std.testing.expect(constraint.satisfies(Version{ .major = 1, .minor = 5, .patch = 0 }));
     try std.testing.expect(!constraint.satisfies(Version{ .major = 2, .minor = 0, .patch = 0 }));
 }
+
+test "VersionConstraint.range" {
+    // Range: >=1.0.0 and <2.0.0
+    const constraint = VersionConstraint{
+        .range = .{
+            .min = Version{ .major = 1, .minor = 0, .patch = 0 },
+            .max = Version{ .major = 2, .minor = 0, .patch = 0 },
+            .min_inclusive = true,
+            .max_inclusive = false,
+        },
+    };
+
+    try std.testing.expect(constraint.satisfies(Version{ .major = 1, .minor = 0, .patch = 0 })); // min inclusive
+    try std.testing.expect(constraint.satisfies(Version{ .major = 1, .minor = 5, .patch = 0 })); // middle
+    try std.testing.expect(constraint.satisfies(Version{ .major = 1, .minor = 99, .patch = 99 })); // near max
+    try std.testing.expect(!constraint.satisfies(Version{ .major = 0, .minor = 9, .patch = 0 })); // below min
+    try std.testing.expect(!constraint.satisfies(Version{ .major = 2, .minor = 0, .patch = 0 })); // max exclusive
+    try std.testing.expect(!constraint.satisfies(Version{ .major = 3, .minor = 0, .patch = 0 })); // above max
+}
+
+test "VersionConstraint.any" {
+    const constraint = VersionConstraint{ .any = {} };
+
+    try std.testing.expect(constraint.satisfies(Version{ .major = 0, .minor = 0, .patch = 0 }));
+    try std.testing.expect(constraint.satisfies(Version{ .major = 1, .minor = 2, .patch = 3 }));
+    try std.testing.expect(constraint.satisfies(Version{ .major = 999, .minor = 999, .patch = 999 }));
+}
+
+test "Version.parse edge cases" {
+    // Single digit version
+    const v1 = try Version.parse("5");
+    try std.testing.expectEqual(@as(u32, 5), v1.major);
+    try std.testing.expectEqual(@as(u32, 0), v1.minor);
+    try std.testing.expectEqual(@as(u32, 0), v1.patch);
+
+    // Two part version
+    const v2 = try Version.parse("2.3");
+    try std.testing.expectEqual(@as(u32, 2), v2.major);
+    try std.testing.expectEqual(@as(u32, 3), v2.minor);
+    try std.testing.expectEqual(@as(u32, 0), v2.patch);
+
+    // Large version numbers
+    const v3 = try Version.parse("100.200.300");
+    try std.testing.expectEqual(@as(u32, 100), v3.major);
+    try std.testing.expectEqual(@as(u32, 200), v3.minor);
+    try std.testing.expectEqual(@as(u32, 300), v3.patch);
+}
+
+test "Version.compare ordering" {
+    const versions = [_]Version{
+        .{ .major = 0, .minor = 0, .patch = 1 },
+        .{ .major = 0, .minor = 1, .patch = 0 },
+        .{ .major = 1, .minor = 0, .patch = 0 },
+        .{ .major = 1, .minor = 0, .patch = 1 },
+        .{ .major = 1, .minor = 1, .patch = 0 },
+        .{ .major = 2, .minor = 0, .patch = 0 },
+    };
+
+    // Each version should be less than the next
+    for (0..versions.len - 1) |i| {
+        try std.testing.expect(versions[i].lessThan(versions[i + 1]));
+        try std.testing.expect(versions[i + 1].greaterThan(versions[i]));
+        try std.testing.expect(!versions[i].equal(versions[i + 1]));
+    }
+}
+
+test "Dependency creation helpers" {
+    const required_dep = Dependency.required("openssl", .{ .caret = .{ .major = 1, .minor = 1, .patch = 0 } });
+    try std.testing.expect(!required_dep.optional);
+    try std.testing.expect(!required_dep.virtual);
+
+    const optional_dep = Dependency.optionalDep("gui", .any, "Optional GUI support");
+    try std.testing.expect(optional_dep.optional);
+    try std.testing.expectEqualStrings("Optional GUI support", optional_dep.description.?);
+
+    const virtual_dep = Dependency.virtualDep("database-driver");
+    try std.testing.expect(virtual_dep.virtual);
+
+    const feature_dep = Dependency.forFeature("ssl", .any, "tls");
+    try std.testing.expectEqualStrings("tls", feature_dep.feature.?);
+}
+
+test "VersionConstraint.tilde boundary" {
+    // ~1.2.0 means >=1.2.0 and <1.3.0
+    const constraint = VersionConstraint{ .tilde = .{ .major = 1, .minor = 2, .patch = 0 } };
+
+    try std.testing.expect(constraint.satisfies(Version{ .major = 1, .minor = 2, .patch = 0 }));
+    try std.testing.expect(constraint.satisfies(Version{ .major = 1, .minor = 2, .patch = 99 }));
+    try std.testing.expect(!constraint.satisfies(Version{ .major = 1, .minor = 1, .patch = 99 })); // below
+    try std.testing.expect(!constraint.satisfies(Version{ .major = 1, .minor = 3, .patch = 0 })); // above
+    try std.testing.expect(!constraint.satisfies(Version{ .major = 0, .minor = 2, .patch = 0 })); // wrong major
+    try std.testing.expect(!constraint.satisfies(Version{ .major = 2, .minor = 2, .patch = 0 })); // wrong major
+}
+
+test "VersionConstraint.caret boundary" {
+    // ^1.2.0 means >=1.2.0 and <2.0.0
+    const constraint = VersionConstraint{ .caret = .{ .major = 1, .minor = 2, .patch = 0 } };
+
+    try std.testing.expect(constraint.satisfies(Version{ .major = 1, .minor = 2, .patch = 0 }));
+    try std.testing.expect(constraint.satisfies(Version{ .major = 1, .minor = 99, .patch = 99 }));
+    try std.testing.expect(!constraint.satisfies(Version{ .major = 1, .minor = 1, .patch = 99 })); // below
+    try std.testing.expect(!constraint.satisfies(Version{ .major = 2, .minor = 0, .patch = 0 })); // above
+    try std.testing.expect(!constraint.satisfies(Version{ .major = 0, .minor = 2, .patch = 0 })); // wrong major
+}
