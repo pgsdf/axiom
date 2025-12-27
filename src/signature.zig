@@ -2579,16 +2579,17 @@ test "SECURITY: verification status - failures return null content" {
     try std.testing.expect(!invalid.isVerified());
 
     const untrusted = VerificationStatus{
-        .key_untrusted = .{ .key_id = "unknown-key", .reason = "not in store" },
+        .key_untrusted = .{ .key_id = "unknown-key", .signer_name = null, .key_exists = false },
     };
     try std.testing.expect(untrusted.getVerifiedContent() == null);
     try std.testing.expect(!untrusted.isVerified());
 
     const mismatch = VerificationStatus{
         .hash_mismatch = .{
+            .file_path = "/test/file",
             .expected_hash = [_]u8{0} ** 32,
             .actual_hash = [_]u8{1} ** 32,
-            .file_path = "/test/file",
+            .total_failed = 1,
         },
     };
     try std.testing.expect(mismatch.getVerifiedContent() == null);
