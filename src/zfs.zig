@@ -396,12 +396,14 @@ pub const ZfsHandle = struct {
             return ZfsError.InvalidDatasetName;
         }
 
-        // For recursive destruction (including snapshots), use direct execve
+        // For recursive destruction (including snapshots and clones), use direct execve
         // as the libzfs API doesn't reliably handle all cases
+        // -R = recursively destroy dependents (clones)
+        // -f = force unmount
         if (recursive) {
             // Use direct execve - no shell involved
             var child = std.process.Child.init(
-                &[_][]const u8{ "zfs", "destroy", "-rf", path },
+                &[_][]const u8{ "zfs", "destroy", "-Rf", path },
                 allocator,
             );
             child.stderr_behavior = .Pipe;
