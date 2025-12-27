@@ -294,7 +294,7 @@ pub const SetuidManager = struct {
     pub fn init(allocator: Allocator) Self {
         return .{
             .allocator = allocator,
-            .policy = SetuidPolicy.empty,
+            .policy = SetuidPolicy.init(),
             .audit_log_path = "/var/log/axiom-setuid.log",
         };
     }
@@ -580,7 +580,7 @@ test "AccessControl.checkStoreAccess" {
 
 test "SetuidPolicy.isAllowed" {
     const allocator = std.testing.allocator;
-    var policy = SetuidPolicy.empty;
+    var policy = SetuidPolicy.init();
     defer policy.deinit(allocator);
 
     try policy.allowed_binaries.append(try allocator.dupe(u8, "sudo"));

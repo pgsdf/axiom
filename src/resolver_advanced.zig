@@ -489,10 +489,10 @@ pub const AdvancedResolver = struct {
     pub fn init(allocator: Allocator, pkg_store: *PackageStore) AdvancedResolver {
         return .{
             .allocator = allocator,
-            .sat_resolver = SATResolver.empty,
-            .virtual_index = VirtualProviderIndex.empty,
-            .feature_resolver = FeatureResolver.empty,
-            .preference_handler = PreferenceHandler.empty,
+            .sat_resolver = SATResolver.init(allocator),
+            .virtual_index = VirtualProviderIndex.init(allocator),
+            .feature_resolver = FeatureResolver.init(allocator),
+            .preference_handler = PreferenceHandler.init(allocator),
             .pkg_store = pkg_store,
         };
     }

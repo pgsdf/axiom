@@ -730,7 +730,7 @@ pub const TestFixture = struct {
     pub fn init(allocator: Allocator) Self {
         return .{
             .allocator = allocator,
-            .mock_zfs = MockZfs.empty,
+            .mock_zfs = MockZfs.init(allocator),
             .temp_dir = null,
         };
     }
@@ -785,7 +785,7 @@ test "MockZfs.failure_injection" {
 
 test "TestResults.tracking" {
     const allocator = std.testing.allocator;
-    var results = TestResults.empty;
+    var results = TestResults.init(allocator);
     defer results.deinit();
 
     try results.addCase(.{

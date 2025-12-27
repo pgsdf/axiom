@@ -352,7 +352,7 @@ test "Config.initWithValues uses custom values" {
 
 test "Config.getPackagePath" {
     const allocator = std.testing.allocator;
-    var config = try Config.empty;
+    var config = try Config.init(allocator);
     defer config.deinit();
 
     const path = try config.getPackagePath(allocator, "bash");
