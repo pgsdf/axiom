@@ -121,7 +121,7 @@ pub const SecureTarExtractor = struct {
     /// Extract a tar archive from a file path
     pub fn extractFromPath(self: *SecureTarExtractor, tar_path: []const u8) !void {
         const file = std.fs.cwd().openFile(tar_path, .{}) catch |err| {
-            std.debug.print("SecureTarExtractor: Failed to open {s}: {}\n", .{ tar_path, err });
+            std.debug.print("SecureTarExtractor: Failed to open {s}: {any}\n", .{ tar_path, err });
             return ExtractionError.IoError;
         };
         defer file.close();
@@ -135,13 +135,13 @@ pub const SecureTarExtractor = struct {
         // Read magic bytes to detect compression type
         var magic: [6]u8 = undefined;
         const bytes_read = file.readAll(&magic) catch |err| {
-            std.debug.print("SecureTarExtractor: Failed to read magic bytes: {}\n", .{err});
+            std.debug.print("SecureTarExtractor: Failed to read magic bytes: {any}\n", .{err});
             return ExtractionError.IoError;
         };
 
         // Seek back to start
         file.seekTo(0) catch |err| {
-            std.debug.print("SecureTarExtractor: Failed to seek: {}\n", .{err});
+            std.debug.print("SecureTarExtractor: Failed to seek: {any}\n", .{err});
             return ExtractionError.IoError;
         };
 
@@ -247,14 +247,14 @@ pub const SecureTarExtractor = struct {
         // Ensure parent directory exists
         if (std.fs.path.dirname(full_path)) |parent| {
             std.fs.cwd().makePath(parent) catch |err| {
-                std.debug.print("SecureTarExtractor: Failed to create parent dir: {}\n", .{err});
+                std.debug.print("SecureTarExtractor: Failed to create parent dir: {any}\n", .{err});
                 return ExtractionError.IoError;
             };
         }
 
         // Create the file
         const file = std.fs.cwd().createFile(full_path, .{}) catch |err| {
-            std.debug.print("SecureTarExtractor: Failed to create file {s}: {}\n", .{ full_path, err });
+            std.debug.print("SecureTarExtractor: Failed to create file {s}: {any}\n", .{ full_path, err });
             return ExtractionError.IoError;
         };
         defer file.close();
@@ -262,7 +262,7 @@ pub const SecureTarExtractor = struct {
         // Write file contents directly using tar entry's writeAll method
         var write_buf: [4096]u8 = undefined;
         entry.writeAll(file.writer(&write_buf)) catch |err| {
-            std.debug.print("SecureTarExtractor: Write error: {}\n", .{err});
+            std.debug.print("SecureTarExtractor: Write error: {any}\n", .{err});
             return ExtractionError.IoError;
         };
         const bytes_written = entry.size;
@@ -279,7 +279,7 @@ pub const SecureTarExtractor = struct {
         std.fs.cwd().makePath(full_path) catch |err| {
             // Ignore if directory already exists
             if (err != error.PathAlreadyExists) {
-                std.debug.print("SecureTarExtractor: Failed to create directory {s}: {}\n", .{ full_path, err });
+                std.debug.print("SecureTarExtractor: Failed to create directory {s}: {any}\n", .{ full_path, err });
                 return ExtractionError.IoError;
             }
         };
@@ -311,14 +311,14 @@ pub const SecureTarExtractor = struct {
         // Ensure parent directory exists
         if (std.fs.path.dirname(full_path)) |parent| {
             std.fs.cwd().makePath(parent) catch |err| {
-                std.debug.print("SecureTarExtractor: Failed to create parent dir: {}\n", .{err});
+                std.debug.print("SecureTarExtractor: Failed to create parent dir: {any}\n", .{err});
                 return ExtractionError.IoError;
             };
         }
 
         // Create symlink
         std.posix.symlink(link_target, full_path) catch |err| {
-            std.debug.print("SecureTarExtractor: Failed to create symlink: {}\n", .{err});
+            std.debug.print("SecureTarExtractor: Failed to create symlink: {any}\n", .{err});
             return ExtractionError.IoError;
         };
 
@@ -548,7 +548,7 @@ pub const SecureTarExtractor = struct {
         const fd = std.fs.cwd().openFile(path, .{ .mode = .read_only }) catch return;
         defer fd.close();
         fd.chmod(@truncate(mode)) catch |err| {
-            std.debug.print("SecureTarExtractor: Failed to set permissions on {s}: {}\n", .{ path, err });
+            std.debug.print("SecureTarExtractor: Failed to set permissions on {s}: {any}\n", .{ path, err });
             return;
         };
 

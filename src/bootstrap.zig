@@ -220,7 +220,7 @@ pub const BootstrapManager = struct {
                     .dry_run = options.dry_run,
                 },
             ) catch |err| {
-                std.debug.print("    Failed: {}\n", .{err});
+                std.debug.print("    Failed: {any}\n", .{err});
                 failed += 1;
                 continue;
             };

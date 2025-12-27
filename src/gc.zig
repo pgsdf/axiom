@@ -356,7 +356,7 @@ pub const GarbageCollector = struct {
                                 tl.abort(seq, .gc_remove) catch {};
                             }
                         }
-                        std.debug.print("    Warning: Failed to remove {s}: {}\n", .{ pkg.name, err });
+                        std.debug.print("    Warning: Failed to remove {s}: {any}\n", .{ pkg.name, err });
                     }
                 }
 
@@ -598,7 +598,7 @@ pub const GarbageCollector = struct {
             self.allocator,
             self.store.paths.store_root,
         ) catch |err| {
-            std.debug.print("  Warning: Could not get store mountpoint: {}\n", .{err});
+            std.debug.print("  Warning: Could not get store mountpoint: {any}\n", .{err});
             return false;
         };
         defer self.allocator.free(store_mountpoint);
@@ -612,7 +612,7 @@ pub const GarbageCollector = struct {
             .check_references = true,
             .repair_mode = false,
         }) catch |err| {
-            std.debug.print("  Warning: Integrity verification failed: {}\n", .{err});
+            std.debug.print("  Warning: Integrity verification failed: {any}\n", .{err});
             return false;
         };
         defer report.deinit();
