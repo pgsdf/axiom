@@ -58,7 +58,7 @@ const ProgressIndicator = struct {
     fn progressThread(self: *ProgressIndicator) void {
         var elapsed: u64 = 0;
         while (!self.stop_flag.load(.acquire)) {
-            std.time.sleep(1000 * std.time.ns_per_ms); // Sleep 1 second
+            std.Thread.sleep(1000 * std.time.ns_per_ms); // Sleep 1 second
             elapsed += 1000;
             if (elapsed >= self.interval_ms) {
                 std.debug.print(".", .{});
@@ -1746,7 +1746,7 @@ pub const PortsMigrator = struct {
 
     /// Fix broken packages by destroying and rebuilding them
     pub fn fixBrokenPackages(self: *PortsMigrator) !usize {
-        const broken = try self.findBrokenPackages();
+        var broken = try self.findBrokenPackages();
         defer {
             for (broken.items) |b| b.deinit(self.allocator);
             broken.deinit(self.allocator);

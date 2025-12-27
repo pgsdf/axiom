@@ -4652,7 +4652,7 @@ pub const CLI = struct {
         });
         std.debug.print("Format: {s}\n", .{@tagName(format)});
         std.debug.print("Output: {s}\n", .{final_output});
-        std.debug.print("Include closure: {}\n\n", .{include_closure});
+        std.debug.print("Include closure: {any}\n\n", .{include_closure});
 
         // Build package ID
         const pkg_id = types.PackageId{
@@ -6065,7 +6065,7 @@ pub const CLI = struct {
                     fail_count += 1;
                 },
                 else => {
-                    std.debug.print("  ? Unexpected status: {}\n", .{result.status});
+                    std.debug.print("  ? Unexpected status: {any}\n", .{result.status});
                     fail_count += 1;
                 },
             }
