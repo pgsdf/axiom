@@ -831,3 +831,183 @@ test "containsEncodedTraversal.detects_patterns" {
     try std.testing.expect(!containsEncodedTraversal("my-package_1.0"));
     try std.testing.expect(!containsEncodedTraversal("%20space")); // Encoded space is OK
 }
+
+// ============================================================================
+// SECURITY TESTS: Path Traversal Attack Prevention
+// ============================================================================
+
+test "SECURITY: path traversal - basic attacks" {
+    var extractor = SecureTarExtractor.init(
+        std.testing.allocator,
+        "/tmp/test",
+        .{},
+    );
+
+    // Classic path traversal attacks
+    try std.testing.expectError(ExtractionError.PathTraversal, extractor.validatePath("../etc/passwd"));
+    try std.testing.expectError(ExtractionError.PathTraversal, extractor.validatePath("../../etc/shadow"));
+    try std.testing.expectError(ExtractionError.PathTraversal, extractor.validatePath("foo/../../../etc/passwd"));
+    try std.testing.expectError(ExtractionError.PathTraversal, extractor.validatePath("a/b/c/../../../../root/.ssh/id_rsa"));
+}
+
+test "SECURITY: path traversal - hidden in deep paths" {
+    var extractor = SecureTarExtractor.init(
+        std.testing.allocator,
+        "/tmp/test",
+        .{},
+    );
+
+    // Traversal hidden deep in path
+    try std.testing.expectError(ExtractionError.PathTraversal, extractor.validatePath("usr/share/../../../../../../etc/passwd"));
+    try std.testing.expectError(ExtractionError.PathTraversal, extractor.validatePath("opt/pkg/lib/bin/../../../../../../../tmp/evil"));
+}
+
+test "SECURITY: path traversal - double-encoded attacks" {
+    var extractor = SecureTarExtractor.init(
+        std.testing.allocator,
+        "/tmp/test",
+        .{},
+    );
+
+    // Double URL-encoded attacks
+    try std.testing.expectError(ExtractionError.EncodedSequence, extractor.validatePath("%252e%252e/etc/passwd")); // %25 = %
+    try std.testing.expectError(ExtractionError.EncodedSequence, extractor.validatePath("foo/%252e%252e/bar"));
+}
+
+test "SECURITY: path traversal - mixed encoding attacks" {
+    var extractor = SecureTarExtractor.init(
+        std.testing.allocator,
+        "/tmp/test",
+        .{},
+    );
+
+    // Mixed plain and encoded
+    try std.testing.expectError(ExtractionError.EncodedSequence, extractor.validatePath("..%2f..%2fetc/passwd"));
+    try std.testing.expectError(ExtractionError.EncodedSequence, extractor.validatePath(".%2e/.%2e/etc/passwd"));
+}
+
+test "SECURITY: NUL byte injection attacks" {
+    var extractor = SecureTarExtractor.init(
+        std.testing.allocator,
+        "/tmp/test",
+        .{},
+    );
+
+    // NUL byte truncation attacks
+    const nul_path1 = "safe.txt\x00../../etc/passwd";
+    try std.testing.expectError(ExtractionError.InvalidFilename, extractor.validatePath(nul_path1));
+
+    const nul_path2 = "foo/bar\x00.txt";
+    try std.testing.expectError(ExtractionError.InvalidFilename, extractor.validatePath(nul_path2));
+}
+
+test "SECURITY: control character injection" {
+    var extractor = SecureTarExtractor.init(
+        std.testing.allocator,
+        "/tmp/test",
+        .{},
+    );
+
+    // Various control characters that could confuse parsers
+    const ctrl_a = "foo\x01bar";
+    try std.testing.expectError(ExtractionError.InvalidFilename, extractor.validatePath(ctrl_a));
+
+    const bell = "path\x07name";
+    try std.testing.expectError(ExtractionError.InvalidFilename, extractor.validatePath(bell));
+
+    const escape = "file\x1bname";
+    try std.testing.expectError(ExtractionError.InvalidFilename, extractor.validatePath(escape));
+}
+
+test "SECURITY: absolute path attacks" {
+    var extractor = SecureTarExtractor.init(
+        std.testing.allocator,
+        "/tmp/test",
+        .{ .allow_absolute_paths = false },
+    );
+
+    // Absolute path attempts
+    try std.testing.expectError(ExtractionError.AbsolutePath, extractor.validatePath("/etc/passwd"));
+    try std.testing.expectError(ExtractionError.AbsolutePath, extractor.validatePath("/root/.ssh/authorized_keys"));
+    try std.testing.expectError(ExtractionError.AbsolutePath, extractor.validatePath("//etc/passwd")); // Double slash
+}
+
+test "SECURITY: symlink escape attacks" {
+    var extractor = SecureTarExtractor.init(
+        std.testing.allocator,
+        "/tmp/test",
+        .{ .allow_absolute_paths = false },
+    );
+
+    // Symlink pointing outside extraction root
+    try std.testing.expectError(ExtractionError.SymlinkEscape, extractor.validateSymlinkTarget("link", "../../../etc/passwd"));
+    try std.testing.expectError(ExtractionError.SymlinkEscape, extractor.validateSymlinkTarget("a/b/link", "../../../../etc/passwd"));
+
+    // Absolute symlink target
+    try std.testing.expectError(ExtractionError.SymlinkEscape, extractor.validateSymlinkTarget("link", "/etc/passwd"));
+}
+
+test "SECURITY: symlink chained escape" {
+    var extractor = SecureTarExtractor.init(
+        std.testing.allocator,
+        "/tmp/test",
+        .{ .allow_absolute_paths = false },
+    );
+
+    // Symlink that would escape via multiple parent refs
+    try std.testing.expectError(ExtractionError.SymlinkEscape, extractor.validateSymlinkTarget("a/b/c/d/link", "../../../../../../../../../etc/passwd"));
+}
+
+test "SECURITY: Windows path separator bypass" {
+    var extractor = SecureTarExtractor.init(
+        std.testing.allocator,
+        "/tmp/test",
+        .{},
+    );
+
+    // Windows-style path separators used to bypass Unix checks
+    try std.testing.expectError(ExtractionError.BackslashInPath, extractor.validatePath("..\\..\\etc\\passwd"));
+    try std.testing.expectError(ExtractionError.BackslashInPath, extractor.validatePath("foo\\..\\..\\..\\root"));
+
+    // Mixed separators
+    try std.testing.expectError(ExtractionError.BackslashInPath, extractor.validatePath("foo/bar\\..\\..\\etc"));
+}
+
+test "SECURITY: path length attack" {
+    var extractor = SecureTarExtractor.init(
+        std.testing.allocator,
+        "/tmp/test",
+        .{ .max_path_length = 256 },
+    );
+
+    // Create path exceeding max length (could cause buffer overflows in vulnerable parsers)
+    var long_path: [300]u8 = undefined;
+    @memset(&long_path, 'a');
+    try std.testing.expectError(ExtractionError.PathTooLong, extractor.validatePath(&long_path));
+}
+
+test "SECURITY: valid paths pass validation" {
+    var extractor = SecureTarExtractor.init(
+        std.testing.allocator,
+        "/tmp/test",
+        .{},
+    );
+
+    // These should all succeed
+    const valid1 = try extractor.validatePath("usr/bin/bash");
+    defer std.testing.allocator.free(valid1);
+    try std.testing.expectEqualStrings("usr/bin/bash", valid1);
+
+    const valid2 = try extractor.validatePath("opt/package-1.0/lib/libfoo.so");
+    defer std.testing.allocator.free(valid2);
+    try std.testing.expectEqualStrings("opt/package-1.0/lib/libfoo.so", valid2);
+
+    // Paths with dots but not traversal
+    const valid3 = try extractor.validatePath("file.txt");
+    defer std.testing.allocator.free(valid3);
+    try std.testing.expectEqualStrings("file.txt", valid3);
+
+    const valid4 = try extractor.validatePath(".hidden/config");
+    defer std.testing.allocator.free(valid4);
+    try std.testing.expectEqualStrings(".hidden/config", valid4);
+}

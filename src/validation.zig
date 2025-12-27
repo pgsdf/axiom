@@ -947,3 +947,152 @@ test "YAML needs quoting - edge cases" {
     try std.testing.expect(yamlNeedsQuoting(" space"));
     try std.testing.expect(yamlNeedsQuoting("3.14"));
 }
+
+// ============================================================================
+// SECURITY TESTS: Input Validation & Sanitization
+// ============================================================================
+
+test "SECURITY: URL validation - NUL byte injection" {
+    // NUL bytes in URLs could truncate validation
+    const nul_url = "https://example.com\x00evil.com";
+    const result = UrlValidator.validate(nul_url);
+    try std.testing.expect(!result.valid);
+}
+
+test "SECURITY: URL validation - control characters" {
+    // Control characters could be used to confuse parsers
+    const ctrl_url = "https://example\x01.com";
+    const result = UrlValidator.validate(ctrl_url);
+    try std.testing.expect(!result.valid);
+
+    // Newline in URL
+    const newline_url = "https://example.com\nHost: evil.com";
+    const result2 = UrlValidator.validate(newline_url);
+    try std.testing.expect(!result2.valid);
+}
+
+test "SECURITY: URL validation - scheme enforcement" {
+    // Only allow safe schemes
+    const http = UrlValidator.validate("http://example.com");
+    try std.testing.expect(http.valid);
+
+    const https = UrlValidator.validate("https://example.com");
+    try std.testing.expect(https.valid);
+
+    const file = UrlValidator.validate("file:///path/to/file");
+    try std.testing.expect(file.valid);
+
+    // Dangerous schemes should be handled appropriately
+    const javascript = UrlValidator.validate("javascript:alert(1)");
+    try std.testing.expectEqual(UrlValidator.Scheme.unknown, javascript.scheme);
+}
+
+test "SECURITY: URL validation - SSRF prevention" {
+    // URLs that could be used for SSRF attacks
+    const localhost = UrlValidator.validate("http://localhost/admin");
+    try std.testing.expect(localhost.valid); // Valid URL, SSRF is handled at higher level
+    try std.testing.expectEqualStrings("localhost", localhost.host.?);
+
+    const internal_ip = UrlValidator.validate("http://127.0.0.1/admin");
+    try std.testing.expect(internal_ip.valid);
+    try std.testing.expectEqualStrings("127.0.0.1", internal_ip.host.?);
+
+    // IPv6 localhost
+    const ipv6_local = UrlValidator.validate("http://[::1]/admin");
+    try std.testing.expect(ipv6_local.valid);
+}
+
+test "SECURITY: path validation - NUL byte injection" {
+    const nul_path = "/safe/path\x00/../../etc/passwd";
+    try std.testing.expectError(PathValidationError.NulInPath, validatePath(nul_path, .{}));
+}
+
+test "SECURITY: path validation - control characters" {
+    const ctrl_path = "/path/with\x01control";
+    try std.testing.expectError(PathValidationError.ControlChars, validatePath(ctrl_path, .{}));
+
+    const escape_path = "/path/with\x1bescape";
+    try std.testing.expectError(PathValidationError.ControlChars, validatePath(escape_path, .{}));
+}
+
+test "SECURITY: path validation - traversal attacks" {
+    // Basic traversal
+    try std.testing.expectError(PathValidationError.TraversalAttempt, validatePath("/../etc/passwd", .{}));
+    try std.testing.expectError(PathValidationError.TraversalAttempt, validatePath("/foo/../../etc/passwd", .{}));
+
+    // Traversal with more hops than depth
+    try std.testing.expectError(PathValidationError.TraversalAttempt, validatePath("/a/b/../../../etc/passwd", .{}));
+}
+
+test "SECURITY: path validation - encoded traversal" {
+    // These would be decoded by web servers but we check the raw path
+    const encoded = "/path/%2e%2e/etc/passwd";
+    // If the validation sees %2e%2e literally it should pass (not decoded)
+    // The actual decoding happens elsewhere
+    try validatePath(encoded, .{ .allow_relative = true });
+}
+
+test "SECURITY: size parsing - overflow prevention" {
+    // Large values that could overflow
+    try std.testing.expectError(SizeParseError.Overflow, parseSize("999999999999999999999T", .{}));
+}
+
+test "SECURITY: integer parsing - bounds enforcement" {
+    // Test min/max bounds are enforced
+    try std.testing.expectError(IntParseError.BelowMinimum, parseInt("-999999999", .{ .min = 0 }));
+    try std.testing.expectError(IntParseError.AboveMaximum, parseInt("999999999", .{ .max = 100 }));
+}
+
+test "SECURITY: YAML injection prevention" {
+    // Values that could be interpreted as YAML special values
+    try std.testing.expect(yamlNeedsQuoting("yes"));
+    try std.testing.expect(yamlNeedsQuoting("no"));
+    try std.testing.expect(yamlNeedsQuoting("on"));
+    try std.testing.expect(yamlNeedsQuoting("off"));
+    try std.testing.expect(yamlNeedsQuoting("true"));
+    try std.testing.expect(yamlNeedsQuoting("false"));
+    try std.testing.expect(yamlNeedsQuoting("null"));
+    try std.testing.expect(yamlNeedsQuoting("~"));
+    try std.testing.expect(yamlNeedsQuoting(".inf"));
+    try std.testing.expect(yamlNeedsQuoting(".nan"));
+}
+
+test "SECURITY: YAML multiline injection" {
+    // Newlines could inject additional YAML
+    try std.testing.expect(yamlNeedsQuoting("value\nkey: injected"));
+    try std.testing.expect(yamlNeedsQuoting("value\rkey: injected"));
+
+    // Escape string with dangerous content
+    const allocator = std.testing.allocator;
+    const escaped = try escapeYamlString(allocator, "value\ninjected: true");
+    defer allocator.free(escaped);
+    try std.testing.expectEqualStrings("value\\ninjected: true", escaped);
+}
+
+test "SECURITY: timestamp validation - future dates" {
+    // Extremely far future timestamps could indicate manipulation
+    try std.testing.expectError(TimestampParseError.AboveMaximum, parseTimestamp("9999999999999", .{ .max = 4102444800 })); // Max year 2100
+}
+
+test "SECURITY: timestamp validation - negative epoch" {
+    // Negative timestamps (before 1970) should be rejected by default
+    try std.testing.expectError(TimestampParseError.NegativeNotAllowed, parseTimestamp("-1", .{}));
+
+    // Unless explicitly allowed
+    const result = try parseTimestamp("-1", .{ .allow_negative = true, .min = -1000 });
+    try std.testing.expectEqual(@as(i64, -1), result);
+}
+
+test "SECURITY: package name validation edge cases" {
+    // Valid package names
+    try std.testing.expect(isValidPackageName("bash"));
+    try std.testing.expect(isValidPackageName("lib-ssl"));
+    try std.testing.expect(isValidPackageName("pkg_name"));
+
+    // Invalid - could enable path traversal or command injection
+    try std.testing.expect(!isValidPackageName(""));
+    try std.testing.expect(!isValidPackageName("../etc/passwd"));
+    try std.testing.expect(!isValidPackageName("pkg;rm -rf /"));
+    try std.testing.expect(!isValidPackageName("pkg|cat /etc/shadow"));
+    try std.testing.expect(!isValidPackageName("pkg`whoami`"));
+}
