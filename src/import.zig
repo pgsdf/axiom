@@ -449,7 +449,7 @@ pub const Importer = struct {
                         return ImportError.InvalidArchive;
                     },
                     else => {
-                        std.debug.print("Error extracting tarball: {}\n", .{err});
+                        std.debug.print("Error extracting tarball: {any}\n", .{err});
                         return ImportError.ExtractionFailed;
                     },
                 }

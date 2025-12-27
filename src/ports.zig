@@ -1241,7 +1241,7 @@ pub const PortsMigrator = struct {
             for (self.bootstrap_symlinks.items) |symlink_path| {
                 // Bootstrap symlinks are directories, use deleteTree
                 std.fs.cwd().deleteTree(symlink_path) catch |err| {
-                    std.debug.print("    [CLEANUP] Warning: could not remove bootstrap symlink {s}: {}\n", .{ symlink_path, err });
+                    std.debug.print("    [CLEANUP] Warning: could not remove bootstrap symlink {s}: {any}\n", .{ symlink_path, err });
                 };
                 self.allocator.free(symlink_path);
             }
@@ -1250,7 +1250,7 @@ pub const PortsMigrator = struct {
             // Clean up system share symlinks (before sysroot is deleted)
             for (self.system_share_symlinks.items) |symlink_path| {
                 std.fs.cwd().deleteFile(symlink_path) catch |err| {
-                    std.debug.print("    [CLEANUP] Warning: could not remove share symlink {s}: {}\n", .{ symlink_path, err });
+                    std.debug.print("    [CLEANUP] Warning: could not remove share symlink {s}: {any}\n", .{ symlink_path, err });
                 };
                 self.allocator.free(symlink_path);
             }
@@ -1350,7 +1350,7 @@ pub const PortsMigrator = struct {
 
             // Create symlink from sysroot to system path
             std.posix.symlink(system_path, sysroot_inc_path) catch |err| {
-                std.debug.print("    [SYSROOT] Warning: could not symlink {s}: {}\n", .{ inc_dir, err });
+                std.debug.print("    [SYSROOT] Warning: could not symlink {s}: {any}\n", .{ inc_dir, err });
             };
         }
 
@@ -1365,7 +1365,7 @@ pub const PortsMigrator = struct {
             defer self.allocator.free(sysroot_dbus_lib_include);
 
             std.posix.symlink(dbus_lib_include, sysroot_dbus_lib_include) catch |err| {
-                std.debug.print("    [SYSROOT] Warning: could not symlink dbus lib include: {}\n", .{err});
+                std.debug.print("    [SYSROOT] Warning: could not symlink dbus lib include: {any}\n", .{err});
             };
         } else |_| {
             // dbus not installed or path doesn't exist, skip
@@ -1426,13 +1426,13 @@ pub const PortsMigrator = struct {
     /// Preserves the directory structure from source
     fn linkTreeContents(self: *PortsMigrator, src_root: []const u8, dst_root: []const u8) !void {
         var src_dir = std.fs.cwd().openDir(src_root, .{ .iterate = true }) catch |err| {
-            std.debug.print("    [SYSROOT] Warning: could not open {s}: {}\n", .{ src_root, err });
+            std.debug.print("    [SYSROOT] Warning: could not open {s}: {any}\n", .{ src_root, err });
             return; // Source doesn't exist, skip
         };
         defer src_dir.close();
 
         var walker = src_dir.walk(self.allocator) catch |err| {
-            std.debug.print("    [SYSROOT] Warning: could not walk {s}: {}\n", .{ src_root, err });
+            std.debug.print("    [SYSROOT] Warning: could not walk {s}: {any}\n", .{ src_root, err });
             return;
         };
         defer walker.deinit();
@@ -1468,14 +1468,14 @@ pub const PortsMigrator = struct {
                         if (is_bin) {
                             // Copy executables so $0 points to sysroot path
                             std.fs.copyFileAbsolute(src_path, dst_path, .{}) catch |err| {
-                                std.debug.print("    [SYSROOT] Warning: could not copy {s}: {}\n", .{ entry.path, err });
+                                std.debug.print("    [SYSROOT] Warning: could not copy {s}: {any}\n", .{ entry.path, err });
                             };
                             file_count += 1;
                         } else {
                             // Symlink libraries and other files
                             std.fs.cwd().symLink(src_path, dst_path, .{}) catch |err| {
                                 if (self.options.verbose) {
-                                    std.debug.print("    [SYSROOT] Warning: could not symlink {s}: {}\n", .{ entry.path, err });
+                                    std.debug.print("    [SYSROOT] Warning: could not symlink {s}: {any}\n", .{ entry.path, err });
                                 }
                             };
                             file_count += 1;
@@ -1899,13 +1899,13 @@ pub const PortsMigrator = struct {
                     // Read the symlink target
                     var target_buf: [std.fs.max_path_bytes]u8 = undefined;
                     const target = std.fs.cwd().readLink(source_path, &target_buf) catch |err| {
-                        std.debug.print("    [SYSROOT] Warning: could not read symlink {s}: {}\n", .{ entry.name, err });
+                        std.debug.print("    [SYSROOT] Warning: could not read symlink {s}: {any}\n", .{ entry.name, err });
                         continue;
                     };
 
                     // Create symlink with same target
                     std.fs.cwd().symLink(target, dest_path, .{}) catch |err| {
-                        std.debug.print("    [SYSROOT] Warning: could not create symlink {s}: {}\n", .{ entry.name, err });
+                        std.debug.print("    [SYSROOT] Warning: could not create symlink {s}: {any}\n", .{ entry.name, err });
                     };
                 };
             } else {
@@ -1915,13 +1915,13 @@ pub const PortsMigrator = struct {
                     if (copy_mode) {
                         // Copy file for bin/ directories (preserves executable permissions)
                         std.fs.copyFileAbsolute(source_path, dest_path, .{}) catch |err| {
-                            std.debug.print("    [SYSROOT] Warning: could not copy {s}: {}\n", .{ entry.name, err });
+                            std.debug.print("    [SYSROOT] Warning: could not copy {s}: {any}\n", .{ entry.name, err });
                         };
                     } else {
                         // Symlink for lib/, include/, share/, etc.
                         std.fs.cwd().symLink(source_path, dest_path, .{}) catch |err| {
                             if (self.options.verbose) {
-                                std.debug.print("    [SYSROOT] Warning: could not symlink {s}: {}\n", .{ entry.name, err });
+                                std.debug.print("    [SYSROOT] Warning: could not symlink {s}: {any}\n", .{ entry.name, err });
                             }
                         };
                     }
@@ -2043,7 +2043,7 @@ pub const PortsMigrator = struct {
                     // Alias doesn't exist, create symlink
                     // Use relative symlink so it works regardless of sysroot location
                     std.fs.cwd().symLink(alias_info.target, alias_path, .{}) catch |err| {
-                        std.debug.print("    [SYSROOT] Warning: could not create alias {s} -> {s}: {}\n", .{ alias_info.alias, alias_info.target, err });
+                        std.debug.print("    [SYSROOT] Warning: could not create alias {s} -> {s}: {any}\n", .{ alias_info.alias, alias_info.target, err });
                         continue;
                     };
                     std.debug.print("    [SYSROOT] Created alias: {s} -> {s}\n", .{ alias_info.alias, alias_info.target });
@@ -2070,7 +2070,7 @@ pub const PortsMigrator = struct {
             std.fs.cwd().access(alias_path, .{}) catch {
                 // Alias doesn't exist, create symlink
                 std.fs.cwd().symLink(alias_info.target, alias_path, .{}) catch |err| {
-                    std.debug.print("    [SYSROOT] Warning: could not create coreutils alias {s} -> {s}: {}\n", .{ alias_info.alias, alias_info.target, err });
+                    std.debug.print("    [SYSROOT] Warning: could not create coreutils alias {s} -> {s}: {any}\n", .{ alias_info.alias, alias_info.target, err });
                     continue;
                 };
                 std.debug.print("    [SYSROOT] Created coreutils alias: {s} -> {s}\n", .{ alias_info.alias, alias_info.target });
@@ -2100,7 +2100,7 @@ pub const PortsMigrator = struct {
             std.fs.cwd().access(alias_path, .{}) catch {
                 // Alias doesn't exist, create symlink
                 std.fs.cwd().symLink(alias_info.target, alias_path, .{}) catch |err| {
-                    std.debug.print("    [SYSROOT] Warning: could not create python alias {s} -> {s}: {}\n", .{ alias_info.alias, alias_info.target, err });
+                    std.debug.print("    [SYSROOT] Warning: could not create python alias {s} -> {s}: {any}\n", .{ alias_info.alias, alias_info.target, err });
                     continue;
                 };
                 std.debug.print("    [SYSROOT] Created python alias: {s} -> {s}\n", .{ alias_info.alias, alias_info.target });
@@ -2136,7 +2136,7 @@ pub const PortsMigrator = struct {
         };
 
         var dir = std.fs.cwd().openDir(bin_dir, .{ .iterate = true }) catch |err| {
-            std.debug.print("    [DEBUG] createAutotoolsWrappers: could not open bin dir: {}\n", .{err});
+            std.debug.print("    [DEBUG] createAutotoolsWrappers: could not open bin dir: {any}\n", .{err});
             return; // bin dir doesn't exist, nothing to do
         };
         defer dir.close();
@@ -2197,7 +2197,7 @@ pub const PortsMigrator = struct {
 
                     // Create symlink: autoconf -> autoconf-2.72
                     std.fs.cwd().symLink(target, wrapper_path, .{}) catch |err| {
-                        std.debug.print("    [SYSROOT] Warning: could not create autotools wrapper {s} -> {s}: {}\n", .{ tool, target, err });
+                        std.debug.print("    [SYSROOT] Warning: could not create autotools wrapper {s} -> {s}: {any}\n", .{ tool, target, err });
                         continue;
                     };
                     std.debug.print("    [SYSROOT] Created autotools wrapper: {s} -> {s}\n", .{ tool, target });
@@ -2308,7 +2308,7 @@ pub const PortsMigrator = struct {
         // Get the ROOT store mountpoint (e.g., zroot/axiom/store/pkg -> /axiom/store/pkg)
         // This is more reliable than querying child datasets which may not have explicit mountpoints
         const store_mountpoint = store.zfs_handle.getMountpoint(self.allocator, store.paths.store_root) catch |err| {
-            std.debug.print("      [DEBUG findPkg] getMountpoint for store root failed: {}\n", .{err});
+            std.debug.print("      [DEBUG findPkg] getMountpoint for store root failed: {any}\n", .{err});
             return null;
         };
         defer self.allocator.free(store_mountpoint);
@@ -2326,7 +2326,7 @@ pub const PortsMigrator = struct {
 
         // Open the package name directory
         var pkg_dir = std.fs.cwd().openDir(pkg_dir_path, .{ .iterate = true }) catch |err| {
-            std.debug.print("      [DEBUG findPkg] openDir failed: {}\n", .{err});
+            std.debug.print("      [DEBUG findPkg] openDir failed: {any}\n", .{err});
             return null;
         };
         defer pkg_dir.close();
@@ -2779,7 +2779,7 @@ pub const PortsMigrator = struct {
                 defer self.allocator.free(bootstrap_libdata_pkgconfig);
 
                 std.fs.cwd().makePath(bootstrap_libdata_pkgconfig) catch |err| {
-                    std.debug.print("    [BOOTSTRAP] Warning: could not create bootstrap dir {s}: {}\n", .{ bootstrap_libdata_pkgconfig, err });
+                    std.debug.print("    [BOOTSTRAP] Warning: could not create bootstrap dir {s}: {any}\n", .{ bootstrap_libdata_pkgconfig, err });
                     self.allocator.free(bootstrap_path);
                     continue;
                 };
@@ -2805,7 +2805,7 @@ pub const PortsMigrator = struct {
                         defer self.allocator.free(dest_file);
 
                         std.fs.cwd().symLink(src_file, dest_file, .{}) catch |err| {
-                            std.debug.print("    [BOOTSTRAP] Warning: could not symlink {s}: {}\n", .{ entry.name, err });
+                            std.debug.print("    [BOOTSTRAP] Warning: could not symlink {s}: {any}\n", .{ entry.name, err });
                         };
                     }
 
@@ -2834,7 +2834,7 @@ pub const PortsMigrator = struct {
 
                     // Create a minimal placeholder .pc file
                     const placeholder_file = std.fs.cwd().createFile(placeholder_path, .{}) catch |err| {
-                        std.debug.print("    [BOOTSTRAP] Warning: could not create placeholder: {}\n", .{err});
+                        std.debug.print("    [BOOTSTRAP] Warning: could not create placeholder: {any}\n", .{err});
                         self.allocator.free(bootstrap_path);
                         continue;
                     };
@@ -2872,7 +2872,7 @@ pub const PortsMigrator = struct {
                                 \\
                             ) catch {};
                         } else |err| {
-                            std.debug.print("    [BOOTSTRAP] Warning: could not create stub g-ir-scanner: {}\n", .{err});
+                            std.debug.print("    [BOOTSTRAP] Warning: could not create stub g-ir-scanner: {any}\n", .{err});
                         }
 
                         // Create stub g-ir-compiler
@@ -2955,7 +2955,7 @@ pub const PortsMigrator = struct {
 
         // Scan sysroot/share for subdirectories and create symlinks in /usr/local/share/
         var share_dir = std.fs.cwd().openDir(sysroot_share, .{ .iterate = true }) catch |err| {
-            std.debug.print("    [DEBUG] Could not open sysroot share dir: {}\n", .{err});
+            std.debug.print("    [DEBUG] Could not open sysroot share dir: {any}\n", .{err});
             return BuildEnvironment{
                 .sysroot = sysroot,
                 .path = path,
@@ -2989,7 +2989,7 @@ pub const PortsMigrator = struct {
             std.fs.cwd().access(system_subdir, .{}) catch {
                 // Doesn't exist, create symlink
                 std.fs.cwd().symLink(sysroot_subdir, system_subdir, .{ .is_directory = true }) catch |err| {
-                    std.debug.print("    [SYSROOT] Warning: could not create share symlink {s} -> {s}: {}\n", .{ system_subdir, sysroot_subdir, err });
+                    std.debug.print("    [SYSROOT] Warning: could not create share symlink {s} -> {s}: {any}\n", .{ system_subdir, sysroot_subdir, err });
                     self.allocator.free(system_subdir);
                     continue;
                 };
@@ -3041,7 +3041,7 @@ pub const PortsMigrator = struct {
             // Open lib directory and scan for python* subdirectories
             std.debug.print("    [DEBUG] buildPythonPath: scanning {s}\n", .{search_dir});
             var dir = std.fs.cwd().openDir(search_dir, .{ .iterate = true }) catch |err| {
-                std.debug.print("    [DEBUG] buildPythonPath: {s} error: {}\n", .{ search_dir, err });
+                std.debug.print("    [DEBUG] buildPythonPath: {s} error: {any}\n", .{ search_dir, err });
                 if (err == error.FileNotFound) continue;
                 if (err == error.AccessDenied) continue;
                 return err;
@@ -3121,7 +3121,7 @@ pub const PortsMigrator = struct {
 
         // Create bootstrap directory
         std.fs.cwd().makePath(bootstrap_dir) catch |err| {
-            std.debug.print("    [BOOTSTRAP] Failed to create bootstrap dir: {}\n", .{err});
+            std.debug.print("    [BOOTSTRAP] Failed to create bootstrap dir: {any}\n", .{err});
             return null;
         };
 
@@ -3194,7 +3194,7 @@ pub const PortsMigrator = struct {
                 .allocator = self.allocator,
                 .argv = &[_][]const u8{ "unzip", "-o", "-q", wheel_path, "-d", bootstrap_dir },
             }) catch |err| {
-                std.debug.print("    [BOOTSTRAP] unzip failed for {s}: {}\n", .{ mod.name, err });
+                std.debug.print("    [BOOTSTRAP] unzip failed for {s}: {any}\n", .{ mod.name, err });
                 continue;
             };
             defer self.allocator.free(unzip_result.stdout);

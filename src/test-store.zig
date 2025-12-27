@@ -14,7 +14,7 @@ pub fn main() !void {
 
     // Initialize ZFS
     var zfs_handle = zfs.ZfsHandle.init() catch |err| {
-        std.debug.print("Failed to initialize ZFS: {}\n", .{err});
+        std.debug.print("Failed to initialize ZFS: {any}\n", .{err});
         std.debug.print("This test requires root privileges.\n", .{});
         return err;
     };
@@ -86,7 +86,7 @@ pub fn main() !void {
         deps_manifest,
         prov,
     ) catch |err| {
-        std.debug.print("Error adding package: {}\n", .{err});
+        std.debug.print("Error adding package: {any}\n", .{err});
         if (err == store.StoreError.PackageExists) {
             std.debug.print("Package already exists. Removing and retrying...\n\n", .{});
             try pkg_store.removePackage(pkg_id);

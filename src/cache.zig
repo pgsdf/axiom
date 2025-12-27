@@ -513,7 +513,7 @@ pub const CacheClient = struct {
             std.debug.print("Trying cache: {s}\n", .{cache.url});
 
             const result = self.tryFetchFromCache(cache, pkg_id, verify, progress_cb, user_data) catch |err| {
-                std.debug.print("Cache {s} failed: {}\n", .{ cache.url, err });
+                std.debug.print("Cache {s} failed: {any}\n", .{ cache.url, err });
                 continue;
             };
 
@@ -642,7 +642,7 @@ pub const CacheClient = struct {
             std.debug.print("Syncing with cache: {s}\n", .{cache.url});
 
             const index = self.fetchIndex(cache.url) catch |err| {
-                std.debug.print("Failed to fetch index from {s}: {}\n", .{ cache.url, err });
+                std.debug.print("Failed to fetch index from {s}: {any}\n", .{ cache.url, err });
                 continue;
             };
             defer self.allocator.free(index);
@@ -748,7 +748,7 @@ pub const CacheServer = struct {
             defer connection.stream.close();
 
             self.handleConnection(connection) catch |err| {
-                std.debug.print("Connection error: {}\n", .{err});
+                std.debug.print("Connection error: {any}\n", .{err});
             };
         }
     }

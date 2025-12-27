@@ -14,7 +14,7 @@ pub fn main() !void {
 
     // Initialize ZFS
     var zfs_handle = zfs.ZfsHandle.init() catch |err| {
-        std.debug.print("Failed to initialize ZFS: {}\n", .{err});
+        std.debug.print("Failed to initialize ZFS: {any}\n", .{err});
         std.debug.print("Running mock import test instead...\n\n", .{});
         try runMockTest(allocator);
         return;

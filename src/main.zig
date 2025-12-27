@@ -8,7 +8,7 @@ pub fn main() !void {
 
     // Initialize ZFS
     var zfs_handle = zfs.ZfsHandle.init() catch |err| {
-        std.debug.print("Failed to initialize ZFS: {}\n", .{err});
+        std.debug.print("Failed to initialize ZFS: {any}\n", .{err});
         return err;
     };
     defer zfs_handle.deinit();
@@ -21,7 +21,7 @@ pub fn main() !void {
 
     // Check if axiom root dataset exists
     const exists = zfs_handle.datasetExists(allocator, test_dataset, .filesystem) catch |err| {
-        std.debug.print("Error checking dataset existence: {}\n", .{err});
+        std.debug.print("Error checking dataset existence: {any}\n", .{err});
         return err;
     };
 
@@ -30,7 +30,7 @@ pub fn main() !void {
 
         // Get mountpoint
         const mountpoint = zfs_handle.getMountpoint(allocator, test_dataset) catch |err| {
-            std.debug.print("Error getting mountpoint: {}\n", .{err});
+            std.debug.print("Error getting mountpoint: {any}\n", .{err});
             return err;
         };
         defer allocator.free(mountpoint);
@@ -39,7 +39,7 @@ pub fn main() !void {
 
         // Get compression property
         const compression = zfs_handle.getProperty(allocator, test_dataset, "compression") catch |err| {
-            std.debug.print("Error getting compression: {}\n", .{err});
+            std.debug.print("Error getting compression: {any}\n", .{err});
             return err;
         };
         defer allocator.free(compression);

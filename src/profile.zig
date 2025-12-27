@@ -604,7 +604,7 @@ pub const ProfileManager = struct {
         self.zfs_handle.mount(self.allocator, dataset_path, null) catch |err| {
             // Ignore if already mounted
             if (err != error.DatasetBusy) {
-                std.debug.print("Warning: Could not mount {s}: {}\n", .{ dataset_path, err });
+                std.debug.print("Warning: Could not mount {s}: {any}\n", .{ dataset_path, err });
             }
         };
 
@@ -615,7 +615,7 @@ pub const ProfileManager = struct {
         // Ensure mountpoint directory exists (in case ZFS didn't create it)
         std.fs.makeDirAbsolute(mountpoint) catch |err| {
             if (err != error.PathAlreadyExists) {
-                std.debug.print("Warning: Could not create mountpoint dir {s}: {}\n", .{ mountpoint, err });
+                std.debug.print("Warning: Could not create mountpoint dir {s}: {any}\n", .{ mountpoint, err });
             }
         };
 
