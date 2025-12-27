@@ -2520,38 +2520,76 @@ test "SECURITY: TrustStore key operations" {
 }
 
 test "SECURITY: verification status type safety" {
-    // Verify all status types are distinct to prevent confusion attacks
-    const statuses = [_]VerificationStatus{
-        .not_verified,
-        .verified_official,
-        .verified_trusted,
-        .verified_untrusted,
-        .signature_invalid,
-        .key_not_found,
-        .verification_disabled,
+    // VerificationStatus is a tagged union - test that isVerified works correctly
+    // Create a verified status with dummy data
+    const verified_status = VerificationStatus{
+        .verified = .{
+            .content_hash = [_]u8{0} ** 32,
+            .signer_key_id = "test-key",
+            .signer_name = null,
+            .signature_time = 0,
+            .trust_level = .official,
+        },
     };
+    try std.testing.expect(verified_status.isVerified());
 
-    // Ensure each status is unique
-    for (statuses, 0..) |s1, i| {
-        for (statuses[i + 1 ..]) |s2| {
-            try std.testing.expect(s1 != s2);
-        }
-    }
+    // Create invalid status
+    const invalid_status = VerificationStatus{
+        .signature_invalid = .{
+            .reason = "test",
+            .signature_file = null,
+        },
+    };
+    try std.testing.expect(!invalid_status.isVerified());
 }
 
-test "SECURITY: verification status security properties" {
-    // Test critical security status methods
-    try std.testing.expect(VerificationStatus.verified_official.isVerified());
-    try std.testing.expect(VerificationStatus.verified_trusted.isVerified());
-    try std.testing.expect(!VerificationStatus.not_verified.isVerified());
-    try std.testing.expect(!VerificationStatus.signature_invalid.isVerified());
-    try std.testing.expect(!VerificationStatus.key_not_found.isVerified());
+test "SECURITY: verification status - verified returns content" {
+    // Test that getVerifiedContent works correctly for security decisions
+    const verified = VerificationStatus{
+        .verified = .{
+            .content_hash = [_]u8{0xAB} ** 32,
+            .signer_key_id = "official-key",
+            .signer_name = "PGSD Official",
+            .signature_time = 1234567890,
+            .trust_level = .official,
+        },
+    };
 
-    // Trusted status checks
-    try std.testing.expect(VerificationStatus.verified_official.isTrusted());
-    try std.testing.expect(VerificationStatus.verified_trusted.isTrusted());
-    try std.testing.expect(!VerificationStatus.verified_untrusted.isTrusted());
-    try std.testing.expect(!VerificationStatus.not_verified.isTrusted());
+    // Should return content for verified status
+    const content = verified.getVerifiedContent();
+    try std.testing.expect(content != null);
+    try std.testing.expectEqual(TrustLevel.official, content.?.trust_level);
+}
+
+test "SECURITY: verification status - failures return null content" {
+    // Security-critical: failure states must NOT return verified content
+    const missing = VerificationStatus{
+        .signature_missing = .{ .expected_path = "/test/sig" },
+    };
+    try std.testing.expect(missing.getVerifiedContent() == null);
+    try std.testing.expect(!missing.isVerified());
+
+    const invalid = VerificationStatus{
+        .signature_invalid = .{ .reason = "bad sig", .signature_file = null },
+    };
+    try std.testing.expect(invalid.getVerifiedContent() == null);
+    try std.testing.expect(!invalid.isVerified());
+
+    const untrusted = VerificationStatus{
+        .key_untrusted = .{ .key_id = "unknown-key", .reason = "not in store" },
+    };
+    try std.testing.expect(untrusted.getVerifiedContent() == null);
+    try std.testing.expect(!untrusted.isVerified());
+
+    const mismatch = VerificationStatus{
+        .hash_mismatch = .{
+            .expected_hash = [_]u8{0} ** 32,
+            .actual_hash = [_]u8{1} ** 32,
+            .file_path = "/test/file",
+        },
+    };
+    try std.testing.expect(mismatch.getVerifiedContent() == null);
+    try std.testing.expect(!mismatch.isVerified());
 }
 
 test "SECURITY: multi-signature threshold validation" {
