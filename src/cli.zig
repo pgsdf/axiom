@@ -5300,7 +5300,7 @@ pub const CLI = struct {
         };
         defer {
             for (results.items) |*r| r.deinit(self.allocator);
-            results.deinit();
+            results.deinit(self.allocator);
         }
 
         // Summarize results
@@ -7331,7 +7331,7 @@ pub const CLI = struct {
             std.debug.print("'{s}' is a virtual package provided by:\n", .{target_name});
             if (adv_resolver.getAlternatives(target_name)) |providers| {
                 for (providers) |provider| {
-                    std.debug.print("  - {s} {}\n", .{
+                    std.debug.print("  - {s} {f}\n", .{
                         provider.package_id.name,
                         provider.package_id.version,
                     });
@@ -7444,7 +7444,7 @@ pub const CLI = struct {
             } else {
                 std.debug.print("The following packages provide '{s}':\n\n", .{virtual_name});
                 for (providers) |provider| {
-                    std.debug.print("  • {s} {}\n", .{
+                    std.debug.print("  • {s} {f}\n", .{
                         provider.package_id.name,
                         provider.package_id.version,
                     });

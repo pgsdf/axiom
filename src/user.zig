@@ -621,7 +621,7 @@ pub const UserRealizationEngine = struct {
         defer package_ids.deinit(self.allocator);
 
         for (lock.resolved, 0..) |pkg, i| {
-            std.debug.print("  [{d}/{d}] {s} {}\n", .{
+            std.debug.print("  [{d}/{d}] {s} {f}\n", .{
                 i + 1,
                 lock.resolved.len,
                 pkg.id.name,
@@ -792,7 +792,7 @@ pub const UserRealizationEngine = struct {
         defer package_ids.deinit(self.allocator);
 
         for (lock.resolved, 0..) |pkg, i| {
-            std.debug.print("  [{d}/{d}] {s} {} ({s})\n", .{
+            std.debug.print("  [{d}/{d}] {s} {f} ({s})\n", .{
                 i + 1,
                 lock.resolved.len,
                 pkg.id.name,
