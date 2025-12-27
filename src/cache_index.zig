@@ -650,11 +650,11 @@ pub const CacheIndexManager = struct {
     pub fn init(allocator: Allocator, cache_path: []const u8) Self {
         return .{
             .allocator = allocator,
-            .local_index = CacheIndex.empty,
+            .local_index = CacheIndex.init(allocator),
             .remote_indices = .empty,
             .trust_store = null,
             .eviction_engine = CacheEvictionEngine.init(allocator, cache_path),
-            .conflict_resolver = ConflictResolver.empty,
+            .conflict_resolver = ConflictResolver.init(allocator),
         };
     }
 

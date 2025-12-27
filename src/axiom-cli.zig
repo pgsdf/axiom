@@ -82,7 +82,7 @@ pub fn main() !void {
 
     // Initialize cache subsystems
     var cache_config = cache.CacheConfig.init(allocator);
-    defer cache_config.deinit(allocator);
+    defer cache_config.deinit();
     cache_config.loadFromFile(config.DEFAULT_CONFIG_DIR ++ "/cache.yaml") catch |err| {
         errors.logConfigLoadOptional(@src(), err, config.DEFAULT_CONFIG_DIR ++ "/cache.yaml");
     }; // Ignore if doesn't exist

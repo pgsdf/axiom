@@ -621,7 +621,7 @@ pub const PolicyChecker = struct {
         return .{
             .allocator = allocator,
             .policy = .{},
-            .verifier = ProvenanceVerifier.empty,
+            .verifier = ProvenanceVerifier.init(allocator),
         };
     }
 

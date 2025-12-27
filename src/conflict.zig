@@ -463,7 +463,7 @@ test "applyRenameStrategy with extension" {
 test "ConflictSummary" {
     const allocator = std.testing.allocator;
 
-    var config = ConflictConfig.empty;
+    var config = ConflictConfig.init(allocator);
     defer config.deinit();
 
     var tracker = ConflictTracker.init(allocator, &config);

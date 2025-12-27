@@ -517,7 +517,7 @@ pub fn parseDesktopEntry(allocator: std.mem.Allocator, content: []const u8) !?De
 test "desktop file generation" {
     const allocator = std.testing.allocator;
 
-    var di = DesktopIntegration.empty;
+    var di = DesktopIntegration.init(allocator);
     defer di.deinit();
 
     const pkg_id = types.PackageId{

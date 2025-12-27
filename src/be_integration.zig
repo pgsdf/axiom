@@ -493,7 +493,7 @@ pub const BootloaderIntegration = struct {
             .zfs_handle = zfs_handle,
             .bootloader_type = .freebsd,
             .hooks = .empty,
-            .rollback_policy = RollbackPolicy.empty,
+            .rollback_policy = RollbackPolicy.init(),
         };
     }
 
@@ -812,7 +812,7 @@ test "ProfileDiff.init" {
 
 test "RollbackPolicy.init" {
     const allocator = std.testing.allocator;
-    var policy = RollbackPolicy.empty;
+    var policy = RollbackPolicy.init();
     defer policy.deinit(allocator);
 
     try std.testing.expect(policy.auto_rollback_enabled);

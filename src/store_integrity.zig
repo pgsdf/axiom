@@ -998,7 +998,7 @@ pub const TransactionLog = struct {
 // Tests
 test "IntegrityReport.hasIssues" {
     const allocator = std.testing.allocator;
-    var report = IntegrityReport.empty;
+    var report = IntegrityReport.init(allocator);
     defer report.deinit();
 
     try std.testing.expect(!report.hasIssues());
