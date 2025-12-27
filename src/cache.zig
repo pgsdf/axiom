@@ -736,7 +736,7 @@ pub const CacheServer = struct {
     /// Start the cache server
     pub fn start(self: *Self) !void {
         self.server = try self.address.listen(.{});
-        std.debug.print("Cache server listening on {}\n", .{self.address});
+        std.debug.print("Cache server listening on {any}\n", .{self.address});
     }
 
     /// Handle incoming connections (blocking)
