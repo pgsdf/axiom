@@ -432,8 +432,10 @@ pub const BootstrapManager = struct {
         var file = try std.fs.createFileAbsolute(metadata_path, .{});
         defer file.close();
 
-        var write_buf: [4096]u8 = undefined;
-        var writer = file.writer(&write_buf);
+        // Build content in memory using ArrayList
+        var content: std.ArrayList(u8) = .empty;
+        defer content.deinit(self.allocator);
+        const writer = content.writer(self.allocator);
 
         // Get system info
         const os_version = options.os_version orelse "14.2";
@@ -490,6 +492,9 @@ pub const BootstrapManager = struct {
                 try writer.writeAll(str);
             }
         }
+
+        // Write all content to file at once
+        try file.writeAll(content.items);
     }
 
     /// Get current timestamp in ISO format
