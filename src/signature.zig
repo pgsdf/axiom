@@ -2422,16 +2422,16 @@ test "OfficialPGSDKey constants" {
 test "OfficialPGSDKey.getKey" {
     const allocator = std.testing.allocator;
 
-    var key = try OfficialPGSDKey.getKey(allocator);
+    const key = try OfficialPGSDKey.getKey(allocator);
     defer {
         allocator.free(key.key_id);
-        allocator.free(key.owner);
-        allocator.free(key.email);
+        if (key.owner) |o| allocator.free(o);
+        if (key.email) |e| allocator.free(e);
     }
 
     try std.testing.expectEqualStrings("PGSD0001A7E3F9B2", key.key_id);
-    try std.testing.expectEqualStrings("PGSD Official", key.owner);
-    try std.testing.expectEqualStrings("security@pgsd.io", key.email);
+    try std.testing.expectEqualStrings("PGSD Official", key.owner.?);
+    try std.testing.expectEqualStrings("security@pgsd.io", key.email.?);
     try std.testing.expectEqual(TrustLevel.official, key.trust_level);
     try std.testing.expect(key.expires == null);
 }
