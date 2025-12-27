@@ -1041,3 +1041,111 @@ pub fn pushPackage(
     // TODO: Implement HTTP PUT upload
     std.debug.print("Would upload {s} to {s}\n", .{ tmp_path, url });
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+test "CleanupPolicy enum values" {
+    try std.testing.expectEqual(CleanupPolicy.lru, CleanupPolicy.lru);
+    try std.testing.expectEqual(CleanupPolicy.lfu, CleanupPolicy.lfu);
+    try std.testing.expectEqual(CleanupPolicy.fifo, CleanupPolicy.fifo);
+    try std.testing.expectEqual(CleanupPolicy.none, CleanupPolicy.none);
+}
+
+test "LocalCacheConfig defaults" {
+    const config = LocalCacheConfig{};
+    try std.testing.expectEqualStrings("/var/cache/axiom", config.path);
+    try std.testing.expectEqual(@as(u64, 10 * 1024 * 1024 * 1024), config.max_size_bytes);
+    try std.testing.expectEqual(CleanupPolicy.lru, config.cleanup_policy);
+    try std.testing.expect(config.enabled);
+    try std.testing.expect(!config.path_allocated);
+}
+
+test "PushConfig defaults" {
+    const config = PushConfig{};
+    try std.testing.expect(!config.enabled);
+    try std.testing.expect(config.url == null);
+    try std.testing.expect(config.key_path == null);
+}
+
+test "RemoteCache defaults" {
+    const cache = RemoteCache{
+        .url = "https://cache.example.com",
+    };
+    try std.testing.expectEqual(@as(u32, 1), cache.priority);
+    try std.testing.expect(cache.enabled);
+    try std.testing.expectEqual(@as(usize, 0), cache.trusted_keys.len);
+}
+
+test "CacheConfig.init and deinit" {
+    const allocator = std.testing.allocator;
+
+    var config = CacheConfig.init(allocator);
+    defer config.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), config.caches.items.len);
+    try std.testing.expect(config.local.enabled);
+    try std.testing.expect(!config.push.enabled);
+}
+
+test "CacheConfig.addCache" {
+    const allocator = std.testing.allocator;
+
+    var config = CacheConfig.init(allocator);
+    defer config.deinit();
+
+    try config.addCache("https://cache1.example.com", 2);
+    try config.addCache("https://cache2.example.com", 1);
+    try config.addCache("https://cache3.example.com", 3);
+
+    // Should be sorted by priority
+    try std.testing.expectEqual(@as(usize, 3), config.caches.items.len);
+    try std.testing.expectEqual(@as(u32, 1), config.caches.items[0].priority);
+    try std.testing.expectEqual(@as(u32, 2), config.caches.items[1].priority);
+    try std.testing.expectEqual(@as(u32, 3), config.caches.items[2].priority);
+}
+
+test "CacheConfig.removeCache" {
+    const allocator = std.testing.allocator;
+
+    var config = CacheConfig.init(allocator);
+    defer config.deinit();
+
+    try config.addCache("https://cache1.example.com", 1);
+    try config.addCache("https://cache2.example.com", 2);
+
+    try std.testing.expectEqual(@as(usize, 2), config.caches.items.len);
+
+    // Remove existing cache
+    const removed = config.removeCache("https://cache1.example.com");
+    try std.testing.expect(removed);
+    try std.testing.expectEqual(@as(usize, 1), config.caches.items.len);
+
+    // Try to remove non-existent cache
+    const not_removed = config.removeCache("https://nonexistent.example.com");
+    try std.testing.expect(!not_removed);
+    try std.testing.expectEqual(@as(usize, 1), config.caches.items.len);
+}
+
+test "CacheError values" {
+    const errors_list = [_]CacheError{
+        CacheError.CacheNotFound,
+        CacheError.PackageNotFound,
+        CacheError.DownloadFailed,
+        CacheError.VerificationFailed,
+        CacheError.InvalidResponse,
+        CacheError.ConnectionFailed,
+        CacheError.InvalidUrl,
+        CacheError.CacheFull,
+        CacheError.InvalidCacheConfig,
+        CacheError.ReceiveFailed,
+        CacheError.SendFailed,
+        CacheError.StreamError,
+        CacheError.Timeout,
+        CacheError.ResumeNotSupported,
+        CacheError.HttpNotSupported,
+    };
+
+    try std.testing.expectEqual(@as(usize, 15), errors_list.len);
+}

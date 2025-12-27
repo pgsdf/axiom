@@ -1092,3 +1092,129 @@ fn parseConstraint(
 
     return VersionConstraint{ .any = {} };
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+test "ProfileError values" {
+    const errors = [_]ProfileError{
+        ProfileError.ProfileExists,
+        ProfileError.ProfileNotFound,
+        ProfileError.InvalidProfile,
+        ProfileError.LockFileMissing,
+        ProfileError.WriteError,
+    };
+
+    try std.testing.expectEqual(@as(usize, 5), errors.len);
+}
+
+test "PackageRequest defaults" {
+    const request = PackageRequest{
+        .name = "python",
+        .constraint = VersionConstraint{ .any = {} },
+    };
+
+    try std.testing.expectEqualStrings("python", request.name);
+    try std.testing.expectEqual(@as(usize, 0), request.features.len);
+    try std.testing.expectEqual(@as(usize, 0), request.disabled_features.len);
+}
+
+test "Preference defaults" {
+    const pref = Preference{
+        .name = "python",
+    };
+
+    try std.testing.expectEqualStrings("python", pref.name);
+    try std.testing.expect(pref.prefer == null);
+    try std.testing.expect(pref.avoid == null);
+    try std.testing.expectEqual(@as(i32, 100), pref.weight);
+}
+
+test "Pin struct" {
+    const pin = Pin{
+        .name = "gcc",
+        .version = "13.2.0",
+        .reason = "Stability requirement",
+    };
+
+    try std.testing.expectEqualStrings("gcc", pin.name);
+    try std.testing.expectEqualStrings("13.2.0", pin.version);
+    try std.testing.expectEqualStrings("Stability requirement", pin.reason.?);
+}
+
+test "ResolvedPackage struct" {
+    const pkg = ResolvedPackage{
+        .id = PackageId{
+            .name = "bash",
+            .version = .{ .major = 5, .minor = 2, .patch = 0 },
+            .revision = 1,
+            .build_id = "abc123",
+        },
+        .requested = true,
+    };
+
+    try std.testing.expectEqualStrings("bash", pkg.id.name);
+    try std.testing.expect(pkg.requested);
+}
+
+test "Profile.parse basic" {
+    const allocator = std.testing.allocator;
+
+    const yaml =
+        \\name: dev-profile
+        \\description: Development environment
+        \\packages:
+        \\  - name: gcc
+        \\    version: "13.2.0"
+        \\    constraint: exact
+        \\
+    ;
+
+    var profile = try Profile.parse(allocator, yaml);
+    defer profile.deinit(allocator);
+
+    try std.testing.expectEqualStrings("dev-profile", profile.name);
+    try std.testing.expectEqualStrings("Development environment", profile.description.?);
+    try std.testing.expectEqual(@as(usize, 1), profile.packages.len);
+    try std.testing.expectEqualStrings("gcc", profile.packages[0].name);
+}
+
+test "Profile.parse multiple packages" {
+    const allocator = std.testing.allocator;
+
+    const yaml =
+        \\name: full-profile
+        \\packages:
+        \\  - name: python
+        \\    version: "3.11"
+        \\    constraint: tilde
+        \\  - name: rust
+        \\    constraint: any
+        \\  - name: go
+        \\    version: "1.21.0"
+        \\    constraint: exact
+        \\
+    ;
+
+    var profile = try Profile.parse(allocator, yaml);
+    defer profile.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 3), profile.packages.len);
+    try std.testing.expectEqualStrings("python", profile.packages[0].name);
+    try std.testing.expectEqualStrings("rust", profile.packages[1].name);
+    try std.testing.expectEqualStrings("go", profile.packages[2].name);
+}
+
+test "Profile defaults" {
+    const profile = Profile{
+        .name = "test",
+        .packages = &[_]PackageRequest{},
+    };
+
+    try std.testing.expectEqualStrings("test", profile.name);
+    try std.testing.expect(profile.description == null);
+    try std.testing.expect(profile.format_version == null);
+    try std.testing.expectEqual(@as(usize, 0), profile.preferences.len);
+    try std.testing.expectEqual(@as(usize, 0), profile.pins.len);
+}
