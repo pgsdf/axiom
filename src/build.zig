@@ -1104,8 +1104,8 @@ pub const Builder = struct {
         }
 
         std.debug.print("\nOutput settings:\n", .{});
-        std.debug.print("  Strip binaries: {}\n", .{recipe.output.strip_binaries});
-        std.debug.print("  Compress man pages: {}\n", .{recipe.output.compress_man});
+        std.debug.print("  Strip binaries: {any}\n", .{recipe.output.strip_binaries});
+        std.debug.print("  Compress man pages: {any}\n", .{recipe.output.compress_man});
     }
 
     /// Inject build dependencies into sandbox

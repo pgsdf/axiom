@@ -716,7 +716,7 @@ pub const TrustStore = struct {
             defer self.allocator.free(trust_level_line);
             try file.writeAll(trust_level_line);
             const trusted = self.trusted.get(key.key_id) orelse false;
-            const trusted_line = try std.fmt.allocPrint(self.allocator, "trusted = {}\n", .{trusted});
+            const trusted_line = try std.fmt.allocPrint(self.allocator, "trusted = {any}\n", .{trusted});
             defer self.allocator.free(trusted_line);
             try file.writeAll(trusted_line);
             try file.writeAll("\n");
@@ -1089,7 +1089,7 @@ pub const Verifier = struct {
         };
 
         const key_trusted = self.trust_store.isKeyTrusted(signature.key_id);
-        std.debug.print("  Key trusted: {}\n", .{key_trusted});
+        std.debug.print("  Key trusted: {any}\n", .{key_trusted});
 
         // Verify file hashes
         var files_verified: usize = 0;
@@ -1142,7 +1142,7 @@ pub const Verifier = struct {
             break :blk true;
         };
 
-        std.debug.print("  Signature valid: {}\n", .{valid});
+        std.debug.print("  Signature valid: {any}\n", .{valid});
 
         return Result{
             .valid = valid and files_failed == 0,
@@ -1949,8 +1949,8 @@ pub const MultiSignatureVerifier = struct {
         std.debug.print("  Total signatures: {d}\n", .{multi_sig.signatures.len});
         std.debug.print("  Valid signatures: {d}\n", .{valid_count});
         std.debug.print("  Trusted signatures: {d}\n", .{trusted_count});
-        std.debug.print("  Threshold met: {}\n", .{threshold_met});
-        std.debug.print("  Required signers present: {}\n", .{required_met});
+        std.debug.print("  Threshold met: {any}\n", .{threshold_met});
+        std.debug.print("  Required signers present: {any}\n", .{required_met});
 
         _ = pkg_path;
 

@@ -100,7 +100,7 @@ pub fn main() !void {
 
     // Check if package exists
     const exists = try pkg_store.packageExists(pkg_id);
-    std.debug.print("Package exists in store: {}\n", .{exists});
+    std.debug.print("Package exists in store: {any}\n", .{exists});
 
     // Get package metadata
     std.debug.print("\nRetrieving package metadata...\n", .{});

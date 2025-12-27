@@ -46,7 +46,7 @@ pub fn main() !void {
 
     // Check trust
     const is_trusted = trust_store.isKeyTrusted(key_id);
-    std.debug.print("  Key trusted: {}\n", .{is_trusted});
+    std.debug.print("  Key trusted: {any}\n", .{is_trusted});
 
     // Save trust store
     try trust_store.save();
@@ -115,8 +115,8 @@ pub fn main() !void {
     const result = try verifier.verifyPackage(test_pkg);
 
     std.debug.print("  Verification result:\n", .{});
-    std.debug.print("    Valid: {}\n", .{result.valid});
-    std.debug.print("    Key trusted: {}\n", .{result.key_trusted});
+    std.debug.print("    Valid: {any}\n", .{result.valid});
+    std.debug.print("    Key trusted: {any}\n", .{result.key_trusted});
     if (result.key_id) |kid| std.debug.print("    Key ID: {s}\n", .{kid});
     if (result.signer) |s| std.debug.print("    Signer: {s}\n", .{s});
     std.debug.print("    Files verified: {d}\n", .{result.files_verified});
@@ -142,7 +142,7 @@ pub fn main() !void {
     const tamper_result = try verifier.verifyPackage(test_pkg);
 
     std.debug.print("  Verification after tampering:\n", .{});
-    std.debug.print("    Valid: {}\n", .{tamper_result.valid});
+    std.debug.print("    Valid: {any}\n", .{tamper_result.valid});
     std.debug.print("    Files verified: {d}\n", .{tamper_result.files_verified});
     std.debug.print("    Files failed: {d}\n", .{tamper_result.files_failed});
 
@@ -161,7 +161,7 @@ pub fn main() !void {
     defer imported_key.deinit(allocator);
 
     std.debug.print("  Imported key ID: {s}\n", .{imported_key.key_id});
-    std.debug.print("  Keys match: {}\n", .{std.mem.eql(u8, &pub_key.key_data, &imported_key.key_data)});
+    std.debug.print("  Keys match: {any}\n", .{std.mem.eql(u8, &pub_key.key_data, &imported_key.key_data)});
 
     // Cleanup
     std.debug.print("\n7. Cleanup\n", .{});

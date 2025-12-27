@@ -81,9 +81,9 @@ fn runMockTest(allocator: std.mem.Allocator) !void {
     metadata.has_libraries = dirExists(test_dir, "lib");
     metadata.has_man_pages = dirExists(test_dir, "share/man");
     
-    std.debug.print("   Has binaries:  {}\n", .{metadata.has_binaries});
-    std.debug.print("   Has libraries: {}\n", .{metadata.has_libraries});
-    std.debug.print("   Has man pages: {}\n", .{metadata.has_man_pages});
+    std.debug.print("   Has binaries:  {any}\n", .{metadata.has_binaries});
+    std.debug.print("   Has libraries: {any}\n", .{metadata.has_libraries});
+    std.debug.print("   Has man pages: {any}\n", .{metadata.has_man_pages});
     
     // Read package.json
     const pkg_json_path = test_dir ++ "/package.json";
@@ -250,7 +250,7 @@ fn runFullTest(allocator: std.mem.Allocator, importer: *import_pkg.Importer, pkg
     std.debug.print("6. Verifying imported package\n", .{});
     
     const exists = try pkg_store.packageExists(pkg_id4);
-    std.debug.print("   Package exists in store: {}\n", .{exists});
+    std.debug.print("   Package exists in store: {any}\n", .{exists});
     
     if (exists) {
         std.debug.print("   ✓ Package successfully imported!\n", .{});
