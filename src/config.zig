@@ -167,7 +167,7 @@ pub const Config = struct {
     /// Helper to format and track allocated strings
     fn allocAndTrack(self: *Config, comptime fmt: []const u8, args: anytype) ![]const u8 {
         const str = try std.fmt.allocPrint(self.allocator, fmt, args);
-        try self.allocated_strings.append(str);
+        try self.allocated_strings.append(self.allocator, str);
         return str;
     }
 
