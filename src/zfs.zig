@@ -1248,13 +1248,19 @@ test "ZfsHandle init and deinit" {
     defer zfs.deinit();
 }
 
+fn getTestPool() []const u8 {
+    return std.posix.getenv("ZFS_TEST_POOL") orelse "zroot";
+}
+
 test "dataset operations" {
     const allocator = std.testing.allocator;
 
     var zfs = try ZfsHandle.init();
     defer zfs.deinit();
 
-    const test_dataset = "zroot/axiom-test";
+    const pool = getTestPool();
+    const test_dataset = try std.fmt.allocPrint(allocator, "{s}/axiom-test", .{pool});
+    defer allocator.free(test_dataset);
 
     // Clean up if exists from previous test
     if (try zfs.datasetExists(allocator, test_dataset, .filesystem)) {
@@ -1463,9 +1469,12 @@ test "snapshot and clone" {
     var zfs = try ZfsHandle.init();
     defer zfs.deinit();
 
-    const test_dataset = "zroot/axiom-test-snap";
+    const pool = getTestPool();
+    const test_dataset = try std.fmt.allocPrint(allocator, "{s}/axiom-test-snap", .{pool});
+    defer allocator.free(test_dataset);
     const test_snap = "testsnap";
-    const clone_target = "zroot/axiom-test-clone";
+    const clone_target = try std.fmt.allocPrint(allocator, "{s}/axiom-test-clone", .{pool});
+    defer allocator.free(clone_target);
 
     // Clean up from previous tests
     if (try zfs.datasetExists(allocator, clone_target, .filesystem)) {
