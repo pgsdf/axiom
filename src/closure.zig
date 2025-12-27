@@ -521,6 +521,225 @@ pub const FormatOptions = struct {
 };
 
 // Tests
-test "closure computation" {
-    // Unit tests would go here
+test "packageIdToKey creates unique keys" {
+    const allocator = std.testing.allocator;
+
+    const pkg1 = PackageId{
+        .name = "bash",
+        .version = .{ .major = 5, .minor = 2, .patch = 0 },
+        .revision = 1,
+        .build_id = "abc123",
+    };
+
+    const key1 = try packageIdToKey(allocator, pkg1);
+    defer allocator.free(key1);
+
+    try std.testing.expectEqualStrings("bash-5.2.0-r1-abc123", key1);
+}
+
+test "packageIdToKey different packages have different keys" {
+    const allocator = std.testing.allocator;
+
+    const pkg1 = PackageId{
+        .name = "bash",
+        .version = .{ .major = 5, .minor = 2, .patch = 0 },
+        .revision = 1,
+        .build_id = "abc123",
+    };
+
+    const pkg2 = PackageId{
+        .name = "bash",
+        .version = .{ .major = 5, .minor = 2, .patch = 1 }, // different patch
+        .revision = 1,
+        .build_id = "abc123",
+    };
+
+    const key1 = try packageIdToKey(allocator, pkg1);
+    defer allocator.free(key1);
+
+    const key2 = try packageIdToKey(allocator, pkg2);
+    defer allocator.free(key2);
+
+    try std.testing.expect(!std.mem.eql(u8, key1, key2));
+}
+
+test "Closure.init and deinit" {
+    const allocator = std.testing.allocator;
+
+    var closure = Closure.init(allocator);
+    defer closure.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), closure.packageCount());
+    try std.testing.expectEqual(@as(usize, 0), closure.roots.items.len);
+    try std.testing.expectEqual(@as(u64, 0), closure.total_size);
+}
+
+test "Closure.isBasePackage" {
+    const allocator = std.testing.allocator;
+
+    var closure = Closure.init(allocator);
+    defer closure.deinit();
+
+    // Add some base packages
+    try closure.base_packages.put("libc", {});
+    try closure.base_packages.put("libm", {});
+
+    try std.testing.expect(closure.isBasePackage("libc"));
+    try std.testing.expect(closure.isBasePackage("libm"));
+    try std.testing.expect(!closure.isBasePackage("openssl"));
+}
+
+test "getClosureStats empty closure" {
+    const allocator = std.testing.allocator;
+
+    var closure = Closure.init(allocator);
+    defer closure.deinit();
+
+    const stats = getClosureStats(&closure);
+    try std.testing.expectEqual(@as(usize, 0), stats.package_count);
+    try std.testing.expectEqual(@as(u32, 0), stats.max_depth);
+    try std.testing.expectEqual(@as(usize, 0), stats.root_count);
+}
+
+test "getClosureStats with base packages" {
+    const allocator = std.testing.allocator;
+
+    var closure = Closure.init(allocator);
+    defer closure.deinit();
+
+    try closure.base_packages.put("libc", {});
+    try closure.base_packages.put("libm", {});
+    try closure.base_packages.put("libpthread", {});
+
+    const stats = getClosureStats(&closure);
+    try std.testing.expectEqual(@as(usize, 3), stats.base_excluded_count);
+}
+
+test "cloneManifest basic" {
+    const allocator = std.testing.allocator;
+
+    var original = Manifest{
+        .name = "test-pkg",
+        .version = .{ .major = 1, .minor = 2, .patch = 3 },
+        .revision = 5,
+        .description = "A test package",
+        .license = "MIT",
+        .homepage = "https://example.com",
+        .maintainer = "test@example.com",
+        .tags = &[_][]const u8{},
+        .provides = &[_][]const u8{},
+        .conflicts = &[_]manifest.VirtualPackage{},
+        .replaces = &[_]manifest.VirtualPackage{},
+    };
+
+    var cloned = try cloneManifest(allocator, original);
+    defer cloned.deinit(allocator);
+
+    try std.testing.expectEqualStrings("test-pkg", cloned.name);
+    try std.testing.expectEqual(@as(u32, 1), cloned.version.major);
+    try std.testing.expectEqual(@as(u32, 2), cloned.version.minor);
+    try std.testing.expectEqual(@as(u32, 3), cloned.version.patch);
+    try std.testing.expectEqual(@as(u32, 5), cloned.revision);
+    try std.testing.expectEqualStrings("A test package", cloned.description.?);
+    try std.testing.expectEqualStrings("MIT", cloned.license.?);
+}
+
+test "cloneManifest with tags" {
+    const allocator = std.testing.allocator;
+
+    const tags = [_][]const u8{ "cli", "shell" };
+    var original = Manifest{
+        .name = "bash",
+        .version = .{ .major = 5, .minor = 0, .patch = 0 },
+        .revision = 1,
+        .tags = @constCast(&tags),
+        .provides = &[_][]const u8{},
+        .conflicts = &[_]manifest.VirtualPackage{},
+        .replaces = &[_]manifest.VirtualPackage{},
+    };
+
+    var cloned = try cloneManifest(allocator, original);
+    defer cloned.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), cloned.tags.len);
+    try std.testing.expectEqualStrings("cli", cloned.tags[0]);
+    try std.testing.expectEqualStrings("shell", cloned.tags[1]);
+}
+
+test "cloneManifest independence" {
+    const allocator = std.testing.allocator;
+
+    const original_name = try allocator.dupe(u8, "original");
+    defer allocator.free(original_name);
+
+    var original = Manifest{
+        .name = original_name,
+        .version = .{ .major = 1, .minor = 0, .patch = 0 },
+        .revision = 1,
+        .tags = &[_][]const u8{},
+        .provides = &[_][]const u8{},
+        .conflicts = &[_]manifest.VirtualPackage{},
+        .replaces = &[_]manifest.VirtualPackage{},
+    };
+
+    var cloned = try cloneManifest(allocator, original);
+    defer cloned.deinit(allocator);
+
+    // Cloned name should be independent copy
+    try std.testing.expect(original.name.ptr != cloned.name.ptr);
+    try std.testing.expectEqualStrings("original", cloned.name);
+}
+
+test "FormatOptions defaults" {
+    const options = FormatOptions{};
+    try std.testing.expect(!options.show_tree);
+    try std.testing.expect(options.max_depth == null);
+    try std.testing.expect(!options.show_sizes);
+    try std.testing.expect(!options.show_provides);
+}
+
+test "ClosureStats struct" {
+    const stats = ClosureStats{
+        .package_count = 10,
+        .total_size_bytes = 1024 * 1024,
+        .max_depth = 5,
+        .root_count = 2,
+        .base_excluded_count = 7,
+    };
+
+    try std.testing.expectEqual(@as(usize, 10), stats.package_count);
+    try std.testing.expectEqual(@as(u64, 1024 * 1024), stats.total_size_bytes);
+    try std.testing.expectEqual(@as(u32, 5), stats.max_depth);
+    try std.testing.expectEqual(@as(usize, 2), stats.root_count);
+    try std.testing.expectEqual(@as(usize, 7), stats.base_excluded_count);
+}
+
+test "ClosureEntry struct" {
+    const allocator = std.testing.allocator;
+
+    const required_by = try allocator.alloc(PackageId, 1);
+    required_by[0] = PackageId{
+        .name = "parent",
+        .version = .{ .major = 1, .minor = 0, .patch = 0 },
+        .revision = 1,
+        .build_id = "abc",
+    };
+
+    var entry = ClosureEntry{
+        .id = PackageId{
+            .name = "child",
+            .version = .{ .major = 2, .minor = 0, .patch = 0 },
+            .revision = 1,
+            .build_id = "def",
+        },
+        .manifest = undefined,
+        .depth = 1,
+        .required_by = required_by,
+    };
+
+    try std.testing.expectEqual(@as(u32, 1), entry.depth);
+    try std.testing.expectEqual(@as(usize, 1), entry.required_by.len);
+    try std.testing.expectEqualStrings("parent", entry.required_by[0].name);
+
+    entry.deinit(allocator);
 }

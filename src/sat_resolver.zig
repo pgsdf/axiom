@@ -516,3 +516,208 @@ test "SATResolver conflict detection" {
         },
     }
 }
+
+test "SATResolver transitive dependencies" {
+    const allocator = std.testing.allocator;
+
+    var resolver = SATResolver.init(allocator);
+    defer resolver.deinit();
+
+    // A -> B -> C (transitive chain)
+    try resolver.registerPackage(
+        .{ .name = "pkg-c", .version = .{ .major = 1, .minor = 0, .patch = 0 }, .revision = 1, .build_id = "c1" },
+        &[_]PackageCandidate.Dependency{},
+        &[_][]const u8{},
+    );
+
+    try resolver.registerPackage(
+        .{ .name = "pkg-b", .version = .{ .major = 1, .minor = 0, .patch = 0 }, .revision = 1, .build_id = "b1" },
+        &[_]PackageCandidate.Dependency{
+            .{ .name = "pkg-c", .constraint = .any },
+        },
+        &[_][]const u8{},
+    );
+
+    try resolver.registerPackage(
+        .{ .name = "pkg-a", .version = .{ .major = 1, .minor = 0, .patch = 0 }, .revision = 1, .build_id = "a1" },
+        &[_]PackageCandidate.Dependency{
+            .{ .name = "pkg-b", .constraint = .any },
+        },
+        &[_][]const u8{},
+    );
+
+    const result = try resolver.resolve(&[_]PackageRequest{
+        .{ .name = "pkg-a", .constraint = .any },
+    });
+
+    switch (result) {
+        .success => |packages| {
+            defer allocator.free(packages);
+            // Should have A, B, and C
+            try std.testing.expectEqual(@as(usize, 3), packages.len);
+        },
+        .failure => {
+            try std.testing.expect(false);
+        },
+    }
+}
+
+test "SATResolver version constraint exact" {
+    const allocator = std.testing.allocator;
+
+    var resolver = SATResolver.init(allocator);
+    defer resolver.deinit();
+
+    // Register multiple versions
+    try resolver.registerPackage(
+        .{ .name = "pkg-a", .version = .{ .major = 1, .minor = 0, .patch = 0 }, .revision = 1, .build_id = "a1" },
+        &[_]PackageCandidate.Dependency{},
+        &[_][]const u8{},
+    );
+
+    try resolver.registerPackage(
+        .{ .name = "pkg-a", .version = .{ .major = 2, .minor = 0, .patch = 0 }, .revision = 1, .build_id = "a2" },
+        &[_]PackageCandidate.Dependency{},
+        &[_][]const u8{},
+    );
+
+    // Request exact version 1.0.0
+    const result = try resolver.resolve(&[_]PackageRequest{
+        .{ .name = "pkg-a", .constraint = .{ .exact = .{ .major = 1, .minor = 0, .patch = 0 } } },
+    });
+
+    switch (result) {
+        .success => |packages| {
+            defer allocator.free(packages);
+            try std.testing.expectEqual(@as(usize, 1), packages.len);
+            try std.testing.expectEqual(@as(u32, 1), packages[0].version.major);
+        },
+        .failure => {
+            try std.testing.expect(false);
+        },
+    }
+}
+
+test "SATResolver diamond dependency" {
+    const allocator = std.testing.allocator;
+
+    var resolver = SATResolver.init(allocator);
+    defer resolver.deinit();
+
+    // Diamond: A depends on B and C, both B and C depend on D
+    try resolver.registerPackage(
+        .{ .name = "pkg-d", .version = .{ .major = 1, .minor = 0, .patch = 0 }, .revision = 1, .build_id = "d1" },
+        &[_]PackageCandidate.Dependency{},
+        &[_][]const u8{},
+    );
+
+    try resolver.registerPackage(
+        .{ .name = "pkg-b", .version = .{ .major = 1, .minor = 0, .patch = 0 }, .revision = 1, .build_id = "b1" },
+        &[_]PackageCandidate.Dependency{
+            .{ .name = "pkg-d", .constraint = .any },
+        },
+        &[_][]const u8{},
+    );
+
+    try resolver.registerPackage(
+        .{ .name = "pkg-c", .version = .{ .major = 1, .minor = 0, .patch = 0 }, .revision = 1, .build_id = "c1" },
+        &[_]PackageCandidate.Dependency{
+            .{ .name = "pkg-d", .constraint = .any },
+        },
+        &[_][]const u8{},
+    );
+
+    try resolver.registerPackage(
+        .{ .name = "pkg-a", .version = .{ .major = 1, .minor = 0, .patch = 0 }, .revision = 1, .build_id = "a1" },
+        &[_]PackageCandidate.Dependency{
+            .{ .name = "pkg-b", .constraint = .any },
+            .{ .name = "pkg-c", .constraint = .any },
+        },
+        &[_][]const u8{},
+    );
+
+    const result = try resolver.resolve(&[_]PackageRequest{
+        .{ .name = "pkg-a", .constraint = .any },
+    });
+
+    switch (result) {
+        .success => |packages| {
+            defer allocator.free(packages);
+            // Should have A, B, C, and D (D only once)
+            try std.testing.expectEqual(@as(usize, 4), packages.len);
+        },
+        .failure => {
+            try std.testing.expect(false);
+        },
+    }
+}
+
+test "SATResolver unsatisfiable constraint" {
+    const allocator = std.testing.allocator;
+
+    var resolver = SATResolver.init(allocator);
+    defer resolver.deinit();
+
+    // Only version 1.0.0 available
+    try resolver.registerPackage(
+        .{ .name = "pkg-a", .version = .{ .major = 1, .minor = 0, .patch = 0 }, .revision = 1, .build_id = "a1" },
+        &[_]PackageCandidate.Dependency{},
+        &[_][]const u8{},
+    );
+
+    // Request version 2.0.0 which doesn't exist
+    const result = try resolver.resolve(&[_]PackageRequest{
+        .{ .name = "pkg-a", .constraint = .{ .exact = .{ .major = 2, .minor = 0, .patch = 0 } } },
+    });
+
+    switch (result) {
+        .success => {
+            try std.testing.expect(false); // Should fail
+        },
+        .failure => |*failure| {
+            defer failure.deinit();
+            // Expected - no matching version
+        },
+    }
+}
+
+test "SATResolver multiple package request" {
+    const allocator = std.testing.allocator;
+
+    var resolver = SATResolver.init(allocator);
+    defer resolver.deinit();
+
+    try resolver.registerPackage(
+        .{ .name = "pkg-a", .version = .{ .major = 1, .minor = 0, .patch = 0 }, .revision = 1, .build_id = "a1" },
+        &[_]PackageCandidate.Dependency{},
+        &[_][]const u8{},
+    );
+
+    try resolver.registerPackage(
+        .{ .name = "pkg-b", .version = .{ .major = 1, .minor = 0, .patch = 0 }, .revision = 1, .build_id = "b1" },
+        &[_]PackageCandidate.Dependency{},
+        &[_][]const u8{},
+    );
+
+    try resolver.registerPackage(
+        .{ .name = "pkg-c", .version = .{ .major = 1, .minor = 0, .patch = 0 }, .revision = 1, .build_id = "c1" },
+        &[_]PackageCandidate.Dependency{},
+        &[_][]const u8{},
+    );
+
+    const result = try resolver.resolve(&[_]PackageRequest{
+        .{ .name = "pkg-a", .constraint = .any },
+        .{ .name = "pkg-b", .constraint = .any },
+        .{ .name = "pkg-c", .constraint = .any },
+    });
+
+    switch (result) {
+        .success => |packages| {
+            defer allocator.free(packages);
+            try std.testing.expectEqual(@as(usize, 3), packages.len);
+        },
+        .failure => {
+            try std.testing.expect(false);
+        },
+    }
+}

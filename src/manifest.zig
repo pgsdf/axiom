@@ -1106,3 +1106,264 @@ test "Manifest.serialize with virtual packages" {
     try std.testing.expect(std.mem.indexOf(u8, serialized, "conflicts:") != null);
     try std.testing.expect(std.mem.indexOf(u8, serialized, "- csh") != null);
 }
+
+test "Manifest.parse with kernel section" {
+    const allocator = std.testing.allocator;
+
+    const yaml =
+        \\name: drm-kmod
+        \\version: 6.1.0
+        \\revision: 1
+        \\description: DRM kernel modules
+        \\kernel:
+        \\  kmod: true
+        \\  freebsd_version_min: 1400000
+        \\  freebsd_version_max: 1500000
+        \\  require_exact_ident: false
+        \\  kernel_idents:
+        \\    - GENERIC
+        \\    - MINIMAL
+        \\  kld_names:
+        \\    - drm.ko
+        \\    - i915kms.ko
+        \\
+    ;
+
+    var manifest = try Manifest.parse(allocator, yaml);
+    defer manifest.deinit(allocator);
+
+    try std.testing.expectEqualStrings("drm-kmod", manifest.name);
+    try std.testing.expect(manifest.kernel != null);
+
+    const kernel = manifest.kernel.?;
+    try std.testing.expect(kernel.kmod);
+    try std.testing.expectEqual(@as(u32, 1400000), kernel.freebsd_version_min.?);
+    try std.testing.expectEqual(@as(u32, 1500000), kernel.freebsd_version_max.?);
+    try std.testing.expect(!kernel.require_exact_ident);
+    try std.testing.expectEqual(@as(usize, 2), kernel.kernel_idents.len);
+    try std.testing.expectEqualStrings("GENERIC", kernel.kernel_idents[0]);
+    try std.testing.expectEqual(@as(usize, 2), kernel.kld_names.len);
+    try std.testing.expectEqualStrings("drm.ko", kernel.kld_names[0]);
+}
+
+test "KernelCompat.validate - valid" {
+    const kc = KernelCompat{
+        .kmod = true,
+        .freebsd_version_min = 1400000,
+        .freebsd_version_max = 1500000,
+    };
+    try kc.validate();
+}
+
+test "KernelCompat.validate - version range inverted" {
+    const kc = KernelCompat{
+        .kmod = true,
+        .freebsd_version_min = 1500000,
+        .freebsd_version_max = 1400000, // min > max
+    };
+    try std.testing.expectError(KernelCompat.ValidationError.VersionRangeInverted, kc.validate());
+}
+
+test "KernelCompat.validate - ident required but empty" {
+    const kc = KernelCompat{
+        .kmod = true,
+        .require_exact_ident = true,
+        .kernel_idents = &[_][]const u8{}, // empty
+    };
+    try std.testing.expectError(KernelCompat.ValidationError.IdentRequiredButEmpty, kc.validate());
+}
+
+test "KernelCompat.validate - non-kmod with kernel fields" {
+    const kc = KernelCompat{
+        .kmod = false, // not a kmod
+        .freebsd_version_min = 1400000, // but has kernel constraints
+    };
+    try std.testing.expectError(KernelCompat.ValidationError.NonKmodWithKernelFields, kc.validate());
+}
+
+test "Manifest.validate - missing name" {
+    var manifest = Manifest{
+        .name = "",
+        .version = .{ .major = 1, .minor = 0, .patch = 0 },
+        .revision = 1,
+    };
+    try std.testing.expectError(error.MissingName, manifest.validate());
+}
+
+test "Manifest.validate - invalid package name" {
+    var manifest = Manifest{
+        .name = "invalid/name",
+        .version = .{ .major = 1, .minor = 0, .patch = 0 },
+        .revision = 1,
+    };
+    try std.testing.expectError(error.InvalidPackageName, manifest.validate());
+}
+
+test "Manifest.validate - valid package name" {
+    var manifest = Manifest{
+        .name = "valid-package_name+1",
+        .version = .{ .major = 1, .minor = 0, .patch = 0 },
+        .revision = 1,
+    };
+    try manifest.validate();
+}
+
+test "Manifest.isKernelBound" {
+    var manifest = Manifest{
+        .name = "test",
+        .version = .{ .major = 1, .minor = 0, .patch = 0 },
+        .revision = 1,
+        .kernel = KernelCompat{ .kmod = true },
+    };
+    try std.testing.expect(manifest.isKernelBound());
+
+    manifest.kernel = KernelCompat{ .kmod = false };
+    try std.testing.expect(!manifest.isKernelBound());
+
+    manifest.kernel = null;
+    try std.testing.expect(!manifest.isKernelBound());
+}
+
+test "Manifest.replacesPackage" {
+    const allocator = std.testing.allocator;
+
+    const yaml =
+        \\name: bash
+        \\version: 5.2.0
+        \\revision: 1
+        \\replaces:
+        \\  - sh
+        \\  - oldsh<3.0.0
+        \\
+    ;
+
+    var manifest = try Manifest.parse(allocator, yaml);
+    defer manifest.deinit(allocator);
+
+    // Replaces sh (any version)
+    try std.testing.expect(manifest.replacesPackage("sh", null));
+    try std.testing.expect(manifest.replacesPackage("sh", Version{ .major = 1, .minor = 0, .patch = 0 }));
+
+    // Replaces oldsh < 3.0.0
+    try std.testing.expect(manifest.replacesPackage("oldsh", Version{ .major = 2, .minor = 0, .patch = 0 }));
+    try std.testing.expect(!manifest.replacesPackage("oldsh", Version{ .major = 3, .minor = 0, .patch = 0 }));
+
+    // Does not replace fish
+    try std.testing.expect(!manifest.replacesPackage("fish", null));
+}
+
+test "Provenance.parse" {
+    const allocator = std.testing.allocator;
+
+    const yaml =
+        \\build_time: 1702400000
+        \\builder: axiom-builder
+        \\build_user: pkg
+        \\source_url: https://example.com/source.tar.gz
+        \\source_hash: sha256:abc123
+        \\compiler: clang
+        \\compiler_version: 16.0.0
+        \\build_flags:
+        \\  - -O2
+        \\  - -march=native
+        \\
+    ;
+
+    var prov = try Provenance.parse(allocator, yaml);
+    defer prov.deinit(allocator);
+
+    try std.testing.expectEqual(@as(i64, 1702400000), prov.build_time);
+    try std.testing.expectEqualStrings("axiom-builder", prov.builder);
+    try std.testing.expectEqualStrings("pkg", prov.build_user.?);
+    try std.testing.expectEqualStrings("https://example.com/source.tar.gz", prov.source_url.?);
+    try std.testing.expectEqualStrings("sha256:abc123", prov.source_hash.?);
+    try std.testing.expectEqualStrings("clang", prov.compiler.?);
+    try std.testing.expectEqualStrings("16.0.0", prov.compiler_version.?);
+    try std.testing.expectEqual(@as(usize, 2), prov.build_flags.len);
+    try std.testing.expectEqualStrings("-O2", prov.build_flags[0]);
+}
+
+test "isValidPackageName" {
+    try std.testing.expect(isValidPackageName("bash"));
+    try std.testing.expect(isValidPackageName("lib-ssl"));
+    try std.testing.expect(isValidPackageName("pkg_name"));
+    try std.testing.expect(isValidPackageName("gcc++-12"));
+    try std.testing.expect(isValidPackageName("123"));
+    try std.testing.expect(!isValidPackageName(""));
+    try std.testing.expect(!isValidPackageName("path/to/pkg"));
+    try std.testing.expect(!isValidPackageName("pkg name"));
+    try std.testing.expect(!isValidPackageName("pkg@version"));
+}
+
+test "Manifest.parse with tags" {
+    const allocator = std.testing.allocator;
+
+    const yaml =
+        \\name: vim
+        \\version: 9.0.0
+        \\revision: 1
+        \\tags:
+        \\  - editor
+        \\  - terminal
+        \\  - cli
+        \\
+    ;
+
+    var manifest = try Manifest.parse(allocator, yaml);
+    defer manifest.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 3), manifest.tags.len);
+    try std.testing.expectEqualStrings("editor", manifest.tags[0]);
+    try std.testing.expectEqualStrings("terminal", manifest.tags[1]);
+    try std.testing.expectEqualStrings("cli", manifest.tags[2]);
+}
+
+test "Manifest.parse with origin" {
+    const allocator = std.testing.allocator;
+
+    const yaml =
+        \\name: autoconf
+        \\version: 2.71.0
+        \\revision: 1
+        \\origin: devel/autoconf
+        \\
+    ;
+
+    var manifest = try Manifest.parse(allocator, yaml);
+    defer manifest.deinit(allocator);
+
+    try std.testing.expectEqualStrings("autoconf", manifest.name);
+    try std.testing.expectEqualStrings("devel/autoconf", manifest.origin.?);
+}
+
+test "Manifest.serialize roundtrip" {
+    const allocator = std.testing.allocator;
+
+    const yaml =
+        \\name: test-pkg
+        \\version: 1.2.3
+        \\revision: 5
+        \\description: A test package
+        \\license: MIT
+        \\homepage: https://example.com
+        \\maintainer: test@example.com
+        \\origin: test/pkg
+        \\
+    ;
+
+    var manifest = try Manifest.parse(allocator, yaml);
+    defer manifest.deinit(allocator);
+
+    const serialized = try manifest.serialize(allocator);
+    defer allocator.free(serialized);
+
+    // Parse the serialized output
+    var reparsed = try Manifest.parse(allocator, serialized);
+    defer reparsed.deinit(allocator);
+
+    try std.testing.expectEqualStrings(manifest.name, reparsed.name);
+    try std.testing.expectEqual(manifest.version.major, reparsed.version.major);
+    try std.testing.expectEqual(manifest.version.minor, reparsed.version.minor);
+    try std.testing.expectEqual(manifest.version.patch, reparsed.version.patch);
+    try std.testing.expectEqual(manifest.revision, reparsed.revision);
+}
