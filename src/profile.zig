@@ -211,27 +211,45 @@ pub const Profile = struct {
 
     /// Write profile to YAML format
     pub fn write(self: Profile, writer: anytype) !void {
+        var buf: [256]u8 = undefined;
         // Always write format_version first
-        try std.fmt.format(writer, "format_version: \"{s}\"\n", .{FormatVersions.profile});
-        try std.fmt.format(writer, "name: {s}\n", .{self.name});
+        try writer.writeAll("format_version: \"");
+        try writer.writeAll(FormatVersions.profile);
+        try writer.writeAll("\"\n");
+        try writer.writeAll("name: ");
+        try writer.writeAll(self.name);
+        try writer.writeAll("\n");
         if (self.description) |desc| {
-            try std.fmt.format(writer, "description: {s}\n", .{desc});
+            try writer.writeAll("description: ");
+            try writer.writeAll(desc);
+            try writer.writeAll("\n");
         }
 
         try writer.writeAll("packages:\n");
         for (self.packages) |pkg| {
-            try std.fmt.format(writer, "  - name: {s}\n", .{pkg.name});
+            try writer.writeAll("  - name: ");
+            try writer.writeAll(pkg.name);
+            try writer.writeAll("\n");
             switch (pkg.constraint) {
                 .exact => |v| {
-                    try std.fmt.format(writer, "    version: \"{f}\"\n", .{v});
+                    try writer.writeAll("    version: \"");
+                    const ver = std.fmt.bufPrint(&buf, "{d}.{d}.{d}", .{ v.major, v.minor, v.patch }) catch unreachable;
+                    try writer.writeAll(ver);
+                    try writer.writeAll("\"\n");
                     try writer.writeAll("    constraint: exact\n");
                 },
                 .tilde => |v| {
-                    try std.fmt.format(writer, "    version: \"~{f}\"\n", .{v});
+                    try writer.writeAll("    version: \"~");
+                    const ver = std.fmt.bufPrint(&buf, "{d}.{d}.{d}", .{ v.major, v.minor, v.patch }) catch unreachable;
+                    try writer.writeAll(ver);
+                    try writer.writeAll("\"\n");
                     try writer.writeAll("    constraint: tilde\n");
                 },
                 .caret => |v| {
-                    try std.fmt.format(writer, "    version: \"^{f}\"\n", .{v});
+                    try writer.writeAll("    version: \"^");
+                    const ver = std.fmt.bufPrint(&buf, "{d}.{d}.{d}", .{ v.major, v.minor, v.patch }) catch unreachable;
+                    try writer.writeAll(ver);
+                    try writer.writeAll("\"\n");
                     try writer.writeAll("    constraint: caret\n");
                 },
                 .any => {
@@ -242,20 +260,24 @@ pub const Profile = struct {
                     try writer.writeAll("    version: \"");
                     if (r.min) |min| {
                         if (r.min_inclusive) {
-                            try std.fmt.format(writer, ">={f}", .{min});
+                            try writer.writeAll(">=");
                         } else {
-                            try std.fmt.format(writer, ">{f}", .{min});
+                            try writer.writeAll(">");
                         }
+                        const ver = std.fmt.bufPrint(&buf, "{d}.{d}.{d}", .{ min.major, min.minor, min.patch }) catch unreachable;
+                        try writer.writeAll(ver);
                     }
                     if (r.max) |max| {
                         if (r.min != null) {
                             try writer.writeAll(",");
                         }
                         if (r.max_inclusive) {
-                            try std.fmt.format(writer, "<={f}", .{max});
+                            try writer.writeAll("<=");
                         } else {
-                            try std.fmt.format(writer, "<{f}", .{max});
+                            try writer.writeAll("<");
                         }
+                        const ver = std.fmt.bufPrint(&buf, "{d}.{d}.{d}", .{ max.major, max.minor, max.patch }) catch unreachable;
+                        try writer.writeAll(ver);
                     }
                     try writer.writeAll("\"\n");
                     try writer.writeAll("    constraint: range\n");
@@ -406,18 +428,33 @@ pub const ProfileLock = struct {
 
     /// Write lock file to YAML format
     pub fn write(self: ProfileLock, writer: anytype) !void {
+        var buf: [256]u8 = undefined;
         // Always write format_version first
-        try std.fmt.format(writer, "format_version: \"{s}\"\n", .{FormatVersions.lock});
-        try std.fmt.format(writer, "profile_name: {s}\n", .{self.profile_name});
-        try std.fmt.format(writer, "lock_version: {d}\n", .{self.lock_version});
+        try writer.writeAll("format_version: \"");
+        try writer.writeAll(FormatVersions.lock);
+        try writer.writeAll("\"\n");
+        try writer.writeAll("profile_name: ");
+        try writer.writeAll(self.profile_name);
+        try writer.writeAll("\n");
+        const lock_ver = std.fmt.bufPrint(&buf, "lock_version: {d}\n", .{self.lock_version}) catch unreachable;
+        try writer.writeAll(lock_ver);
         try writer.writeAll("resolved:\n");
 
         for (self.resolved) |pkg| {
-            try std.fmt.format(writer, "  - name: {s}\n", .{pkg.id.name});
-            try std.fmt.format(writer, "    version: \"{f}\"\n", .{pkg.id.version});
-            try std.fmt.format(writer, "    revision: {d}\n", .{pkg.id.revision});
-            try std.fmt.format(writer, "    build_id: {s}\n", .{pkg.id.build_id});
-            try std.fmt.format(writer, "    requested: {}\n", .{pkg.requested});
+            try writer.writeAll("  - name: ");
+            try writer.writeAll(pkg.id.name);
+            try writer.writeAll("\n");
+            try writer.writeAll("    version: \"");
+            const ver = std.fmt.bufPrint(&buf, "{d}.{d}.{d}", .{ pkg.id.version.major, pkg.id.version.minor, pkg.id.version.patch }) catch unreachable;
+            try writer.writeAll(ver);
+            try writer.writeAll("\"\n");
+            const rev = std.fmt.bufPrint(&buf, "    revision: {d}\n", .{pkg.id.revision}) catch unreachable;
+            try writer.writeAll(rev);
+            try writer.writeAll("    build_id: ");
+            try writer.writeAll(pkg.id.build_id);
+            try writer.writeAll("\n");
+            const req = std.fmt.bufPrint(&buf, "    requested: {}\n", .{pkg.requested}) catch unreachable;
+            try writer.writeAll(req);
         }
     }
 
