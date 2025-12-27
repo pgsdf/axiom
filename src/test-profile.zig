@@ -84,7 +84,7 @@ pub fn main() !void {
     std.debug.print("--------------------------\n", .{});
 
     var zfs_handle = zfs.ZfsHandle.init() catch |err| {
-        std.debug.print("Cannot initialize ZFS: {}\n", .{err});
+        std.debug.print("Cannot initialize ZFS: {any}\n", .{err});
         std.debug.print("Skipping profile manager tests (requires root)\n", .{});
         std.debug.print("\n✓ Profile parsing tests completed successfully!\n", .{});
         return;

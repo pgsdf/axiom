@@ -38,7 +38,7 @@ pub fn main() !void {
                 setup.SetupError.DatasetExists => std.process.exit(1),
                 setup.SetupError.Cancelled => std.process.exit(0),
                 else => {
-                    std.debug.print("Setup failed: {}\n", .{err});
+                    std.debug.print("Setup failed: {any}\n", .{err});
                     std.process.exit(1);
                 },
             }
@@ -48,7 +48,7 @@ pub fn main() !void {
 
     // Initialize ZFS
     var zfs_handle = zfs.ZfsHandle.init() catch |err| {
-        std.debug.print("Error: Failed to initialize ZFS: {}\n", .{err});
+        std.debug.print("Error: Failed to initialize ZFS: {any}\n", .{err});
         std.debug.print("Axiom requires ZFS and root privileges.\n", .{});
         std.debug.print("\nTroubleshooting:\n", .{});
         std.debug.print("  1. Ensure ZFS/OpenZFS is installed (from FreeBSD base or ports)\n", .{});
@@ -75,7 +75,7 @@ pub fn main() !void {
 
     // Load official PGSD signing keys (bundled with Axiom)
     trust_store.loadOfficialKeys() catch |err| {
-        std.debug.print("Warning: Could not load official PGSD keys: {}\n", .{err});
+        std.debug.print("Warning: Could not load official PGSD keys: {any}\n", .{err});
     };
 
     var verifier = signature.Verifier.init(allocator, &trust_store, .warn);
@@ -101,7 +101,7 @@ pub fn main() !void {
 
     // Initialize user context (for multi-user support)
     var user_ctx = user.UserContext.init(allocator) catch |err| {
-        std.debug.print("Warning: Could not initialize user context: {}\n", .{err});
+        std.debug.print("Warning: Could not initialize user context: {any}\n", .{err});
         std.debug.print("Some user-specific features may not work.\n", .{});
         // Continue without user context for basic operations
         var axiom_cli = cli.CLI.init(

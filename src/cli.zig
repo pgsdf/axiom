@@ -1257,7 +1257,7 @@ pub const CLI = struct {
 
         // Run import
         const pkg_id = self.importer.import(source, options) catch |err| {
-            std.debug.print("Import failed: {}\n", .{err});
+            std.debug.print("Import failed: {any}\n", .{err});
             return;
         };
 
@@ -1570,7 +1570,7 @@ pub const CLI = struct {
 
         // Resolve dependencies
         var lock = self.resolver.resolve(prof) catch |err| {
-            std.debug.print("\n✗ Resolution failed: {}\n", .{err});
+            std.debug.print("\n✗ Resolution failed: {any}\n", .{err});
 
             // Phase 29: Show resource limit diagnostics
             if (self.resolver.getLastStats()) |stats| {
@@ -2644,14 +2644,14 @@ pub const CLI = struct {
 
         // Load build recipe
         var recipe = build_pkg.BuildRecipe.loadFromFile(self.allocator, recipe_path) catch |err| {
-            std.debug.print("Error loading recipe: {}\n", .{err});
+            std.debug.print("Error loading recipe: {any}\n", .{err});
             return;
         };
         defer recipe.deinit();
 
         // Run build
         const pkg_id = self.builder.build(&recipe, options) catch |err| {
-            std.debug.print("\n✗ Build failed: {}\n", .{err});
+            std.debug.print("\n✗ Build failed: {any}\n", .{err});
             return;
         };
 
@@ -2715,7 +2715,7 @@ pub const CLI = struct {
         std.debug.print("Adding key from: {s}\n", .{key_path});
 
         var key = signature.importPublicKey(self.allocator, key_path) catch |err| {
-            std.debug.print("Error: Failed to import key: {}\n", .{err});
+            std.debug.print("Error: Failed to import key: {any}\n", .{err});
             return;
         };
         defer key.deinit(self.allocator);
@@ -2861,7 +2861,7 @@ pub const CLI = struct {
 
         // Load secret key
         const key_file = std.fs.cwd().openFile(key_path.?, .{}) catch |err| {
-            std.debug.print("Error: Failed to open key file: {}\n", .{err});
+            std.debug.print("Error: Failed to open key file: {any}\n", .{err});
             return;
         };
         defer key_file.close();
@@ -2997,7 +2997,7 @@ pub const CLI = struct {
 
         var multi_verifier = signature.MultiSignatureVerifier.init(self.allocator, self.trust_store);
         const sigs = multi_verifier.listSignatures(pkg_path) catch |err| {
-            std.debug.print("Error listing signatures: {}\n", .{err});
+            std.debug.print("Error listing signatures: {any}\n", .{err});
             return;
         };
         defer self.allocator.free(sigs);
@@ -3095,7 +3095,7 @@ pub const CLI = struct {
         defer provider.deinit();
 
         provider.initialize() catch |err| {
-            std.debug.print("Error: Failed to initialize PKCS#11 library: {}\n", .{err});
+            std.debug.print("Error: Failed to initialize PKCS#11 library: {any}\n", .{err});
             std.debug.print("\nMake sure the PKCS#11 library exists and is accessible.\n", .{});
             std.debug.print("Common library paths:\n", .{});
             std.debug.print("  OpenSC:   /usr/lib/pkcs11/opensc-pkcs11.so\n", .{});
@@ -3105,7 +3105,7 @@ pub const CLI = struct {
         };
 
         const slots = provider.listSlots() catch |err| {
-            std.debug.print("Error: Failed to list slots: {}\n", .{err});
+            std.debug.print("Error: Failed to list slots: {any}\n", .{err});
             return;
         };
         defer self.allocator.free(slots);
@@ -3183,21 +3183,21 @@ pub const CLI = struct {
         defer provider.deinit();
 
         provider.initialize() catch |err| {
-            std.debug.print("Error: Failed to initialize PKCS#11 library: {}\n", .{err});
+            std.debug.print("Error: Failed to initialize PKCS#11 library: {any}\n", .{err});
             return;
         };
 
         // Login if PIN provided
         if (pin) |p| {
             provider.login(p) catch |err| {
-                std.debug.print("Error: Failed to login to token: {}\n", .{err});
+                std.debug.print("Error: Failed to login to token: {any}\n", .{err});
                 std.debug.print("Check your PIN and try again.\n", .{});
                 return;
             };
         }
 
         const keys = provider.listKeys() catch |err| {
-            std.debug.print("Error: Failed to list keys: {}\n", .{err});
+            std.debug.print("Error: Failed to list keys: {any}\n", .{err});
             if (pin == null) {
                 std.debug.print("\nYou may need to provide a PIN with --pin\n", .{});
             }
@@ -3255,7 +3255,7 @@ pub const CLI = struct {
 
         var svc_mgr = ServiceManager.init(self.allocator);
         const services = svc_mgr.listServicesFromProfile(profile_path) catch |err| {
-            std.debug.print("Error listing services: {}\n", .{err});
+            std.debug.print("Error listing services: {any}\n", .{err});
             return;
         };
         defer self.allocator.free(services);
@@ -3298,7 +3298,7 @@ pub const CLI = struct {
         var svc_mgr = ServiceManager.init(self.allocator);
 
         const status = svc_mgr.getServiceStatus(service_name) catch |err| {
-            std.debug.print("Error getting status for {s}: {}\n", .{ service_name, err });
+            std.debug.print("Error getting status for {s}: {any}\n", .{ service_name, err });
             return;
         };
 
@@ -3322,7 +3322,7 @@ pub const CLI = struct {
         var svc_mgr = ServiceManager.init(self.allocator);
 
         svc_mgr.enableService(service_name) catch |err| {
-            std.debug.print("Error enabling service {s}: {}\n", .{ service_name, err });
+            std.debug.print("Error enabling service {s}: {any}\n", .{ service_name, err });
             return;
         };
 
@@ -3342,7 +3342,7 @@ pub const CLI = struct {
         var svc_mgr = ServiceManager.init(self.allocator);
 
         svc_mgr.disableService(service_name) catch |err| {
-            std.debug.print("Error disabling service {s}: {}\n", .{ service_name, err });
+            std.debug.print("Error disabling service {s}: {any}\n", .{ service_name, err });
             return;
         };
 
@@ -3362,7 +3362,7 @@ pub const CLI = struct {
         var svc_mgr = ServiceManager.init(self.allocator);
 
         svc_mgr.startService(service_name) catch |err| {
-            std.debug.print("Error starting service {s}: {}\n", .{ service_name, err });
+            std.debug.print("Error starting service {s}: {any}\n", .{ service_name, err });
             return;
         };
 
@@ -3382,7 +3382,7 @@ pub const CLI = struct {
         var svc_mgr = ServiceManager.init(self.allocator);
 
         svc_mgr.stopService(service_name) catch |err| {
-            std.debug.print("Error stopping service {s}: {}\n", .{ service_name, err });
+            std.debug.print("Error stopping service {s}: {any}\n", .{ service_name, err });
             return;
         };
 
@@ -3402,7 +3402,7 @@ pub const CLI = struct {
         var svc_mgr = ServiceManager.init(self.allocator);
 
         svc_mgr.restartService(service_name) catch |err| {
-            std.debug.print("Error restarting service {s}: {}\n", .{ service_name, err });
+            std.debug.print("Error restarting service {s}: {any}\n", .{ service_name, err });
             return;
         };
 
@@ -3472,7 +3472,7 @@ pub const CLI = struct {
         // Save configuration
         const config_path = "/etc/axiom/cache.yaml";
         self.cache_config.saveToFile(config_path) catch |err| {
-            std.debug.print("Warning: Could not save config to {s}: {}\n", .{ config_path, err });
+            std.debug.print("Warning: Could not save config to {s}: {any}\n", .{ config_path, err });
         };
 
         std.debug.print("✓ Added cache: {s} (priority {d})\n", .{ url, priority });
@@ -3489,7 +3489,7 @@ pub const CLI = struct {
         if (self.cache_config.removeCache(url)) {
             const config_path = "/etc/axiom/cache.yaml";
             self.cache_config.saveToFile(config_path) catch |err| {
-                std.debug.print("Warning: Could not save config: {}\n", .{err});
+                std.debug.print("Warning: Could not save config: {any}\n", .{err});
             };
             std.debug.print("✓ Removed cache: {s}\n", .{url});
         } else {
@@ -3553,7 +3553,7 @@ pub const CLI = struct {
         }
 
         const path = self.cache_client.fetchPackage(pkg_id, verify, null, null) catch |err| {
-            std.debug.print("✗ Failed to fetch package: {}\n", .{err});
+            std.debug.print("✗ Failed to fetch package: {any}\n", .{err});
             return;
         };
         defer self.allocator.free(path);
@@ -3565,7 +3565,7 @@ pub const CLI = struct {
             if (std.mem.eql(u8, arg, "--install")) {
                 std.debug.print("Installing package...\n", .{});
                 self.cache_client.receiveIntoStore(path, pkg_id) catch |err| {
-                    std.debug.print("✗ Failed to install: {}\n", .{err});
+                    std.debug.print("✗ Failed to install: {any}\n", .{err});
                     return;
                 };
                 std.debug.print("✓ Package installed\n", .{});
@@ -3632,7 +3632,7 @@ pub const CLI = struct {
             self.zfs_handle,
             pkg_id,
         ) catch |err| {
-            std.debug.print("✗ Failed to push package: {}\n", .{err});
+            std.debug.print("✗ Failed to push package: {any}\n", .{err});
             return;
         };
 
@@ -3644,7 +3644,7 @@ pub const CLI = struct {
         std.debug.print("Syncing with remote caches...\n", .{});
 
         self.cache_client.sync() catch |err| {
-            std.debug.print("✗ Sync failed: {}\n", .{err});
+            std.debug.print("✗ Sync failed: {any}\n", .{err});
             return;
         };
 
@@ -3662,7 +3662,7 @@ pub const CLI = struct {
         std.debug.print("Cleaning local cache...\n", .{});
 
         const freed = self.cache_client.clean(force) catch |err| {
-            std.debug.print("✗ Cache clean failed: {}\n", .{err});
+            std.debug.print("✗ Cache clean failed: {any}\n", .{err});
             return;
         };
 
@@ -3743,7 +3743,7 @@ pub const CLI = struct {
         }
 
         self.user_profile_mgr.?.createProfile(prof) catch |err| {
-            std.debug.print("Error creating profile: {}\n", .{err});
+            std.debug.print("Error creating profile: {any}\n", .{err});
             return;
         };
 
@@ -3761,7 +3761,7 @@ pub const CLI = struct {
         }
 
         const profiles = self.user_profile_mgr.?.listProfiles() catch |err| {
-            std.debug.print("Error listing profiles: {}\n", .{err});
+            std.debug.print("Error listing profiles: {any}\n", .{err});
             return;
         };
         defer self.allocator.free(profiles);
@@ -3801,7 +3801,7 @@ pub const CLI = struct {
 
         const name = args[0];
         var prof = self.user_profile_mgr.?.loadProfile(name) catch |err| {
-            std.debug.print("Error loading profile: {}\n", .{err});
+            std.debug.print("Error loading profile: {any}\n", .{err});
             return;
         };
         defer prof.deinit(self.allocator);
@@ -3842,7 +3842,7 @@ pub const CLI = struct {
         std.debug.print("Deleting user profile: {s}\n", .{name});
 
         self.user_profile_mgr.?.deleteProfile(name) catch |err| {
-            std.debug.print("Error deleting profile: {}\n", .{err});
+            std.debug.print("Error deleting profile: {any}\n", .{err});
             return;
         };
 
@@ -3894,7 +3894,7 @@ pub const CLI = struct {
 
         // Load user profile
         var prof = self.user_profile_mgr.?.loadProfile(name) catch |err| {
-            std.debug.print("Error loading profile: {}\n", .{err});
+            std.debug.print("Error loading profile: {any}\n", .{err});
             return;
         };
         defer prof.deinit(self.allocator);
@@ -3904,7 +3904,7 @@ pub const CLI = struct {
 
         // Resolve using system resolver (packages are in shared store)
         var lock = self.resolver.resolve(prof) catch |err| {
-            std.debug.print("\n✗ Resolution failed: {}\n", .{err});
+            std.debug.print("\n✗ Resolution failed: {any}\n", .{err});
 
             // Show detailed diagnostics from SAT solver if available
             if (self.resolver.getLastFailure()) |failure| {
@@ -3934,7 +3934,7 @@ pub const CLI = struct {
 
         // Save lock file to user's profile
         self.user_profile_mgr.?.saveLock(name, lock) catch |err| {
-            std.debug.print("Error saving lock file: {}\n", .{err});
+            std.debug.print("Error saving lock file: {any}\n", .{err});
             return;
         };
 
@@ -4024,7 +4024,7 @@ pub const CLI = struct {
 
         // Load lock file from user profile
         var lock = self.user_profile_mgr.?.loadLock(profile_name) catch |err| {
-            std.debug.print("Error loading lock file: {}\n", .{err});
+            std.debug.print("Error loading lock file: {any}\n", .{err});
             std.debug.print("Run 'axiom user-resolve {s}' first.\n", .{profile_name});
             return;
         };
@@ -4069,7 +4069,7 @@ pub const CLI = struct {
                     std.debug.print("  - Use --conflict-policy keep-both to keep both files\n", .{});
                     return;
                 }
-                std.debug.print("Realization failed: {}\n", .{err});
+                std.debug.print("Realization failed: {any}\n", .{err});
                 return;
             };
             defer realization.freeEnvironment(&env, self.allocator);
@@ -4084,7 +4084,7 @@ pub const CLI = struct {
                     std.debug.print("  - Use --conflict-policy keep-both to keep both files\n", .{});
                     return;
                 }
-                std.debug.print("Realization failed: {}\n", .{err});
+                std.debug.print("Realization failed: {any}\n", .{err});
                 return;
             };
             defer realization.freeEnvironment(&env, self.allocator);
@@ -4111,7 +4111,7 @@ pub const CLI = struct {
 
         const env_name = args[0];
         self.user_realization.?.activate(env_name) catch |err| {
-            std.debug.print("Activation failed: {}\n", .{err});
+            std.debug.print("Activation failed: {any}\n", .{err});
             return;
         };
     }
@@ -4127,7 +4127,7 @@ pub const CLI = struct {
         }
 
         const envs = self.user_realization.?.listEnvironments() catch |err| {
-            std.debug.print("Error listing environments: {}\n", .{err});
+            std.debug.print("Error listing environments: {any}\n", .{err});
             return;
         };
         defer self.allocator.free(envs);
@@ -4177,7 +4177,7 @@ pub const CLI = struct {
 
         if (bytes_read > 0 and (buffer[0] == 'y' or buffer[0] == 'Y')) {
             self.user_realization.?.destroy(env_name) catch |err| {
-                std.debug.print("Error destroying environment: {}\n", .{err});
+                std.debug.print("Error destroying environment: {any}\n", .{err});
                 return;
             };
             std.debug.print("Environment destroyed\n", .{});
@@ -4225,7 +4225,7 @@ pub const CLI = struct {
         }
 
         const users = self.multi_user_mgr.?.listUsers() catch |err| {
-            std.debug.print("Error listing users: {}\n", .{err});
+            std.debug.print("Error listing users: {any}\n", .{err});
             return;
         };
         defer self.allocator.free(users);
@@ -4274,7 +4274,7 @@ pub const CLI = struct {
 
         if (bytes_read > 0 and (buffer[0] == 'y' or buffer[0] == 'Y')) {
             self.multi_user_mgr.?.removeUser(self.user_ctx.?.*, username) catch |err| {
-                std.debug.print("Error removing user data: {}\n", .{err});
+                std.debug.print("Error removing user data: {any}\n", .{err});
                 return;
             };
             std.debug.print("User data removed\n", .{});
@@ -6045,7 +6045,7 @@ pub const CLI = struct {
 
             // Build and import
             var result = migrator.migrate(port) catch |err| {
-                std.debug.print("  ✗ Failed: {}\n", .{err});
+                std.debug.print("  ✗ Failed: {any}\n", .{err});
                 fail_count += 1;
                 continue;
             };
@@ -6146,7 +6146,7 @@ pub const CLI = struct {
         }
 
         const envs = manager.list() catch |err| {
-            std.debug.print("Failed to list boot environments: {}\n", .{err});
+            std.debug.print("Failed to list boot environments: {any}\n", .{err});
             return;
         };
         defer {
@@ -6238,7 +6238,7 @@ pub const CLI = struct {
             .source = source,
             .activate = do_activate,
         }) catch |err| {
-            std.debug.print("Failed to create boot environment: {}\n", .{err});
+            std.debug.print("Failed to create boot environment: {any}\n", .{err});
             return;
         };
 
@@ -6285,7 +6285,7 @@ pub const CLI = struct {
         manager.activate(name.?, .{
             .temporary = temporary,
         }) catch |err| {
-            std.debug.print("Failed to activate boot environment: {}\n", .{err});
+            std.debug.print("Failed to activate boot environment: {any}\n", .{err});
             return;
         };
 
@@ -6337,7 +6337,7 @@ pub const CLI = struct {
                 std.debug.print("Error: Cannot destroy the currently active boot environment.\n", .{});
                 std.debug.print("Activate a different BE first: axiom be-activate <other>\n", .{});
             } else {
-                std.debug.print("Failed to destroy boot environment: {}\n", .{err});
+                std.debug.print("Failed to destroy boot environment: {any}\n", .{err});
             }
             return;
         };
@@ -6368,7 +6368,7 @@ pub const CLI = struct {
             if (err == error.NoPreviousBE) {
                 std.debug.print("Error: No previous boot environment to rollback to.\n", .{});
             } else {
-                std.debug.print("Failed to rollback: {}\n", .{err});
+                std.debug.print("Failed to rollback: {any}\n", .{err});
             }
             return;
         };
@@ -6411,7 +6411,7 @@ pub const CLI = struct {
         std.debug.print("Renaming boot environment: {s} -> {s}\n", .{ old_name.?, new_name.? });
 
         manager.rename(old_name.?, new_name.?) catch |err| {
-            std.debug.print("Failed to rename boot environment: {}\n", .{err});
+            std.debug.print("Failed to rename boot environment: {any}\n", .{err});
             return;
         };
 
@@ -6453,7 +6453,7 @@ pub const CLI = struct {
         std.debug.print("Mounting boot environment: {s}\n", .{name.?});
 
         const mounted_path = manager.mount(name.?, mountpoint) catch |err| {
-            std.debug.print("Failed to mount boot environment: {}\n", .{err});
+            std.debug.print("Failed to mount boot environment: {any}\n", .{err});
             return;
         };
         defer self.allocator.free(mounted_path);
@@ -6497,7 +6497,7 @@ pub const CLI = struct {
         std.debug.print("Unmounting boot environment: {s}\n", .{name.?});
 
         manager.unmount(name.?, force) catch |err| {
-            std.debug.print("Failed to unmount boot environment: {}\n", .{err});
+            std.debug.print("Failed to unmount boot environment: {any}\n", .{err});
             return;
         };
 
@@ -6561,7 +6561,7 @@ pub const CLI = struct {
 
         var server = CacheServer.init(self.allocator, store_path, port);
         server.start() catch |err| {
-            std.debug.print("Failed to start server: {}\n", .{err});
+            std.debug.print("Failed to start server: {any}\n", .{err});
             return;
         };
     }
@@ -6587,7 +6587,7 @@ pub const CLI = struct {
 
         // Load cache configuration
         const config = RemoteCacheConfig.load(self.allocator, "/etc/axiom/caches.yaml") catch |err| {
-            std.debug.print("Failed to load cache config: {}\n", .{err});
+            std.debug.print("Failed to load cache config: {any}\n", .{err});
             return;
         };
         defer @constCast(&config).deinit(self.allocator);
@@ -6678,7 +6678,7 @@ pub const CLI = struct {
 
         // Load cache configuration
         const config = RemoteCacheConfig.load(self.allocator, "/etc/axiom/caches.yaml") catch |err| {
-            std.debug.print("Failed to load cache config: {}\n", .{err});
+            std.debug.print("Failed to load cache config: {any}\n", .{err});
             return;
         };
         defer @constCast(&config).deinit(self.allocator);
@@ -6686,7 +6686,7 @@ pub const CLI = struct {
         var client = RemoteCacheClient.init(self.allocator, config);
 
         const result = client.fetchPackage(name, version) catch |err| {
-            std.debug.print("Failed to fetch package: {}\n", .{err});
+            std.debug.print("Failed to fetch package: {any}\n", .{err});
             return;
         };
 
@@ -6786,7 +6786,7 @@ pub const CLI = struct {
 
         // Load cache configuration
         const config = RemoteCacheConfig.load(self.allocator, "/etc/axiom/caches.yaml") catch |err| {
-            std.debug.print("Failed to load cache config: {}\n", .{err});
+            std.debug.print("Failed to load cache config: {any}\n", .{err});
             return;
         };
         defer @constCast(&config).deinit(self.allocator);
@@ -6800,7 +6800,7 @@ pub const CLI = struct {
         var client = RemoteCacheClient.init(self.allocator, config);
 
         const result = client.syncMetadata() catch |err| {
-            std.debug.print("Failed to sync metadata: {}\n", .{err});
+            std.debug.print("Failed to sync metadata: {any}\n", .{err});
             return;
         };
 
@@ -6851,7 +6851,7 @@ pub const CLI = struct {
 
         // Load current configuration
         const config = RemoteCacheConfig.load(self.allocator, "/etc/axiom/caches.yaml") catch |err| {
-            std.debug.print("Failed to load cache config: {}\n", .{err});
+            std.debug.print("Failed to load cache config: {any}\n", .{err});
             return;
         };
         defer @constCast(&config).deinit(self.allocator);
@@ -6933,7 +6933,7 @@ pub const CLI = struct {
         // Try to read store version
         const store_path = "/axiom/store";
         const store_version = StoreVersion.read(store_path, self.allocator) catch |err| {
-            std.debug.print("\nStore Version: (error reading: {})\n", .{err});
+            std.debug.print("\nStore Version: (error reading: {any})\n", .{err});
             return;
         };
 
@@ -6943,7 +6943,7 @@ pub const CLI = struct {
 
             // Check compatibility
             const result = format_version.checkCompatibility(.store, sv) catch |err| {
-                std.debug.print("  Status: Error checking compatibility ({})\n", .{err});
+                std.debug.print("  Status: Error checking compatibility ({any})\n", .{err});
                 return;
             };
 
@@ -6996,7 +6996,7 @@ pub const CLI = struct {
 
         // Check store version
         const store_version = StoreVersion.read(store_path, self.allocator) catch |err| {
-            std.debug.print("Error reading store version: {}\n", .{err});
+            std.debug.print("Error reading store version: {any}\n", .{err});
             return;
         };
 
@@ -7004,7 +7004,7 @@ pub const CLI = struct {
             defer self.allocator.free(sv);
 
             const result = format_version.checkCompatibility(.store, sv) catch |err| {
-                std.debug.print("Error checking store compatibility: {}\n", .{err});
+                std.debug.print("Error checking store compatibility: {any}\n", .{err});
                 return;
             };
 
@@ -7037,7 +7037,7 @@ pub const CLI = struct {
 
                 // Update store version
                 StoreVersion.write(store_path, FormatVersions.store, self.allocator) catch |err| {
-                    std.debug.print("Error updating store version: {}\n", .{err});
+                    std.debug.print("Error updating store version: {any}\n", .{err});
                     return;
                 };
 
@@ -7085,7 +7085,7 @@ pub const CLI = struct {
             .check_references = true,
             .check_partial_imports = true,
         }) catch |err| {
-            std.debug.print("Error verifying store: {}\n", .{err});
+            std.debug.print("Error verifying store: {any}\n", .{err});
             return;
         };
         defer report.deinit();
@@ -7145,7 +7145,7 @@ pub const CLI = struct {
                     .remove_orphans = false, // Safer default
                     .remove_invalid = false,
                 }) catch |err| {
-                    std.debug.print("Error during repair: {}\n", .{err});
+                    std.debug.print("Error during repair: {any}\n", .{err});
                     return;
                 };
 
@@ -7201,7 +7201,7 @@ pub const CLI = struct {
 
         // Get reference count
         const count = ref_counter.countRefs(package_name) catch |err| {
-            std.debug.print("Error counting references: {}\n", .{err});
+            std.debug.print("Error counting references: {any}\n", .{err});
             return;
         };
 
@@ -7209,7 +7209,7 @@ pub const CLI = struct {
 
         // Get detailed sources
         var sources = ref_counter.getRefSources(package_name) catch |err| {
-            std.debug.print("Error getting reference sources: {}\n", .{err});
+            std.debug.print("Error getting reference sources: {any}\n", .{err});
             return;
         };
         defer {
@@ -7323,7 +7323,7 @@ pub const CLI = struct {
         defer adv_resolver.deinit();
 
         adv_resolver.buildVirtualIndex() catch |err| {
-            std.debug.print("Warning: Could not build virtual index: {}\n", .{err});
+            std.debug.print("Warning: Could not build virtual index: {any}\n", .{err});
         };
 
         // Check if target is provided by a virtual
@@ -7342,7 +7342,7 @@ pub const CLI = struct {
 
         // Get manifest for source package if it exists
         const packages = self.store.listPackages() catch |err| {
-            std.debug.print("Error listing packages: {}\n", .{err});
+            std.debug.print("Error listing packages: {any}\n", .{err});
             return;
         };
         defer {
@@ -7361,7 +7361,7 @@ pub const CLI = struct {
 
                 // Get package metadata which includes manifest
                 var metadata = self.store.getPackage(pkg) catch |err| {
-                    std.debug.print("Could not get package metadata: {}\n", .{err});
+                    std.debug.print("Could not get package metadata: {any}\n", .{err});
                     break;
                 };
                 defer {
@@ -7434,7 +7434,7 @@ pub const CLI = struct {
         defer adv_resolver.deinit();
 
         adv_resolver.buildVirtualIndex() catch |err| {
-            std.debug.print("Error building provider index: {}\n", .{err});
+            std.debug.print("Error building provider index: {any}\n", .{err});
             return;
         };
 
@@ -7540,7 +7540,7 @@ pub const CLI = struct {
         verifier.setTrustStore(self.trust_store);
 
         const report = verifier.verify(pkg_mountpoint) catch |err| {
-            std.debug.print("Verification failed: {}\n", .{err});
+            std.debug.print("Verification failed: {any}\n", .{err});
             return;
         };
         defer {
@@ -7603,7 +7603,7 @@ pub const CLI = struct {
         if (attempt_rebuild) {
             std.debug.print("\nAttempting reproducible rebuild...\n", .{});
             const repro_report = verifier.verifyReproducibility(pkg_mountpoint) catch |err| {
-                std.debug.print("Reproducibility check failed: {}\n", .{err});
+                std.debug.print("Reproducibility check failed: {any}\n", .{err});
                 return;
             };
             defer {

@@ -15,7 +15,7 @@ pub fn main() !void {
 
     // Initialize ZFS (for store, even though we'll use mock data)
     var zfs_handle = zfs.ZfsHandle.init() catch |err| {
-        std.debug.print("Cannot initialize ZFS: {}\n", .{err});
+        std.debug.print("Cannot initialize ZFS: {any}\n", .{err});
         std.debug.print("Note: Some tests will use mock data instead\n\n", .{});
         // Continue without ZFS - we'll use mock store
         try runMockTests(allocator);

@@ -1023,7 +1023,7 @@ pub const Builder = struct {
         defer {
             if (!options.keep_sandbox) {
                 sandbox.destroy() catch |err| {
-                    std.debug.print("Warning: Failed to destroy sandbox: {}\n", .{err});
+                    std.debug.print("Warning: Failed to destroy sandbox: {any}\n", .{err});
                 };
             }
         }
