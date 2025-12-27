@@ -209,9 +209,13 @@ pub const Profile = struct {
         return profile;
     }
 
-    /// Write profile to YAML format
-    pub fn write(self: Profile, writer: anytype) !void {
+    /// Serialize profile to YAML format
+    pub fn serialize(self: Profile, allocator: std.mem.Allocator) ![]u8 {
+        var result: std.ArrayList(u8) = .empty;
+        errdefer result.deinit(allocator);
+        const writer = result.writer(allocator);
         var buf: [256]u8 = undefined;
+
         // Always write format_version first
         try writer.writeAll("format_version: \"");
         try writer.writeAll(FormatVersions.profile);
@@ -284,6 +288,17 @@ pub const Profile = struct {
                 },
             }
         }
+        return result.toOwnedSlice(allocator);
+    }
+
+    /// Write profile to YAML format (legacy compatibility wrapper)
+    pub fn write(self: Profile, file: std.fs.File) !void {
+        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+        defer _ = gpa.deinit();
+        const allocator = gpa.allocator();
+        const content = try self.serialize(allocator);
+        defer allocator.free(content);
+        try file.writeAll(content);
     }
 
     /// Validate profile format version
@@ -426,9 +441,13 @@ pub const ProfileLock = struct {
         return lock;
     }
 
-    /// Write lock file to YAML format
-    pub fn write(self: ProfileLock, writer: anytype) !void {
+    /// Serialize lock file to YAML format
+    pub fn serialize(self: ProfileLock, allocator: std.mem.Allocator) ![]u8 {
+        var result: std.ArrayList(u8) = .empty;
+        errdefer result.deinit(allocator);
+        const writer = result.writer(allocator);
         var buf: [256]u8 = undefined;
+
         // Always write format_version first
         try writer.writeAll("format_version: \"");
         try writer.writeAll(FormatVersions.lock);
@@ -456,6 +475,17 @@ pub const ProfileLock = struct {
             const req = std.fmt.bufPrint(&buf, "    requested: {}\n", .{pkg.requested}) catch unreachable;
             try writer.writeAll(req);
         }
+        return result.toOwnedSlice(allocator);
+    }
+
+    /// Write lock file to YAML format (legacy compatibility wrapper)
+    pub fn write(self: ProfileLock, file: std.fs.File) !void {
+        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+        defer _ = gpa.deinit();
+        const allocator = gpa.allocator();
+        const content = try self.serialize(allocator);
+        defer allocator.free(content);
+        try file.writeAll(content);
     }
 
     /// Validate lock file format version
@@ -596,13 +626,12 @@ pub const ProfileManager = struct {
         );
         defer self.allocator.free(profile_path);
 
-        // Build content in memory first
-        var content: std.ArrayList(u8) = .empty;
-        defer content.deinit(self.allocator);
-        try profile.write(content.writer(self.allocator));
+        // Serialize content in memory first
+        const content = try profile.serialize(self.allocator);
+        defer self.allocator.free(content);
 
         // Atomically write to file
-        try self.atomicWriteFile(profile_path, content.items);
+        try self.atomicWriteFile(profile_path, content);
 
         std.debug.print("  ✓ Profile created at {s}\n", .{mountpoint});
     }
@@ -652,13 +681,12 @@ pub const ProfileManager = struct {
         );
         defer self.allocator.free(profile_path);
 
-        // Build content in memory first
-        var content: std.ArrayList(u8) = .empty;
-        defer content.deinit(self.allocator);
-        try profile.write(content.writer(self.allocator));
+        // Serialize content in memory first
+        const content = try profile.serialize(self.allocator);
+        defer self.allocator.free(content);
 
         // Atomically write to file
-        try self.atomicWriteFile(profile_path, content.items);
+        try self.atomicWriteFile(profile_path, content);
 
         std.debug.print("Profile '{s}' updated (snapshot: {s})\n", .{ profile.name, snap_name });
     }
@@ -732,13 +760,12 @@ pub const ProfileManager = struct {
         );
         defer self.allocator.free(lock_path);
 
-        // Build content in memory first
-        var content: std.ArrayList(u8) = .empty;
-        defer content.deinit(self.allocator);
-        try lock.write(content.writer(self.allocator));
+        // Serialize content in memory first
+        const content = try lock.serialize(self.allocator);
+        defer self.allocator.free(content);
 
         // Atomically write to file
-        try self.atomicWriteFile(lock_path, content.items);
+        try self.atomicWriteFile(lock_path, content);
 
         std.debug.print("Lock file saved: {s}\n", .{lock_path});
     }
