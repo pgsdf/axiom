@@ -32,7 +32,7 @@ pub fn main() !void {
     // Test removing a cache
     std.debug.print("\n3. Testing removing a cache...\n", .{});
     const removed = config.removeCache("https://mirror.example.com/axiom");
-    std.debug.print("   Removed: {}\n", .{removed});
+    std.debug.print("   Removed: {any}\n", .{removed});
     std.debug.print("   Remaining caches: {d}\n", .{config.caches.items.len});
 
     // Test configuration file loading (with temp file)

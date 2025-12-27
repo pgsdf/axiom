@@ -947,8 +947,10 @@ pub const UserRealizationEngine = struct {
         const file = try std.fs.cwd().createFile(script_path, .{ .mode = 0o755 });
         defer file.close();
 
-        var write_buf: [4096]u8 = undefined;
-        const writer = file.writer(&write_buf);
+        // Build script content in memory using ArrayList
+        var content: std.ArrayList(u8) = .empty;
+        defer content.deinit(self.allocator);
+        const writer = content.writer(self.allocator);
 
         try writer.writeAll("#!/bin/sh\n");
         try writer.writeAll("# Axiom user environment activation script\n");
@@ -985,6 +987,9 @@ pub const UserRealizationEngine = struct {
         try writer.writeAll("  unset AXIOM_USER\n");
         try writer.writeAll("  echo \"Environment deactivated\"\n");
         try writer.writeAll("}\n");
+
+        // Write all content to file at once
+        try file.writeAll(content.items);
     }
 
     /// Activate an environment

@@ -2938,8 +2938,8 @@ pub const CLI = struct {
 
         std.debug.print("\nVerification Result\n", .{});
         std.debug.print("==================\n", .{});
-        std.debug.print("Valid:          {}\n", .{result.valid});
-        std.debug.print("Key trusted:    {}\n", .{result.key_trusted});
+        std.debug.print("Valid:          {any}\n", .{result.valid});
+        std.debug.print("Key trusted:    {any}\n", .{result.key_trusted});
         if (result.key_id) |kid| std.debug.print("Key ID:         {s}\n", .{kid});
         if (result.signer) |s| std.debug.print("Signer:         {s}\n", .{s});
         std.debug.print("Files verified: {d}\n", .{result.files_verified});
@@ -3118,7 +3118,7 @@ pub const CLI = struct {
 
         for (slots) |slot| {
             std.debug.print("Slot {d}: {s}\n", .{ slot.slot_id, slot.description });
-            std.debug.print("  Token present: {}\n", .{slot.token_present});
+            std.debug.print("  Token present: {any}\n", .{slot.token_present});
             if (slot.token_present) {
                 if (slot.token_label) |label| {
                     std.debug.print("  Token label:   {s}\n", .{label});
@@ -3213,7 +3213,7 @@ pub const CLI = struct {
         for (keys) |key| {
             std.debug.print("Key: {s}\n", .{key.label});
             std.debug.print("  Type:     {s}\n", .{@tagName(key.key_type)});
-            std.debug.print("  Can sign: {}\n", .{key.can_sign});
+            std.debug.print("  Can sign: {any}\n", .{key.can_sign});
             if (key.key_id) |kid| {
                 std.debug.print("  ID:       {s}\n", .{kid});
             }
@@ -3306,7 +3306,7 @@ pub const CLI = struct {
 
         std.debug.print("Service: {s}\n", .{service_name});
         std.debug.print("Status:  {s}\n", .{status.toString()});
-        std.debug.print("Enabled: {}\n", .{enabled});
+        std.debug.print("Enabled: {any}\n", .{enabled});
     }
 
     fn serviceEnable(self: *CLI, args: []const []const u8) !void {
@@ -3440,7 +3440,7 @@ pub const CLI = struct {
         for (self.cache_config.caches.items, 0..) |item, i| {
             std.debug.print("{d}. {s}\n", .{ i + 1, item.url });
             std.debug.print("   Priority: {d}\n", .{item.priority});
-            std.debug.print("   Enabled: {}\n", .{item.enabled});
+            std.debug.print("   Enabled: {any}\n", .{item.enabled});
             if (item.trusted_keys.len > 0) {
                 std.debug.print("   Trusted keys: {d}\n", .{item.trusted_keys.len});
             }
@@ -6620,7 +6620,7 @@ pub const CLI = struct {
                 std.debug.print("\n[{d}] {s}\n", .{ idx + 1, source.url });
                 std.debug.print("    Priority: {d}\n", .{source.priority});
                 std.debug.print("    Trust Key: {s}\n", .{source.trust_key orelse "(none)"});
-                std.debug.print("    Enabled: {}\n", .{source.enabled});
+                std.debug.print("    Enabled: {any}\n", .{source.enabled});
             }
         }
     }
@@ -6894,7 +6894,7 @@ pub const CLI = struct {
         }
 
         std.debug.print("\nSettings:\n", .{});
-        std.debug.print("  Verify signatures: {}\n", .{config.verify_signatures});
+        std.debug.print("  Verify signatures: {any}\n", .{config.verify_signatures});
         std.debug.print("  Parallel downloads: {d}\n", .{config.parallel_downloads});
         std.debug.print("  Timeout: {d}ms\n", .{config.timeout_ms});
     }
