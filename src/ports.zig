@@ -3296,7 +3296,7 @@ pub const PortsMigrator = struct {
                             subdir_path,
                             sub_entry.name,
                         });
-                        try paths.append(self.allocator,self.allocator,sub_path);
+                        try paths.append(self.allocator, sub_path);
                     }
                 } else |_| {}
             }
@@ -3347,7 +3347,7 @@ pub const PortsMigrator = struct {
                         site_version_path,
                         arch_entry.name,
                     });
-                    try paths.append(self.allocator,self.allocator,arch_path);
+                    try paths.append(self.allocator, arch_path);
                 }
             } else |_| {}
         }
