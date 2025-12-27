@@ -224,17 +224,17 @@ pub const ServiceConfig = struct {
         errdefer result.deinit(allocator);
         const writer = result.writer(allocator);
 
-        try writer.print("# Axiom-managed service configuration for {s}\n", .{self.name});
-        try writer.print("# Do not edit manually - use 'axiom service' commands\n\n", .{});
+        try std.fmt.format(writer,"# Axiom-managed service configuration for {s}\n", .{self.name});
+        try std.fmt.format(writer,"# Do not edit manually - use 'axiom service' commands\n\n", .{});
 
         // Enable variable
         const enable_value = if (self.enable) "YES" else "NO";
-        try writer.print("{s}_enable=\"{s}\"\n", .{ self.name, enable_value });
+        try std.fmt.format(writer,"{s}_enable=\"{s}\"\n", .{ self.name, enable_value });
 
         // Additional variables
         var iter = self.variables.iterator();
         while (iter.next()) |entry| {
-            try writer.print("{s}_{s}=\"{s}\"\n", .{ self.name, entry.key_ptr.*, entry.value_ptr.* });
+            try std.fmt.format(writer,"{s}_{s}=\"{s}\"\n", .{ self.name, entry.key_ptr.*, entry.value_ptr.* });
         }
 
         return result.toOwnedSlice(allocator);

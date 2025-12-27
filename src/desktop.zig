@@ -184,17 +184,17 @@ pub const DesktopIntegration = struct {
 
         const writer = output.writer(self.allocator);
 
-        try writer.print("[Desktop Entry]\n", .{});
-        try writer.print("Type=Application\n", .{});
-        try writer.print("Version=1.0\n", .{});
-        try writer.print("Name={s}\n", .{entry.name});
+        try std.fmt.format(writer,"[Desktop Entry]\n", .{});
+        try std.fmt.format(writer,"Type=Application\n", .{});
+        try std.fmt.format(writer,"Version=1.0\n", .{});
+        try std.fmt.format(writer,"Name={s}\n", .{entry.name});
 
         if (entry.generic_name) |gn| {
-            try writer.print("GenericName={s}\n", .{gn});
+            try std.fmt.format(writer,"GenericName={s}\n", .{gn});
         }
 
         if (entry.comment) |c| {
-            try writer.print("Comment={s}\n", .{c});
+            try std.fmt.format(writer,"Comment={s}\n", .{c});
         }
 
         // Build executable path
@@ -204,63 +204,63 @@ pub const DesktopIntegration = struct {
             entry.executable,
         });
         defer self.allocator.free(exec_path);
-        try writer.print("Exec={s} %F\n", .{exec_path});
+        try std.fmt.format(writer,"Exec={s} %F\n", .{exec_path});
 
         if (entry.icon) |icon| {
             // Use package ID as icon name
-            try writer.print("Icon=axiom-{s}\n", .{pkg_id.name});
+            try std.fmt.format(writer,"Icon=axiom-{s}\n", .{pkg_id.name});
             _ = icon;
         }
 
-        try writer.print("Terminal={}\n", .{entry.terminal});
-        try writer.print("StartupNotify={}\n", .{entry.startup_notify});
+        try std.fmt.format(writer,"Terminal={}\n", .{entry.terminal});
+        try std.fmt.format(writer,"StartupNotify={}\n", .{entry.startup_notify});
 
         if (entry.categories.len > 0) {
-            try writer.print("Categories=", .{});
+            try std.fmt.format(writer,"Categories=", .{});
             for (entry.categories, 0..) |cat, i| {
-                if (i > 0) try writer.print(";", .{});
-                try writer.print("{s}", .{cat});
+                if (i > 0) try std.fmt.format(writer,";", .{});
+                try std.fmt.format(writer,"{s}", .{cat});
             }
-            try writer.print(";\n", .{});
+            try std.fmt.format(writer,";\n", .{});
         }
 
         if (entry.keywords.len > 0) {
-            try writer.print("Keywords=", .{});
+            try std.fmt.format(writer,"Keywords=", .{});
             for (entry.keywords, 0..) |kw, i| {
-                if (i > 0) try writer.print(";", .{});
-                try writer.print("{s}", .{kw});
+                if (i > 0) try std.fmt.format(writer,";", .{});
+                try std.fmt.format(writer,"{s}", .{kw});
             }
-            try writer.print(";\n", .{});
+            try std.fmt.format(writer,";\n", .{});
         }
 
         if (entry.mime_types.len > 0) {
-            try writer.print("MimeType=", .{});
+            try std.fmt.format(writer,"MimeType=", .{});
             for (entry.mime_types, 0..) |mt, i| {
-                if (i > 0) try writer.print(";", .{});
-                try writer.print("{s}", .{mt});
+                if (i > 0) try std.fmt.format(writer,";", .{});
+                try std.fmt.format(writer,"{s}", .{mt});
             }
-            try writer.print(";\n", .{});
+            try std.fmt.format(writer,";\n", .{});
         }
 
         if (entry.no_display) {
-            try writer.print("NoDisplay=true\n", .{});
+            try std.fmt.format(writer,"NoDisplay=true\n", .{});
         }
 
         // Add actions
         if (entry.actions.len > 0) {
-            try writer.print("\nActions=", .{});
+            try std.fmt.format(writer,"\nActions=", .{});
             for (entry.actions, 0..) |action, i| {
-                if (i > 0) try writer.print(";", .{});
-                try writer.print("{s}", .{action.id});
+                if (i > 0) try std.fmt.format(writer,";", .{});
+                try std.fmt.format(writer,"{s}", .{action.id});
             }
-            try writer.print(";\n", .{});
+            try std.fmt.format(writer,";\n", .{});
 
             for (entry.actions) |action| {
-                try writer.print("\n[Desktop Action {s}]\n", .{action.id});
-                try writer.print("Name={s}\n", .{action.name});
-                try writer.print("Exec={s}/{s}\n", .{ pkg_root, action.executable });
+                try std.fmt.format(writer,"\n[Desktop Action {s}]\n", .{action.id});
+                try std.fmt.format(writer,"Name={s}\n", .{action.name});
+                try std.fmt.format(writer,"Exec={s}/{s}\n", .{ pkg_root, action.executable });
                 if (action.icon) |icon| {
-                    try writer.print("Icon={s}\n", .{icon});
+                    try std.fmt.format(writer,"Icon={s}\n", .{icon});
                 }
             }
         }

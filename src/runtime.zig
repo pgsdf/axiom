@@ -74,31 +74,31 @@ pub const RuntimeManifest = struct {
 
         const writer = output.writer(allocator);
 
-        try writer.print("name: {s}\n", .{self.name});
-        try writer.print("version: {d}.{d}.{d}\n", .{
+        try std.fmt.format(writer,"name: {s}\n", .{self.name});
+        try std.fmt.format(writer,"version: {d}.{d}.{d}\n", .{
             self.version.major,
             self.version.minor,
             self.version.patch,
         });
-        try writer.print("description: {s}\n", .{self.description});
-        try writer.print("abi_version: {s}\n", .{self.abi_version});
-        try writer.print("stable: {}\n", .{self.stable});
+        try std.fmt.format(writer,"description: {s}\n", .{self.description});
+        try std.fmt.format(writer,"abi_version: {s}\n", .{self.abi_version});
+        try std.fmt.format(writer,"stable: {}\n", .{self.stable});
 
-        try writer.print("core_packages:\n", .{});
+        try std.fmt.format(writer,"core_packages:\n", .{});
         for (self.core_packages) |pkg| {
-            try writer.print("  - {s}\n", .{pkg});
+            try std.fmt.format(writer,"  - {s}\n", .{pkg});
         }
 
         if (self.extensions.len > 0) {
-            try writer.print("extensions:\n", .{});
+            try std.fmt.format(writer,"extensions:\n", .{});
             for (self.extensions) |ext| {
-                try writer.print("  - name: {s}\n", .{ext.name});
-                try writer.print("    description: {s}\n", .{ext.description});
+                try std.fmt.format(writer,"  - name: {s}\n", .{ext.name});
+                try std.fmt.format(writer,"    description: {s}\n", .{ext.description});
             }
         }
 
         if (self.min_compatible) |min| {
-            try writer.print("min_compatible: {d}.{d}.{d}\n", .{
+            try std.fmt.format(writer,"min_compatible: {d}.{d}.{d}\n", .{
                 min.major,
                 min.minor,
                 min.patch,

@@ -372,10 +372,10 @@ pub const PortsMigrator = struct {
                 defer buffer.deinit(self.allocator);
                 const writer = buffer.writer(self.allocator);
 
-                try writer.print("# Axiom Local Signing Key (SECRET - keep private!)\n", .{});
-                try writer.print("# Generated automatically for signing locally-built packages\n", .{});
-                try writer.print("key_id: {s}\n", .{key_id});
-                try writer.print("secret_key: {x}\n", .{key_pair.secret_key});
+                try std.fmt.format(writer,"# Axiom Local Signing Key (SECRET - keep private!)\n", .{});
+                try std.fmt.format(writer,"# Generated automatically for signing locally-built packages\n", .{});
+                try std.fmt.format(writer,"key_id: {s}\n", .{key_id});
+                try std.fmt.format(writer,"secret_key: {x}\n", .{key_pair.secret_key});
 
                 _ = try file.writeAll(buffer.items);
             }
@@ -389,12 +389,12 @@ pub const PortsMigrator = struct {
                 defer buffer.deinit(self.allocator);
                 const writer = buffer.writer(self.allocator);
 
-                try writer.print("# Axiom Local Signing Key (PUBLIC)\n", .{});
-                try writer.print("# This key is used to verify packages built on this machine\n", .{});
-                try writer.print("key_id: {s}\n", .{key_id});
-                try writer.print("key_data: {x}\n", .{key_pair.public_key});
-                try writer.print("owner: \"Local Build ({s})\"\n", .{hostname});
-                try writer.print("created: {d}\n", .{std.time.timestamp()});
+                try std.fmt.format(writer,"# Axiom Local Signing Key (PUBLIC)\n", .{});
+                try std.fmt.format(writer,"# This key is used to verify packages built on this machine\n", .{});
+                try std.fmt.format(writer,"key_id: {s}\n", .{key_id});
+                try std.fmt.format(writer,"key_data: {x}\n", .{key_pair.public_key});
+                try std.fmt.format(writer,"owner: \"Local Build ({s})\"\n", .{hostname});
+                try std.fmt.format(writer,"created: {d}\n", .{std.time.timestamp()});
 
                 _ = try file.writeAll(buffer.items);
             }

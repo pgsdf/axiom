@@ -263,32 +263,32 @@ pub const CacheConfig = struct {
         const writer = buffer.writer(self.allocator);
 
         // Write caches
-        try writer.print("caches:\n", .{});
+        try std.fmt.format(writer,"caches:\n", .{});
         for (self.caches.items) |cache| {
-            try writer.print("  - url: {s}\n", .{cache.url});
-            try writer.print("    priority: {d}\n", .{cache.priority});
+            try std.fmt.format(writer,"  - url: {s}\n", .{cache.url});
+            try std.fmt.format(writer,"    priority: {d}\n", .{cache.priority});
             if (cache.trusted_keys.len > 0) {
-                try writer.print("    trusted_keys:\n", .{});
+                try std.fmt.format(writer,"    trusted_keys:\n", .{});
                 for (cache.trusted_keys) |key| {
-                    try writer.print("      - {s}\n", .{key});
+                    try std.fmt.format(writer,"      - {s}\n", .{key});
                 }
             }
         }
 
         // Write local cache config
-        try writer.print("\nlocal_cache:\n", .{});
-        try writer.print("  path: {s}\n", .{self.local.path});
-        try writer.print("  max_size: {d}\n", .{self.local.max_size_bytes});
-        try writer.print("  cleanup_policy: {s}\n", .{@tagName(self.local.cleanup_policy)});
+        try std.fmt.format(writer,"\nlocal_cache:\n", .{});
+        try std.fmt.format(writer,"  path: {s}\n", .{self.local.path});
+        try std.fmt.format(writer,"  max_size: {d}\n", .{self.local.max_size_bytes});
+        try std.fmt.format(writer,"  cleanup_policy: {s}\n", .{@tagName(self.local.cleanup_policy)});
 
         // Write push config
-        try writer.print("\npush:\n", .{});
-        try writer.print("  enabled: {}\n", .{self.push.enabled});
+        try std.fmt.format(writer,"\npush:\n", .{});
+        try std.fmt.format(writer,"  enabled: {}\n", .{self.push.enabled});
         if (self.push.url) |url| {
-            try writer.print("  url: {s}\n", .{url});
+            try std.fmt.format(writer,"  url: {s}\n", .{url});
         }
         if (self.push.key_path) |key| {
-            try writer.print("  key: {s}\n", .{key});
+            try std.fmt.format(writer,"  key: {s}\n", .{key});
         }
 
         _ = try file.writeAll(buffer.items);

@@ -489,34 +489,34 @@ pub const Manifest = struct {
         defer result.deinit(allocator);
         const writer = result.writer(allocator);
 
-        try writer.print("name: {s}\n", .{self.name});
-        try writer.print("version: {}.{}.{}\n", .{ self.version.major, self.version.minor, self.version.patch });
-        try writer.print("revision: {d}\n", .{self.revision});
+        try std.fmt.format(writer,"name: {s}\n", .{self.name});
+        try std.fmt.format(writer,"version: {}.{}.{}\n", .{ self.version.major, self.version.minor, self.version.patch });
+        try std.fmt.format(writer,"revision: {d}\n", .{self.revision});
 
-        if (self.description) |d| try writer.print("description: {s}\n", .{d});
-        if (self.license) |l| try writer.print("license: {s}\n", .{l});
-        if (self.homepage) |h| try writer.print("homepage: {s}\n", .{h});
-        if (self.maintainer) |m| try writer.print("maintainer: {s}\n", .{m});
-        if (self.origin) |o| try writer.print("origin: {s}\n", .{o});
+        if (self.description) |d| try std.fmt.format(writer,"description: {s}\n", .{d});
+        if (self.license) |l| try std.fmt.format(writer,"license: {s}\n", .{l});
+        if (self.homepage) |h| try std.fmt.format(writer,"homepage: {s}\n", .{h});
+        if (self.maintainer) |m| try std.fmt.format(writer,"maintainer: {s}\n", .{m});
+        if (self.origin) |o| try std.fmt.format(writer,"origin: {s}\n", .{o});
 
         if (self.tags.len > 0) {
             try writer.writeAll("tags:\n");
             for (self.tags) |tag| {
-                try writer.print("  - {s}\n", .{tag});
+                try std.fmt.format(writer,"  - {s}\n", .{tag});
             }
         }
 
         if (self.provides.len > 0) {
             try writer.writeAll("provides:\n");
             for (self.provides) |p| {
-                try writer.print("  - {s}\n", .{p});
+                try std.fmt.format(writer,"  - {s}\n", .{p});
             }
         }
 
         if (self.conflicts.len > 0) {
             try writer.writeAll("conflicts:\n");
             for (self.conflicts) |c| {
-                try writer.print("  - {s}", .{c.name});
+                try std.fmt.format(writer,"  - {s}", .{c.name});
                 if (c.constraint) |constraint| {
                     try writeConstraint(writer, constraint);
                 }
@@ -527,7 +527,7 @@ pub const Manifest = struct {
         if (self.replaces.len > 0) {
             try writer.writeAll("replaces:\n");
             for (self.replaces) |r| {
-                try writer.print("  - {s}", .{r.name});
+                try std.fmt.format(writer,"  - {s}", .{r.name});
                 if (r.constraint) |constraint| {
                     try writeConstraint(writer, constraint);
                 }
@@ -538,12 +538,12 @@ pub const Manifest = struct {
         // Serialize kernel section if present
         if (self.kernel) |k| {
             try writer.writeAll("kernel:\n");
-            try writer.print("  kmod: {s}\n", .{if (k.kmod) "true" else "false"});
+            try std.fmt.format(writer,"  kmod: {s}\n", .{if (k.kmod) "true" else "false"});
             if (k.freebsd_version_min) |v| {
-                try writer.print("  freebsd_version_min: {d}\n", .{v});
+                try std.fmt.format(writer,"  freebsd_version_min: {d}\n", .{v});
             }
             if (k.freebsd_version_max) |v| {
-                try writer.print("  freebsd_version_max: {d}\n", .{v});
+                try std.fmt.format(writer,"  freebsd_version_max: {d}\n", .{v});
             }
             if (k.require_exact_ident) {
                 try writer.writeAll("  require_exact_ident: true\n");
@@ -551,13 +551,13 @@ pub const Manifest = struct {
             if (k.kernel_idents.len > 0) {
                 try writer.writeAll("  kernel_idents:\n");
                 for (k.kernel_idents) |ident| {
-                    try writer.print("    - {s}\n", .{ident});
+                    try std.fmt.format(writer,"    - {s}\n", .{ident});
                 }
             }
             if (k.kld_names.len > 0) {
                 try writer.writeAll("  kld_names:\n");
                 for (k.kld_names) |name| {
-                    try writer.print("    - {s}\n", .{name});
+                    try std.fmt.format(writer,"    - {s}\n", .{name});
                 }
             }
         }
@@ -876,13 +876,13 @@ fn parseVersionSpec(spec: []const u8) !VersionConstraint {
 /// Write a version constraint to a writer
 fn writeConstraint(writer: anytype, constraint: VersionConstraint) !void {
     switch (constraint) {
-        .exact => |v| try writer.print("={}.{}.{}", .{ v.major, v.minor, v.patch }),
-        .tilde => |v| try writer.print("~{}.{}.{}", .{ v.major, v.minor, v.patch }),
-        .caret => |v| try writer.print("^{}.{}.{}", .{ v.major, v.minor, v.patch }),
+        .exact => |v| try std.fmt.format(writer,"={}.{}.{}", .{ v.major, v.minor, v.patch }),
+        .tilde => |v| try std.fmt.format(writer,"~{}.{}.{}", .{ v.major, v.minor, v.patch }),
+        .caret => |v| try std.fmt.format(writer,"^{}.{}.{}", .{ v.major, v.minor, v.patch }),
         .any => {},
         .range => |r| {
             if (r.min) |min| {
-                try writer.print("{s}{}.{}.{}", .{
+                try std.fmt.format(writer,"{s}{}.{}.{}", .{
                     if (r.min_inclusive) ">=" else ">",
                     min.major,
                     min.minor,
@@ -891,7 +891,7 @@ fn writeConstraint(writer: anytype, constraint: VersionConstraint) !void {
             }
             if (r.max) |max| {
                 if (r.min != null) try writer.writeAll(",");
-                try writer.print("{s}{}.{}.{}", .{
+                try std.fmt.format(writer,"{s}{}.{}.{}", .{
                     if (r.max_inclusive) "<=" else "<",
                     max.major,
                     max.minor,

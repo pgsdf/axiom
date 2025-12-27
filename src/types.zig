@@ -27,7 +27,7 @@ pub const Version = struct {
         self: Version,
         writer: anytype,
     ) !void {
-        try writer.print("{d}.{d}.{d}", .{ self.major, self.minor, self.patch });
+        try std.fmt.format(writer,"{d}.{d}.{d}", .{ self.major, self.minor, self.patch });
     }
 
     /// Compare two versions
@@ -182,7 +182,7 @@ pub const PackageId = struct {
         self: PackageId,
         writer: anytype,
     ) !void {
-        try writer.print("{s}/{f}/{d}/{s}", .{
+        try std.fmt.format(writer,"{s}/{f}/{d}/{s}", .{
             self.name,
             self.version,
             self.revision,

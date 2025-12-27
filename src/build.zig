@@ -900,8 +900,8 @@ pub const SecureBuildSandbox = struct {
 
         var write_buf: [4096]u8 = undefined;
         var writer = file.writer(&write_buf);
-        try writer.print("[{d}] [{s}] ", .{ timestamp, event });
-        try writer.print(fmt, args);
+        try std.fmt.format(writer,"[{d}] [{s}] ", .{ timestamp, event });
+        try std.fmt.format(writer,fmt, args);
         try writer.writeByte('\n');
     }
 

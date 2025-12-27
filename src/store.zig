@@ -685,30 +685,30 @@ pub const PackageStore = struct {
         const writer = content.writer(self.allocator);
 
         // Write manifest in YAML format
-        try writer.print("name: {s}\n", .{mani.name});
-        try writer.print("version: {f}\n", .{mani.version});
-        try writer.print("revision: {d}\n", .{mani.revision});
+        try std.fmt.format(writer,"name: {s}\n", .{mani.name});
+        try std.fmt.format(writer,"version: {f}\n", .{mani.version});
+        try std.fmt.format(writer,"revision: {d}\n", .{mani.revision});
 
         if (mani.description) |desc| {
-            try writer.print("description: {s}\n", .{desc});
+            try std.fmt.format(writer,"description: {s}\n", .{desc});
         }
         if (mani.license) |lic| {
-            try writer.print("license: {s}\n", .{lic});
+            try std.fmt.format(writer,"license: {s}\n", .{lic});
         }
         if (mani.homepage) |home| {
-            try writer.print("homepage: {s}\n", .{home});
+            try std.fmt.format(writer,"homepage: {s}\n", .{home});
         }
         if (mani.maintainer) |maint| {
-            try writer.print("maintainer: {s}\n", .{maint});
+            try std.fmt.format(writer,"maintainer: {s}\n", .{maint});
         }
         if (mani.origin) |orig| {
-            try writer.print("origin: {s}\n", .{orig});
+            try std.fmt.format(writer,"origin: {s}\n", .{orig});
         }
 
         if (mani.tags.len > 0) {
             try writer.writeAll("tags:\n");
             for (mani.tags) |tag| {
-                try writer.print("  - {s}\n", .{tag});
+                try std.fmt.format(writer,"  - {s}\n", .{tag});
             }
         }
 
@@ -737,19 +737,19 @@ pub const PackageStore = struct {
 
         try writer.writeAll("dependencies:\n");
         for (deps.dependencies) |dep| {
-            try writer.print("  - name: {s}\n", .{dep.name});
+            try std.fmt.format(writer,"  - name: {s}\n", .{dep.name});
 
             switch (dep.constraint) {
                 .exact => |v| {
-                    try writer.print("    version: \"{f}\"\n", .{v});
+                    try std.fmt.format(writer,"    version: \"{f}\"\n", .{v});
                     try writer.writeAll("    constraint: exact\n");
                 },
                 .tilde => |v| {
-                    try writer.print("    version: \"~{f}\"\n", .{v});
+                    try std.fmt.format(writer,"    version: \"~{f}\"\n", .{v});
                     try writer.writeAll("    constraint: tilde\n");
                 },
                 .caret => |v| {
-                    try writer.print("    version: \"^{f}\"\n", .{v});
+                    try std.fmt.format(writer,"    version: \"^{f}\"\n", .{v});
                     try writer.writeAll("    constraint: caret\n");
                 },
                 .any => {
@@ -760,9 +760,9 @@ pub const PackageStore = struct {
                     try writer.writeAll("    version: \"");
                     if (r.min) |min| {
                         if (r.min_inclusive) {
-                            try writer.print(">={f}", .{min});
+                            try std.fmt.format(writer,">={f}", .{min});
                         } else {
-                            try writer.print(">{f}", .{min});
+                            try std.fmt.format(writer,">{f}", .{min});
                         }
                     }
                     if (r.max) |max| {
@@ -770,9 +770,9 @@ pub const PackageStore = struct {
                             try writer.writeAll(",");
                         }
                         if (r.max_inclusive) {
-                            try writer.print("<={f}", .{max});
+                            try std.fmt.format(writer,"<={f}", .{max});
                         } else {
-                            try writer.print("<{f}", .{max});
+                            try std.fmt.format(writer,"<{f}", .{max});
                         }
                     }
                     try writer.writeAll("\"\n");
@@ -804,29 +804,29 @@ pub const PackageStore = struct {
         defer content.deinit(self.allocator);
         const writer = content.writer(self.allocator);
 
-        try writer.print("build_time: {d}\n", .{prov.build_time});
-        try writer.print("builder: {s}\n", .{prov.builder});
+        try std.fmt.format(writer,"build_time: {d}\n", .{prov.build_time});
+        try std.fmt.format(writer,"builder: {s}\n", .{prov.builder});
 
         if (prov.build_user) |u| {
-            try writer.print("build_user: {s}\n", .{u});
+            try std.fmt.format(writer,"build_user: {s}\n", .{u});
         }
         if (prov.source_url) |u| {
-            try writer.print("source_url: {s}\n", .{u});
+            try std.fmt.format(writer,"source_url: {s}\n", .{u});
         }
         if (prov.source_hash) |h| {
-            try writer.print("source_hash: {s}\n", .{h});
+            try std.fmt.format(writer,"source_hash: {s}\n", .{h});
         }
         if (prov.compiler) |c| {
-            try writer.print("compiler: {s}\n", .{c});
+            try std.fmt.format(writer,"compiler: {s}\n", .{c});
         }
         if (prov.compiler_version) |v| {
-            try writer.print("compiler_version: {s}\n", .{v});
+            try std.fmt.format(writer,"compiler_version: {s}\n", .{v});
         }
 
         if (prov.build_flags.len > 0) {
             try writer.writeAll("build_flags:\n");
             for (prov.build_flags) |flag| {
-                try writer.print("  - {s}\n", .{flag});
+                try std.fmt.format(writer,"  - {s}\n", .{flag});
             }
         }
 
