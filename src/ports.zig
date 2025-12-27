@@ -3083,7 +3083,7 @@ pub const PortsMigrator = struct {
                         continue;
                     }
 
-                    try paths.append(self.allocator,self.allocator,packages_path);
+                    try paths.append(self.allocator, packages_path);
                 }
             }
         }
@@ -3522,7 +3522,7 @@ pub const PortsMigrator = struct {
                 if (std.mem.eql(u8, entry.name, "lib")) stagedir_has_lib = true;
                 if (std.mem.eql(u8, entry.name, "include")) stagedir_has_include = true;
             }
-            std.debug.print("    [DEBUG] STAGEDIR/usr/local has {d} entries (lib={}, include={})\n", .{ stagedir_file_count, stagedir_has_lib, stagedir_has_include });
+            std.debug.print("    [DEBUG] STAGEDIR/usr/local has {d} entries (lib={any}, include={any})\n", .{ stagedir_file_count, stagedir_has_lib, stagedir_has_include });
         } else |err| {
             std.debug.print("    [DEBUG] WARNING: Could not open STAGEDIR/usr/local: {s}\n", .{@errorName(err)});
         }
@@ -3579,7 +3579,7 @@ pub const PortsMigrator = struct {
                 if (std.mem.eql(u8, entry.name, "lib")) copied_has_lib = true;
                 if (std.mem.eql(u8, entry.name, "include")) copied_has_include = true;
             }
-            std.debug.print("    [DEBUG] Copied stage/usr/local has {d} entries (lib={}, include={})\n", .{ copied_file_count, copied_has_lib, copied_has_include });
+            std.debug.print("    [DEBUG] Copied stage/usr/local has {d} entries (lib={any}, include={any})\n", .{ copied_file_count, copied_has_lib, copied_has_include });
 
             // Warn if STAGEDIR had files but copied doesn't, or if lib/include are missing
             if (stagedir_file_count > 0 and copied_file_count == 0) {
