@@ -48,14 +48,18 @@ pub const UrlValidator = struct {
             writer: anytype,
         ) !void {
             if (self.valid) {
-                try std.fmt.format(writer,"URL(scheme={s}, host={s}, port={?}, path={s})", .{
+                var buf: [512]u8 = undefined;
+                const str = std.fmt.bufPrint(&buf, "URL(scheme={s}, host={s}, port={?}, path={s})", .{
                     @tagName(self.scheme),
                     self.host orelse "<none>",
                     self.port,
                     self.path orelse "/",
-                });
+                }) catch unreachable;
+                try writer.writeAll(str);
             } else {
-                try std.fmt.format(writer,"InvalidURL({s})", .{self.error_message orelse "unknown error"});
+                var buf: [512]u8 = undefined;
+                const str = std.fmt.bufPrint(&buf, "InvalidURL({s})", .{self.error_message orelse "unknown error"}) catch unreachable;
+                try writer.writeAll(str);
             }
         }
     };
@@ -331,7 +335,9 @@ pub fn writeJsonEscaped(writer: anytype, input: []const u8) !void {
             0x0C => try writer.writeAll("\\f"),
             else => {
                 if (c < 0x20) {
-                    try std.fmt.format(writer,"\\u{x:0>4}", .{c});
+                    var buf: [16]u8 = undefined;
+                    const str = std.fmt.bufPrint(&buf, "\\u{x:0>4}", .{c}) catch unreachable;
+                    try writer.writeAll(str);
                 } else {
                     try writer.writeByte(c);
                 }

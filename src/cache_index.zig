@@ -770,30 +770,61 @@ pub const CacheIndexManager = struct {
         var buffer: std.ArrayList(u8) = .empty;
         const writer = buffer.writer(self.allocator);
 
-        try std.fmt.format(writer,"format_version: \"{s}\"\n", .{index.format_version});
-        try std.fmt.format(writer,"cache_id: \"{s}\"\n", .{index.cache_id});
-        try std.fmt.format(writer,"updated_at: \"{s}\"\n", .{index.updated_at});
+        try writer.writeAll("format_version: \"");
+        try writer.writeAll(index.format_version);
+        try writer.writeAll("\"\n");
+
+        try writer.writeAll("cache_id: \"");
+        try writer.writeAll(index.cache_id);
+        try writer.writeAll("\"\n");
+
+        try writer.writeAll("updated_at: \"");
+        try writer.writeAll(index.updated_at);
+        try writer.writeAll("\"\n");
+
         try writer.writeAll("\npackages:\n");
 
         var pkg_iter = index.packages.iterator();
         while (pkg_iter.next()) |entry| {
-            try std.fmt.format(writer,"  {s}:\n", .{entry.key_ptr.*});
+            try writer.writeAll("  ");
+            try writer.writeAll(entry.key_ptr.*);
+            try writer.writeAll(":\n");
             try writer.writeAll("    versions:\n");
 
             var ver_iter = entry.value_ptr.versions.iterator();
             while (ver_iter.next()) |ver_entry| {
-                try std.fmt.format(writer,"      \"{s}\":\n", .{ver_entry.key_ptr.*});
-                try std.fmt.format(writer,"        hash: \"{s}\"\n", .{ver_entry.value_ptr.hash});
-                try std.fmt.format(writer,"        size: {d}\n", .{ver_entry.value_ptr.size});
-                try std.fmt.format(writer,"        compression: {s}\n", .{ver_entry.value_ptr.compression.toString()});
+                try writer.writeAll("      \"");
+                try writer.writeAll(ver_entry.key_ptr.*);
+                try writer.writeAll("\":\n");
+
+                try writer.writeAll("        hash: \"");
+                try writer.writeAll(ver_entry.value_ptr.hash);
+                try writer.writeAll("\"\n");
+
+                var size_buf: [64]u8 = undefined;
+                const size_str = std.fmt.bufPrint(&size_buf, "        size: {d}\n", .{ver_entry.value_ptr.size}) catch unreachable;
+                try writer.writeAll(size_str);
+
+                try writer.writeAll("        compression: ");
+                try writer.writeAll(ver_entry.value_ptr.compression.toString());
+                try writer.writeAll("\n");
             }
         }
 
         if (index.signature) |sig| {
             try writer.writeAll("\nsignature:\n");
-            try std.fmt.format(writer,"  key_id: \"{s}\"\n", .{sig.key_id});
-            try std.fmt.format(writer,"  algorithm: \"{s}\"\n", .{sig.algorithm});
-            try std.fmt.format(writer,"  value: \"{s}\"\n", .{sig.value});
+
+            try writer.writeAll("  key_id: \"");
+            try writer.writeAll(sig.key_id);
+            try writer.writeAll("\"\n");
+
+            try writer.writeAll("  algorithm: \"");
+            try writer.writeAll(sig.algorithm);
+            try writer.writeAll("\"\n");
+
+            try writer.writeAll("  value: \"");
+            try writer.writeAll(sig.value);
+            try writer.writeAll("\"\n");
         }
 
         return buffer.toOwnedSlice(self.allocator);

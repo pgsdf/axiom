@@ -955,14 +955,28 @@ pub const UserRealizationEngine = struct {
 
         try writer.writeAll("#!/bin/sh\n");
         try writer.writeAll("# Axiom user environment activation script\n");
-        try std.fmt.format(writer, "# Environment: {s}\n", .{env_name});
-        try std.fmt.format(writer, "# User: {s}\n\n", .{self.user_ctx.username});
+        var buf1: [512]u8 = undefined;
+        const str1 = std.fmt.bufPrint(&buf1, "# Environment: {s}\n", .{env_name}) catch unreachable;
+        try writer.writeAll(str1);
+        var buf2: [512]u8 = undefined;
+        const str2 = std.fmt.bufPrint(&buf2, "# User: {s}\n\n", .{self.user_ctx.username}) catch unreachable;
+        try writer.writeAll(str2);
 
-        try std.fmt.format(writer, "export AXIOM_ENV=\"{s}\"\n", .{env_name});
-        try std.fmt.format(writer, "export AXIOM_USER=\"{s}\"\n", .{self.user_ctx.username});
-        try std.fmt.format(writer, "export PATH=\"{s}/bin:$PATH\"\n", .{env_mountpoint});
-        try std.fmt.format(writer, "export LD_LIBRARY_PATH=\"{s}/lib:$LD_LIBRARY_PATH\"\n", .{env_mountpoint});
-        try std.fmt.format(writer, "export MANPATH=\"{s}/share/man:$MANPATH\"\n", .{env_mountpoint});
+        var buf3: [512]u8 = undefined;
+        const str3 = std.fmt.bufPrint(&buf3, "export AXIOM_ENV=\"{s}\"\n", .{env_name}) catch unreachable;
+        try writer.writeAll(str3);
+        var buf4: [512]u8 = undefined;
+        const str4 = std.fmt.bufPrint(&buf4, "export AXIOM_USER=\"{s}\"\n", .{self.user_ctx.username}) catch unreachable;
+        try writer.writeAll(str4);
+        var buf5: [1024]u8 = undefined;
+        const str5 = std.fmt.bufPrint(&buf5, "export PATH=\"{s}/bin:$PATH\"\n", .{env_mountpoint}) catch unreachable;
+        try writer.writeAll(str5);
+        var buf6: [1024]u8 = undefined;
+        const str6 = std.fmt.bufPrint(&buf6, "export LD_LIBRARY_PATH=\"{s}/lib:$LD_LIBRARY_PATH\"\n", .{env_mountpoint}) catch unreachable;
+        try writer.writeAll(str6);
+        var buf7: [1024]u8 = undefined;
+        const str7 = std.fmt.bufPrint(&buf7, "export MANPATH=\"{s}/share/man:$MANPATH\"\n", .{env_mountpoint}) catch unreachable;
+        try writer.writeAll(str7);
 
         try writer.writeAll("\necho \"Axiom user environment '");
         try writer.writeAll(env_name);

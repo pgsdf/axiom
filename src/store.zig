@@ -685,30 +685,48 @@ pub const PackageStore = struct {
         const writer = content.writer(self.allocator);
 
         // Write manifest in YAML format
-        try std.fmt.format(writer,"name: {s}\n", .{mani.name});
-        try std.fmt.format(writer,"version: {f}\n", .{mani.version});
-        try std.fmt.format(writer,"revision: {d}\n", .{mani.revision});
+        try writer.writeAll("name: ");
+        try writer.writeAll(mani.name);
+        try writer.writeAll("\n");
+        try writer.writeAll("version: ");
+        try mani.version.format(writer);
+        try writer.writeAll("\n");
+        var rev_buf: [32]u8 = undefined;
+        const rev_str = std.fmt.bufPrint(&rev_buf, "revision: {d}\n", .{mani.revision}) catch unreachable;
+        try writer.writeAll(rev_str);
 
         if (mani.description) |desc| {
-            try std.fmt.format(writer,"description: {s}\n", .{desc});
+            try writer.writeAll("description: ");
+            try writer.writeAll(desc);
+            try writer.writeAll("\n");
         }
         if (mani.license) |lic| {
-            try std.fmt.format(writer,"license: {s}\n", .{lic});
+            try writer.writeAll("license: ");
+            try writer.writeAll(lic);
+            try writer.writeAll("\n");
         }
         if (mani.homepage) |home| {
-            try std.fmt.format(writer,"homepage: {s}\n", .{home});
+            try writer.writeAll("homepage: ");
+            try writer.writeAll(home);
+            try writer.writeAll("\n");
         }
         if (mani.maintainer) |maint| {
-            try std.fmt.format(writer,"maintainer: {s}\n", .{maint});
+            try writer.writeAll("maintainer: ");
+            try writer.writeAll(maint);
+            try writer.writeAll("\n");
         }
         if (mani.origin) |orig| {
-            try std.fmt.format(writer,"origin: {s}\n", .{orig});
+            try writer.writeAll("origin: ");
+            try writer.writeAll(orig);
+            try writer.writeAll("\n");
         }
 
         if (mani.tags.len > 0) {
             try writer.writeAll("tags:\n");
             for (mani.tags) |tag| {
-                try std.fmt.format(writer,"  - {s}\n", .{tag});
+                try writer.writeAll("  - ");
+                try writer.writeAll(tag);
+                try writer.writeAll("\n");
             }
         }
 
@@ -737,19 +755,27 @@ pub const PackageStore = struct {
 
         try writer.writeAll("dependencies:\n");
         for (deps.dependencies) |dep| {
-            try std.fmt.format(writer,"  - name: {s}\n", .{dep.name});
+            try writer.writeAll("  - name: ");
+            try writer.writeAll(dep.name);
+            try writer.writeAll("\n");
 
             switch (dep.constraint) {
                 .exact => |v| {
-                    try std.fmt.format(writer,"    version: \"{f}\"\n", .{v});
+                    try writer.writeAll("    version: \"");
+                    try v.format(writer);
+                    try writer.writeAll("\"\n");
                     try writer.writeAll("    constraint: exact\n");
                 },
                 .tilde => |v| {
-                    try std.fmt.format(writer,"    version: \"~{f}\"\n", .{v});
+                    try writer.writeAll("    version: \"~");
+                    try v.format(writer);
+                    try writer.writeAll("\"\n");
                     try writer.writeAll("    constraint: tilde\n");
                 },
                 .caret => |v| {
-                    try std.fmt.format(writer,"    version: \"^{f}\"\n", .{v});
+                    try writer.writeAll("    version: \"^");
+                    try v.format(writer);
+                    try writer.writeAll("\"\n");
                     try writer.writeAll("    constraint: caret\n");
                 },
                 .any => {
@@ -760,9 +786,11 @@ pub const PackageStore = struct {
                     try writer.writeAll("    version: \"");
                     if (r.min) |min| {
                         if (r.min_inclusive) {
-                            try std.fmt.format(writer,">={f}", .{min});
+                            try writer.writeAll(">=");
+                            try min.format(writer);
                         } else {
-                            try std.fmt.format(writer,">{f}", .{min});
+                            try writer.writeAll(">");
+                            try min.format(writer);
                         }
                     }
                     if (r.max) |max| {
@@ -770,9 +798,11 @@ pub const PackageStore = struct {
                             try writer.writeAll(",");
                         }
                         if (r.max_inclusive) {
-                            try std.fmt.format(writer,"<={f}", .{max});
+                            try writer.writeAll("<=");
+                            try max.format(writer);
                         } else {
-                            try std.fmt.format(writer,"<{f}", .{max});
+                            try writer.writeAll("<");
+                            try max.format(writer);
                         }
                     }
                     try writer.writeAll("\"\n");
@@ -804,29 +834,45 @@ pub const PackageStore = struct {
         defer content.deinit(self.allocator);
         const writer = content.writer(self.allocator);
 
-        try std.fmt.format(writer,"build_time: {d}\n", .{prov.build_time});
-        try std.fmt.format(writer,"builder: {s}\n", .{prov.builder});
+        var time_buf: [64]u8 = undefined;
+        const time_str = std.fmt.bufPrint(&time_buf, "build_time: {d}\n", .{prov.build_time}) catch unreachable;
+        try writer.writeAll(time_str);
+        try writer.writeAll("builder: ");
+        try writer.writeAll(prov.builder);
+        try writer.writeAll("\n");
 
         if (prov.build_user) |u| {
-            try std.fmt.format(writer,"build_user: {s}\n", .{u});
+            try writer.writeAll("build_user: ");
+            try writer.writeAll(u);
+            try writer.writeAll("\n");
         }
         if (prov.source_url) |u| {
-            try std.fmt.format(writer,"source_url: {s}\n", .{u});
+            try writer.writeAll("source_url: ");
+            try writer.writeAll(u);
+            try writer.writeAll("\n");
         }
         if (prov.source_hash) |h| {
-            try std.fmt.format(writer,"source_hash: {s}\n", .{h});
+            try writer.writeAll("source_hash: ");
+            try writer.writeAll(h);
+            try writer.writeAll("\n");
         }
         if (prov.compiler) |c| {
-            try std.fmt.format(writer,"compiler: {s}\n", .{c});
+            try writer.writeAll("compiler: ");
+            try writer.writeAll(c);
+            try writer.writeAll("\n");
         }
         if (prov.compiler_version) |v| {
-            try std.fmt.format(writer,"compiler_version: {s}\n", .{v});
+            try writer.writeAll("compiler_version: ");
+            try writer.writeAll(v);
+            try writer.writeAll("\n");
         }
 
         if (prov.build_flags.len > 0) {
             try writer.writeAll("build_flags:\n");
             for (prov.build_flags) |flag| {
-                try std.fmt.format(writer,"  - {s}\n", .{flag});
+                try writer.writeAll("  - ");
+                try writer.writeAll(flag);
+                try writer.writeAll("\n");
             }
         }
 

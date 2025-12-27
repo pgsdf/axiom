@@ -483,25 +483,31 @@ pub const AbiReport = struct {
         if (self.system_lib_violations.items.len > 0) {
             try writer.writeAll("\nSystem Library Violations:\n");
             for (self.system_lib_violations.items) |v| {
-                try std.fmt.format(writer,"  - {s}: found in {s}, expected {s}\n", .{
-                    v.library,
-                    v.found_in,
-                    v.expected,
-                });
+                try writer.writeAll("  - ");
+                try writer.writeAll(v.library);
+                try writer.writeAll(": found in ");
+                try writer.writeAll(v.found_in);
+                try writer.writeAll(", expected ");
+                try writer.writeAll(v.expected);
+                try writer.writeAll("\n");
             }
         }
 
         if (self.missing_dependencies.items.len > 0) {
             try writer.writeAll("\nMissing Dependencies:\n");
             for (self.missing_dependencies.items) |d| {
-                try std.fmt.format(writer,"  - {s}\n", .{d});
+                try writer.writeAll("  - ");
+                try writer.writeAll(d);
+                try writer.writeAll("\n");
             }
         }
 
         if (self.warnings.items.len > 0) {
             try writer.writeAll("\nWarnings:\n");
             for (self.warnings.items) |w| {
-                try std.fmt.format(writer,"  - {s}\n", .{w});
+                try writer.writeAll("  - ");
+                try writer.writeAll(w);
+                try writer.writeAll("\n");
             }
         }
     }
@@ -539,22 +545,47 @@ pub const EnvironmentMetadata = struct {
         var buffer: std.ArrayList(u8) = .empty;
         const writer = buffer.writer(allocator);
 
-        try std.fmt.format(writer,"name: {s}\n", .{self.name});
-        try std.fmt.format(writer,"profile: {s}\n", .{self.profile_name});
-        try std.fmt.format(writer,"realized_at: {d}\n", .{self.realized_at});
-        try std.fmt.format(writer,"spec_version: {s}\n", .{self.spec_version});
-        try std.fmt.format(writer,"abi_verified: {}\n", .{self.abi_verified});
+        try writer.writeAll("name: ");
+        try writer.writeAll(self.name);
+        try writer.writeAll("\n");
+
+        try writer.writeAll("profile: ");
+        try writer.writeAll(self.profile_name);
+        try writer.writeAll("\n");
+
+        var realized_buf: [64]u8 = undefined;
+        const realized_str = std.fmt.bufPrint(&realized_buf, "realized_at: {d}\n", .{self.realized_at}) catch unreachable;
+        try writer.writeAll(realized_str);
+
+        try writer.writeAll("spec_version: ");
+        try writer.writeAll(self.spec_version);
+        try writer.writeAll("\n");
+
+        var abi_buf: [64]u8 = undefined;
+        const abi_str = std.fmt.bufPrint(&abi_buf, "abi_verified: {}\n", .{self.abi_verified}) catch unreachable;
+        try writer.writeAll(abi_str);
 
         try writer.writeAll("packages:\n");
         for (self.packages) |pkg| {
-            try std.fmt.format(writer,"  - name: {s}\n", .{pkg.name});
-            try std.fmt.format(writer,"    version: {}.{}.{}\n", .{
+            try writer.writeAll("  - name: ");
+            try writer.writeAll(pkg.name);
+            try writer.writeAll("\n");
+
+            var version_buf: [64]u8 = undefined;
+            const version_str = std.fmt.bufPrint(&version_buf, "    version: {}.{}.{}\n", .{
                 pkg.version.major,
                 pkg.version.minor,
                 pkg.version.patch,
-            });
-            try std.fmt.format(writer,"    revision: {d}\n", .{pkg.revision});
-            try std.fmt.format(writer,"    build_id: {s}\n", .{pkg.build_id});
+            }) catch unreachable;
+            try writer.writeAll(version_str);
+
+            var revision_buf: [64]u8 = undefined;
+            const revision_str = std.fmt.bufPrint(&revision_buf, "    revision: {d}\n", .{pkg.revision}) catch unreachable;
+            try writer.writeAll(revision_str);
+
+            try writer.writeAll("    build_id: ");
+            try writer.writeAll(pkg.build_id);
+            try writer.writeAll("\n");
         }
 
         return buffer.toOwnedSlice(allocator);

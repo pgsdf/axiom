@@ -333,7 +333,8 @@ pub const ResourceStats = struct {
         self: *const ResourceStats,
         writer: anytype,
     ) !void {
-        try std.fmt.format(writer,
+        var buf1: [1024]u8 = undefined;
+        const str1 = std.fmt.bufPrint(&buf1,
             "Resolution completed in {d:.2}s\n" ++
                 "  Memory used: {d} MB (peak: {d} MB)\n" ++
                 "  Candidates examined: {d}\n" ++
@@ -347,16 +348,21 @@ pub const ResourceStats = struct {
                 self.packages_resolved,
                 self.max_depth_reached,
             },
-        );
+        ) catch unreachable;
+        try writer.writeAll(str1);
         if (self.sat_variables > 0 or self.sat_clauses > 0) {
-            try std.fmt.format(writer,
+            var buf2: [256]u8 = undefined;
+            const str2 = std.fmt.bufPrint(&buf2,
                 "  SAT variables: {d}\n" ++
                     "  SAT clauses: {d}\n",
                 .{ self.sat_variables, self.sat_clauses },
-            );
+            ) catch unreachable;
+            try writer.writeAll(str2);
         }
         if (self.limit_hit) |limit| {
-            try std.fmt.format(writer,"  Limit hit: {s}\n", .{limit.message()});
+            var buf3: [256]u8 = undefined;
+            const str3 = std.fmt.bufPrint(&buf3, "  Limit hit: {s}\n", .{limit.message()}) catch unreachable;
+            try writer.writeAll(str3);
         }
     }
 };

@@ -297,13 +297,15 @@ pub const AuditLog = struct {
         const writer = file.writer(&write_buf);
 
         for (self.entries.items) |entry| {
-            try std.fmt.format(writer,"{d}|{s}|{s}|{s}|{s}\n", .{
+            var buf: [512]u8 = undefined;
+            const str = std.fmt.bufPrint(&buf, "{d}|{s}|{s}|{s}|{s}\n", .{
                 entry.timestamp,
                 entry.package_path,
                 entry.key_id orelse "none",
                 entry.status.getMessage(),
                 @tagName(entry.action_taken),
-            });
+            }) catch unreachable;
+            try writer.writeAll(str);
         }
 
         self.entries.clearRetainingCapacity();
@@ -407,18 +409,33 @@ pub const Signature = struct {
         const writer = result.writer(allocator);
 
         try writer.writeAll("# Axiom Package Signature\n");
-        try std.fmt.format(writer,"version: {d}\n", .{self.version});
-        try std.fmt.format(writer,"algorithm: {s}\n", .{self.algorithm});
-        try std.fmt.format(writer,"key_id: {s}\n", .{self.key_id});
+        var buf: [128]u8 = undefined;
+        const version_str = std.fmt.bufPrint(&buf, "version: {d}\n", .{self.version}) catch unreachable;
+        try writer.writeAll(version_str);
+        try writer.writeAll("algorithm: ");
+        try writer.writeAll(self.algorithm);
+        try writer.writeAll("\n");
+        try writer.writeAll("key_id: ");
+        try writer.writeAll(self.key_id);
+        try writer.writeAll("\n");
         if (self.signer) |s| {
-            try std.fmt.format(writer,"signer: \"{s}\"\n", .{s});
+            try writer.writeAll("signer: \"");
+            try writer.writeAll(s);
+            try writer.writeAll("\"\n");
         }
-        try std.fmt.format(writer,"timestamp: {d}\n", .{self.timestamp});
-        try std.fmt.format(writer,"signature: {x}\n", .{self.signature});
+        const timestamp_str = std.fmt.bufPrint(&buf, "timestamp: {d}\n", .{self.timestamp}) catch unreachable;
+        try writer.writeAll(timestamp_str);
+        var sig_buf: [256]u8 = undefined;
+        const sig_str = std.fmt.bufPrint(&sig_buf, "signature: {x}\n", .{self.signature}) catch unreachable;
+        try writer.writeAll(sig_str);
         try writer.writeAll("files:\n");
         for (self.files) |f| {
-            try std.fmt.format(writer,"  - path: \"{s}\"\n", .{f.path});
-            try std.fmt.format(writer,"    sha256: {x}\n", .{f.hash});
+            try writer.writeAll("  - path: \"");
+            try writer.writeAll(f.path);
+            try writer.writeAll("\"\n");
+            var hash_buf: [128]u8 = undefined;
+            const hash_str = std.fmt.bufPrint(&hash_buf, "    sha256: {x}\n", .{f.hash}) catch unreachable;
+            try writer.writeAll(hash_str);
         }
 
         return result.toOwnedSlice(allocator);
@@ -1511,20 +1528,28 @@ pub const MultiSignatureConfig = struct {
         const writer = result.writer(allocator);
 
         try writer.writeAll("# Multi-Party Signing Policy\n");
-        try std.fmt.format(writer,"threshold: {d}\n", .{self.threshold});
+        var buf: [64]u8 = undefined;
+        const threshold_str = std.fmt.bufPrint(&buf, "threshold: {d}\n", .{self.threshold}) catch unreachable;
+        try writer.writeAll(threshold_str);
         if (self.policy_name) |name| {
-            try std.fmt.format(writer,"policy_name: \"{s}\"\n", .{name});
+            try writer.writeAll("policy_name: \"");
+            try writer.writeAll(name);
+            try writer.writeAll("\"\n");
         }
         if (self.authorized_signers.len > 0) {
             try writer.writeAll("signers:\n");
             for (self.authorized_signers) |signer| {
-                try std.fmt.format(writer,"  - {s}\n", .{signer});
+                try writer.writeAll("  - ");
+                try writer.writeAll(signer);
+                try writer.writeAll("\n");
             }
         }
         if (self.required_signers.len > 0) {
             try writer.writeAll("required_signers:\n");
             for (self.required_signers) |signer| {
-                try std.fmt.format(writer,"  - {s}\n", .{signer});
+                try writer.writeAll("  - ");
+                try writer.writeAll(signer);
+                try writer.writeAll("\n");
             }
         }
 
@@ -1586,23 +1611,38 @@ pub const MultiSignature = struct {
         const writer = result.writer(allocator);
 
         try writer.writeAll("# Axiom Multi-Party Signature\n");
-        try std.fmt.format(writer,"version: {d}\n", .{self.version});
-        try std.fmt.format(writer,"algorithm: {s}\n", .{self.algorithm});
+        var buf: [128]u8 = undefined;
+        const version_str = std.fmt.bufPrint(&buf, "version: {d}\n", .{self.version}) catch unreachable;
+        try writer.writeAll(version_str);
+        try writer.writeAll("algorithm: ");
+        try writer.writeAll(self.algorithm);
+        try writer.writeAll("\n");
 
         try writer.writeAll("\nfiles:\n");
         for (self.files) |f| {
-            try std.fmt.format(writer,"  - path: \"{s}\"\n", .{f.path});
-            try std.fmt.format(writer,"    sha256: {x}\n", .{f.hash});
+            try writer.writeAll("  - path: \"");
+            try writer.writeAll(f.path);
+            try writer.writeAll("\"\n");
+            var hash_buf: [128]u8 = undefined;
+            const hash_str = std.fmt.bufPrint(&hash_buf, "    sha256: {x}\n", .{f.hash}) catch unreachable;
+            try writer.writeAll(hash_str);
         }
 
         try writer.writeAll("\nsignatures:\n");
         for (self.signatures) |sig| {
-            try std.fmt.format(writer,"  - key_id: {s}\n", .{sig.key_id});
+            try writer.writeAll("  - key_id: ");
+            try writer.writeAll(sig.key_id);
+            try writer.writeAll("\n");
             if (sig.signer_name) |name| {
-                try std.fmt.format(writer,"    signer: \"{s}\"\n", .{name});
+                try writer.writeAll("    signer: \"");
+                try writer.writeAll(name);
+                try writer.writeAll("\"\n");
             }
-            try std.fmt.format(writer,"    timestamp: {d}\n", .{sig.timestamp});
-            try std.fmt.format(writer,"    signature: {x}\n", .{sig.signature});
+            const timestamp_str = std.fmt.bufPrint(&buf, "    timestamp: {d}\n", .{sig.timestamp}) catch unreachable;
+            try writer.writeAll(timestamp_str);
+            var sig_buf: [256]u8 = undefined;
+            const sig_str = std.fmt.bufPrint(&sig_buf, "    signature: {x}\n", .{sig.signature}) catch unreachable;
+            try writer.writeAll(sig_str);
         }
 
         return result.toOwnedSlice(allocator);

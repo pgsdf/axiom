@@ -224,17 +224,23 @@ pub const ServiceConfig = struct {
         errdefer result.deinit(allocator);
         const writer = result.writer(allocator);
 
-        try std.fmt.format(writer,"# Axiom-managed service configuration for {s}\n", .{self.name});
-        try std.fmt.format(writer,"# Do not edit manually - use 'axiom service' commands\n\n", .{});
+        var buf1: [512]u8 = undefined;
+        const str1 = std.fmt.bufPrint(&buf1, "# Axiom-managed service configuration for {s}\n", .{self.name}) catch unreachable;
+        try writer.writeAll(str1);
+        try writer.writeAll("# Do not edit manually - use 'axiom service' commands\n\n");
 
         // Enable variable
         const enable_value = if (self.enable) "YES" else "NO";
-        try std.fmt.format(writer,"{s}_enable=\"{s}\"\n", .{ self.name, enable_value });
+        var buf2: [512]u8 = undefined;
+        const str2 = std.fmt.bufPrint(&buf2, "{s}_enable=\"{s}\"\n", .{ self.name, enable_value }) catch unreachable;
+        try writer.writeAll(str2);
 
         // Additional variables
         var iter = self.variables.iterator();
         while (iter.next()) |entry| {
-            try std.fmt.format(writer,"{s}_{s}=\"{s}\"\n", .{ self.name, entry.key_ptr.*, entry.value_ptr.* });
+            var buf3: [512]u8 = undefined;
+            const str3 = std.fmt.bufPrint(&buf3, "{s}_{s}=\"{s}\"\n", .{ self.name, entry.key_ptr.*, entry.value_ptr.* }) catch unreachable;
+            try writer.writeAll(str3);
         }
 
         return result.toOwnedSlice(allocator);
