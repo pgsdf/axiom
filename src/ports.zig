@@ -4697,7 +4697,7 @@ pub const PortsMigrator = struct {
             var dep_tree = try self.resolveDependencyTree(origin);
             defer {
                 for (dep_tree.items) |d| self.allocator.free(d);
-                dep_tree.deinit();
+                dep_tree.deinit(self.allocator);
             }
 
             if (dep_tree.items.len > 1) {
