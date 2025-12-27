@@ -411,33 +411,33 @@ pub fn formatClosure(
 
     const writer = output.writer(allocator);
 
-    try writer.print("Closure for: ", .{});
+    try std.fmt.format(writer,"Closure for: ", .{});
     for (closure.roots.items, 0..) |root, i| {
-        if (i > 0) try writer.print(", ", .{});
-        try writer.print("{s}@{d}.{d}.{d}", .{
+        if (i > 0) try std.fmt.format(writer,", ", .{});
+        try std.fmt.format(writer,"{s}@{d}.{d}.{d}", .{
             root.name,
             root.version.major,
             root.version.minor,
             root.version.patch,
         });
     }
-    try writer.print("\n\n", .{});
+    try std.fmt.format(writer,"\n\n", .{});
 
     const stats = getClosureStats(closure);
-    try writer.print("Statistics:\n", .{});
-    try writer.print("  Packages: {d}\n", .{stats.package_count});
-    try writer.print("  Max depth: {d}\n", .{stats.max_depth});
-    try writer.print("  Base packages excluded: {d}\n\n", .{stats.base_excluded_count});
+    try std.fmt.format(writer,"Statistics:\n", .{});
+    try std.fmt.format(writer,"  Packages: {d}\n", .{stats.package_count});
+    try std.fmt.format(writer,"  Max depth: {d}\n", .{stats.max_depth});
+    try std.fmt.format(writer,"  Base packages excluded: {d}\n\n", .{stats.base_excluded_count});
 
     if (options.show_tree) {
-        try writer.print("Dependency tree:\n", .{});
+        try std.fmt.format(writer,"Dependency tree:\n", .{});
         for (closure.roots.items) |root| {
             try formatTreeNode(writer, closure, root, 0, options.max_depth);
         }
     } else {
-        try writer.print("Packages (topological order):\n", .{});
+        try std.fmt.format(writer,"Packages (topological order):\n", .{});
         for (closure.topo_order.items) |pkg_id| {
-            try writer.print("  {s}@{d}.{d}.{d}\n", .{
+            try std.fmt.format(writer,"  {s}@{d}.{d}.{d}\n", .{
                 pkg_id.name,
                 pkg_id.version.major,
                 pkg_id.version.minor,
@@ -463,10 +463,10 @@ fn formatTreeNode(
     // Print indent
     var i: u32 = 0;
     while (i < indent) : (i += 1) {
-        try writer.print("  ", .{});
+        try std.fmt.format(writer,"  ", .{});
     }
 
-    try writer.print("{s}@{d}.{d}.{d}\n", .{
+    try std.fmt.format(writer,"{s}@{d}.{d}.{d}\n", .{
         pkg_id.name,
         pkg_id.version.major,
         pkg_id.version.minor,

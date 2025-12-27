@@ -310,32 +310,32 @@ pub const DependencyExplanation = struct {
 
     /// Format explanation for display
     pub fn format(self: *DependencyExplanation, writer: anytype) !void {
-        try writer.print("Package {s} {f} is required because:\n", .{
+        try std.fmt.format(writer,"Package {s} {f} is required because:\n", .{
             self.target.name,
             self.target.version,
         });
 
         for (self.paths.items, 0..) |path, i| {
-            try writer.print("\n  Path {d}:\n", .{i + 1});
+            try std.fmt.format(writer,"\n  Path {d}:\n", .{i + 1});
             for (path.items, 0..) |step, j| {
                 const indent = "    " ** (j + 1);
                 switch (step.reason) {
-                    .direct => try writer.print("{s}{s} {f} (directly requested)\n", .{
+                    .direct => try std.fmt.format(writer,"{s}{s} {f} (directly requested)\n", .{
                         indent,
                         step.package.name,
                         step.package.version,
                     }),
-                    .dependency => try writer.print("{s}{s} {f} (dependency of previous)\n", .{
+                    .dependency => try std.fmt.format(writer,"{s}{s} {f} (dependency of previous)\n", .{
                         indent,
                         step.package.name,
                         step.package.version,
                     }),
-                    .virtual => try writer.print("{s}{s} {f} (provides virtual)\n", .{
+                    .virtual => try std.fmt.format(writer,"{s}{s} {f} (provides virtual)\n", .{
                         indent,
                         step.package.name,
                         step.package.version,
                     }),
-                    .feature => try writer.print("{s}{s} {f} (required by feature)\n", .{
+                    .feature => try std.fmt.format(writer,"{s}{s} {f} (required by feature)\n", .{
                         indent,
                         step.package.name,
                         step.package.version,

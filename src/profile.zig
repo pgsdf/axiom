@@ -212,26 +212,26 @@ pub const Profile = struct {
     /// Write profile to YAML format
     pub fn write(self: Profile, writer: anytype) !void {
         // Always write format_version first
-        try writer.print("format_version: \"{s}\"\n", .{FormatVersions.profile});
-        try writer.print("name: {s}\n", .{self.name});
+        try std.fmt.format(writer, "format_version: \"{s}\"\n", .{FormatVersions.profile});
+        try std.fmt.format(writer, "name: {s}\n", .{self.name});
         if (self.description) |desc| {
-            try writer.print("description: {s}\n", .{desc});
+            try std.fmt.format(writer, "description: {s}\n", .{desc});
         }
 
         try writer.writeAll("packages:\n");
         for (self.packages) |pkg| {
-            try writer.print("  - name: {s}\n", .{pkg.name});
+            try std.fmt.format(writer, "  - name: {s}\n", .{pkg.name});
             switch (pkg.constraint) {
                 .exact => |v| {
-                    try writer.print("    version: \"{f}\"\n", .{v});
+                    try std.fmt.format(writer, "    version: \"{f}\"\n", .{v});
                     try writer.writeAll("    constraint: exact\n");
                 },
                 .tilde => |v| {
-                    try writer.print("    version: \"~{f}\"\n", .{v});
+                    try std.fmt.format(writer, "    version: \"~{f}\"\n", .{v});
                     try writer.writeAll("    constraint: tilde\n");
                 },
                 .caret => |v| {
-                    try writer.print("    version: \"^{f}\"\n", .{v});
+                    try std.fmt.format(writer, "    version: \"^{f}\"\n", .{v});
                     try writer.writeAll("    constraint: caret\n");
                 },
                 .any => {
@@ -242,9 +242,9 @@ pub const Profile = struct {
                     try writer.writeAll("    version: \"");
                     if (r.min) |min| {
                         if (r.min_inclusive) {
-                            try writer.print(">={f}", .{min});
+                            try std.fmt.format(writer, ">={f}", .{min});
                         } else {
-                            try writer.print(">{f}", .{min});
+                            try std.fmt.format(writer, ">{f}", .{min});
                         }
                     }
                     if (r.max) |max| {
@@ -252,9 +252,9 @@ pub const Profile = struct {
                             try writer.writeAll(",");
                         }
                         if (r.max_inclusive) {
-                            try writer.print("<={f}", .{max});
+                            try std.fmt.format(writer, "<={f}", .{max});
                         } else {
-                            try writer.print("<{f}", .{max});
+                            try std.fmt.format(writer, "<{f}", .{max});
                         }
                     }
                     try writer.writeAll("\"\n");
@@ -407,17 +407,17 @@ pub const ProfileLock = struct {
     /// Write lock file to YAML format
     pub fn write(self: ProfileLock, writer: anytype) !void {
         // Always write format_version first
-        try writer.print("format_version: \"{s}\"\n", .{FormatVersions.lock});
-        try writer.print("profile_name: {s}\n", .{self.profile_name});
-        try writer.print("lock_version: {d}\n", .{self.lock_version});
+        try std.fmt.format(writer, "format_version: \"{s}\"\n", .{FormatVersions.lock});
+        try std.fmt.format(writer, "profile_name: {s}\n", .{self.profile_name});
+        try std.fmt.format(writer, "lock_version: {d}\n", .{self.lock_version});
         try writer.writeAll("resolved:\n");
 
         for (self.resolved) |pkg| {
-            try writer.print("  - name: {s}\n", .{pkg.id.name});
-            try writer.print("    version: \"{f}\"\n", .{pkg.id.version});
-            try writer.print("    revision: {d}\n", .{pkg.id.revision});
-            try writer.print("    build_id: {s}\n", .{pkg.id.build_id});
-            try writer.print("    requested: {}\n", .{pkg.requested});
+            try std.fmt.format(writer, "  - name: {s}\n", .{pkg.id.name});
+            try std.fmt.format(writer, "    version: \"{f}\"\n", .{pkg.id.version});
+            try std.fmt.format(writer, "    revision: {d}\n", .{pkg.id.revision});
+            try std.fmt.format(writer, "    build_id: {s}\n", .{pkg.id.build_id});
+            try std.fmt.format(writer, "    requested: {}\n", .{pkg.requested});
         }
     }
 

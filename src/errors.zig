@@ -109,7 +109,7 @@ pub const ErrorInfo = struct {
         self: ErrorInfo,
         writer: anytype,
     ) !void {
-        try writer.print("[{s}] {s}:{d} in {s}: {s}", .{
+        try std.fmt.format(writer,"[{s}] {s}:{d} in {s}: {s}", .{
             self.category.toString(),
             self.source_file,
             self.source_line,
@@ -117,7 +117,7 @@ pub const ErrorInfo = struct {
             self.operation,
         });
         if (self.resource) |res| {
-            try writer.print(" ({s})", .{res});
+            try std.fmt.format(writer," ({s})", .{res});
         }
     }
 };

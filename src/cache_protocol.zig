@@ -979,7 +979,7 @@ fn sendHttpResponse(stream: std.net.Stream, response: *const CacheResponse) !voi
     const writer = fbs.writer();
 
     // Status line
-    try writer.print("HTTP/1.1 {d} {s}\r\n", .{
+    try std.fmt.format(writer,"HTTP/1.1 {d} {s}\r\n", .{
         @intFromEnum(response.status),
         response.status.message(),
     });
@@ -987,12 +987,12 @@ fn sendHttpResponse(stream: std.net.Stream, response: *const CacheResponse) !voi
     // Headers
     var iter = response.headers.iterator();
     while (iter.next()) |entry| {
-        try writer.print("{s}: {s}\r\n", .{ entry.key_ptr.*, entry.value_ptr.* });
+        try std.fmt.format(writer,"{s}: {s}\r\n", .{ entry.key_ptr.*, entry.value_ptr.* });
     }
 
     // Content length
     if (response.body) |body| {
-        try writer.print("Content-Length: {d}\r\n", .{body.len});
+        try std.fmt.format(writer,"Content-Length: {d}\r\n", .{body.len});
     }
 
     try writer.writeAll("\r\n");

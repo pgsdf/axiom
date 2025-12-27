@@ -333,7 +333,7 @@ pub const ResourceStats = struct {
         self: *const ResourceStats,
         writer: anytype,
     ) !void {
-        try writer.print(
+        try std.fmt.format(writer,
             "Resolution completed in {d:.2}s\n" ++
                 "  Memory used: {d} MB (peak: {d} MB)\n" ++
                 "  Candidates examined: {d}\n" ++
@@ -349,14 +349,14 @@ pub const ResourceStats = struct {
             },
         );
         if (self.sat_variables > 0 or self.sat_clauses > 0) {
-            try writer.print(
+            try std.fmt.format(writer,
                 "  SAT variables: {d}\n" ++
                     "  SAT clauses: {d}\n",
                 .{ self.sat_variables, self.sat_clauses },
             );
         }
         if (self.limit_hit) |limit| {
-            try writer.print("  Limit hit: {s}\n", .{limit.message()});
+            try std.fmt.format(writer,"  Limit hit: {s}\n", .{limit.message()});
         }
     }
 };

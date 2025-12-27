@@ -955,14 +955,14 @@ pub const UserRealizationEngine = struct {
 
         try writer.writeAll("#!/bin/sh\n");
         try writer.writeAll("# Axiom user environment activation script\n");
-        try writer.print("# Environment: {s}\n", .{env_name});
-        try writer.print("# User: {s}\n\n", .{self.user_ctx.username});
+        try std.fmt.format(writer, "# Environment: {s}\n", .{env_name});
+        try std.fmt.format(writer, "# User: {s}\n\n", .{self.user_ctx.username});
 
-        try writer.print("export AXIOM_ENV=\"{s}\"\n", .{env_name});
-        try writer.print("export AXIOM_USER=\"{s}\"\n", .{self.user_ctx.username});
-        try writer.print("export PATH=\"{s}/bin:$PATH\"\n", .{env_mountpoint});
-        try writer.print("export LD_LIBRARY_PATH=\"{s}/lib:$LD_LIBRARY_PATH\"\n", .{env_mountpoint});
-        try writer.print("export MANPATH=\"{s}/share/man:$MANPATH\"\n", .{env_mountpoint});
+        try std.fmt.format(writer, "export AXIOM_ENV=\"{s}\"\n", .{env_name});
+        try std.fmt.format(writer, "export AXIOM_USER=\"{s}\"\n", .{self.user_ctx.username});
+        try std.fmt.format(writer, "export PATH=\"{s}/bin:$PATH\"\n", .{env_mountpoint});
+        try std.fmt.format(writer, "export LD_LIBRARY_PATH=\"{s}/lib:$LD_LIBRARY_PATH\"\n", .{env_mountpoint});
+        try std.fmt.format(writer, "export MANPATH=\"{s}/share/man:$MANPATH\"\n", .{env_mountpoint});
 
         try writer.writeAll("\necho \"Axiom user environment '");
         try writer.writeAll(env_name);

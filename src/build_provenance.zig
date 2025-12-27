@@ -750,46 +750,46 @@ pub fn serializeProvenance(allocator: Allocator, provenance: *const Provenance) 
     var buffer: std.ArrayList(u8) = .empty;
     const writer = buffer.writer(allocator);
 
-    try writer.print("format_version: \"{s}\"\n\n", .{provenance.format_version});
+    try std.fmt.format(writer,"format_version: \"{s}\"\n\n", .{provenance.format_version});
 
     try writer.writeAll("builder:\n");
-    try writer.print("  name: \"{s}\"\n", .{provenance.builder.name});
-    try writer.print("  version: \"{s}\"\n", .{provenance.builder.version});
-    try writer.print("  host: \"{s}\"\n", .{provenance.builder.host});
+    try std.fmt.format(writer,"  name: \"{s}\"\n", .{provenance.builder.name});
+    try std.fmt.format(writer,"  version: \"{s}\"\n", .{provenance.builder.version});
+    try std.fmt.format(writer,"  host: \"{s}\"\n", .{provenance.builder.host});
 
     try writer.writeAll("\nsource:\n");
-    try writer.print("  url: \"{s}\"\n", .{provenance.source.url});
-    try writer.print("  sha256: \"{s}\"\n", .{provenance.source.sha256});
-    try writer.print("  fetched_at: \"{s}\"\n", .{provenance.source.fetched_at});
+    try std.fmt.format(writer,"  url: \"{s}\"\n", .{provenance.source.url});
+    try std.fmt.format(writer,"  sha256: \"{s}\"\n", .{provenance.source.sha256});
+    try std.fmt.format(writer,"  fetched_at: \"{s}\"\n", .{provenance.source.fetched_at});
 
     try writer.writeAll("\nbuild:\n");
-    try writer.print("  started_at: \"{s}\"\n", .{provenance.build.started_at});
-    try writer.print("  completed_at: \"{s}\"\n", .{provenance.build.completed_at});
+    try std.fmt.format(writer,"  started_at: \"{s}\"\n", .{provenance.build.started_at});
+    try std.fmt.format(writer,"  completed_at: \"{s}\"\n", .{provenance.build.completed_at});
 
     if (provenance.build.environment.len > 0) {
         try writer.writeAll("  environment:\n");
         for (provenance.build.environment) |env| {
-            try writer.print("    {s}: \"{s}\"\n", .{ env.name, env.value });
+            try std.fmt.format(writer,"    {s}: \"{s}\"\n", .{ env.name, env.value });
         }
     }
 
     if (provenance.build.commands.len > 0) {
         try writer.writeAll("  commands:\n");
         for (provenance.build.commands) |cmd| {
-            try writer.print("    - \"{s}\"\n", .{cmd});
+            try std.fmt.format(writer,"    - \"{s}\"\n", .{cmd});
         }
     }
 
     try writer.writeAll("\noutput:\n");
-    try writer.print("  hash: \"{s}\"\n", .{provenance.output.hash});
-    try writer.print("  files_count: {d}\n", .{provenance.output.files_count});
-    try writer.print("  total_size: {d}\n", .{provenance.output.total_size});
+    try std.fmt.format(writer,"  hash: \"{s}\"\n", .{provenance.output.hash});
+    try std.fmt.format(writer,"  files_count: {d}\n", .{provenance.output.files_count});
+    try std.fmt.format(writer,"  total_size: {d}\n", .{provenance.output.total_size});
 
     if (provenance.signature) |sig| {
         try writer.writeAll("\nsignature:\n");
-        try writer.print("  key_id: \"{s}\"\n", .{sig.key_id});
-        try writer.print("  algorithm: \"{s}\"\n", .{sig.algorithm});
-        try writer.print("  value: \"{s}\"\n", .{sig.value});
+        try std.fmt.format(writer,"  key_id: \"{s}\"\n", .{sig.key_id});
+        try std.fmt.format(writer,"  algorithm: \"{s}\"\n", .{sig.algorithm});
+        try std.fmt.format(writer,"  value: \"{s}\"\n", .{sig.value});
     }
 
     return buffer.toOwnedSlice(allocator);

@@ -483,7 +483,7 @@ pub const AbiReport = struct {
         if (self.system_lib_violations.items.len > 0) {
             try writer.writeAll("\nSystem Library Violations:\n");
             for (self.system_lib_violations.items) |v| {
-                try writer.print("  - {s}: found in {s}, expected {s}\n", .{
+                try std.fmt.format(writer,"  - {s}: found in {s}, expected {s}\n", .{
                     v.library,
                     v.found_in,
                     v.expected,
@@ -494,14 +494,14 @@ pub const AbiReport = struct {
         if (self.missing_dependencies.items.len > 0) {
             try writer.writeAll("\nMissing Dependencies:\n");
             for (self.missing_dependencies.items) |d| {
-                try writer.print("  - {s}\n", .{d});
+                try std.fmt.format(writer,"  - {s}\n", .{d});
             }
         }
 
         if (self.warnings.items.len > 0) {
             try writer.writeAll("\nWarnings:\n");
             for (self.warnings.items) |w| {
-                try writer.print("  - {s}\n", .{w});
+                try std.fmt.format(writer,"  - {s}\n", .{w});
             }
         }
     }
@@ -539,22 +539,22 @@ pub const EnvironmentMetadata = struct {
         var buffer: std.ArrayList(u8) = .empty;
         const writer = buffer.writer(allocator);
 
-        try writer.print("name: {s}\n", .{self.name});
-        try writer.print("profile: {s}\n", .{self.profile_name});
-        try writer.print("realized_at: {d}\n", .{self.realized_at});
-        try writer.print("spec_version: {s}\n", .{self.spec_version});
-        try writer.print("abi_verified: {}\n", .{self.abi_verified});
+        try std.fmt.format(writer,"name: {s}\n", .{self.name});
+        try std.fmt.format(writer,"profile: {s}\n", .{self.profile_name});
+        try std.fmt.format(writer,"realized_at: {d}\n", .{self.realized_at});
+        try std.fmt.format(writer,"spec_version: {s}\n", .{self.spec_version});
+        try std.fmt.format(writer,"abi_verified: {}\n", .{self.abi_verified});
 
         try writer.writeAll("packages:\n");
         for (self.packages) |pkg| {
-            try writer.print("  - name: {s}\n", .{pkg.name});
-            try writer.print("    version: {}.{}.{}\n", .{
+            try std.fmt.format(writer,"  - name: {s}\n", .{pkg.name});
+            try std.fmt.format(writer,"    version: {}.{}.{}\n", .{
                 pkg.version.major,
                 pkg.version.minor,
                 pkg.version.patch,
             });
-            try writer.print("    revision: {d}\n", .{pkg.revision});
-            try writer.print("    build_id: {s}\n", .{pkg.build_id});
+            try std.fmt.format(writer,"    revision: {d}\n", .{pkg.revision});
+            try std.fmt.format(writer,"    build_id: {s}\n", .{pkg.build_id});
         }
 
         return buffer.toOwnedSlice(allocator);

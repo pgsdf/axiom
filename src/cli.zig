@@ -2775,9 +2775,9 @@ pub const CLI = struct {
             defer buffer.deinit(self.allocator);
             const writer = buffer.writer(self.allocator);
 
-            try writer.print("# Axiom Secret Key - KEEP PRIVATE!\n", .{});
-            try writer.print("key_id: {s}\n", .{key_id});
-            try writer.print("secret_key: {x}\n", .{key_pair.secret_key});
+            try std.fmt.format(writer,"# Axiom Secret Key - KEEP PRIVATE!\n", .{});
+            try std.fmt.format(writer,"key_id: {s}\n", .{key_id});
+            try std.fmt.format(writer,"secret_key: {x}\n", .{key_pair.secret_key});
 
             _ = try secret_file.writeAll(buffer.items);
         }

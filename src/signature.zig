@@ -297,7 +297,7 @@ pub const AuditLog = struct {
         const writer = file.writer(&write_buf);
 
         for (self.entries.items) |entry| {
-            try writer.print("{d}|{s}|{s}|{s}|{s}\n", .{
+            try std.fmt.format(writer,"{d}|{s}|{s}|{s}|{s}\n", .{
                 entry.timestamp,
                 entry.package_path,
                 entry.key_id orelse "none",
@@ -407,18 +407,18 @@ pub const Signature = struct {
         const writer = result.writer(allocator);
 
         try writer.writeAll("# Axiom Package Signature\n");
-        try writer.print("version: {d}\n", .{self.version});
-        try writer.print("algorithm: {s}\n", .{self.algorithm});
-        try writer.print("key_id: {s}\n", .{self.key_id});
+        try std.fmt.format(writer,"version: {d}\n", .{self.version});
+        try std.fmt.format(writer,"algorithm: {s}\n", .{self.algorithm});
+        try std.fmt.format(writer,"key_id: {s}\n", .{self.key_id});
         if (self.signer) |s| {
-            try writer.print("signer: \"{s}\"\n", .{s});
+            try std.fmt.format(writer,"signer: \"{s}\"\n", .{s});
         }
-        try writer.print("timestamp: {d}\n", .{self.timestamp});
-        try writer.print("signature: {x}\n", .{self.signature});
+        try std.fmt.format(writer,"timestamp: {d}\n", .{self.timestamp});
+        try std.fmt.format(writer,"signature: {x}\n", .{self.signature});
         try writer.writeAll("files:\n");
         for (self.files) |f| {
-            try writer.print("  - path: \"{s}\"\n", .{f.path});
-            try writer.print("    sha256: {x}\n", .{f.hash});
+            try std.fmt.format(writer,"  - path: \"{s}\"\n", .{f.path});
+            try std.fmt.format(writer,"    sha256: {x}\n", .{f.hash});
         }
 
         return result.toOwnedSlice(allocator);
@@ -1511,20 +1511,20 @@ pub const MultiSignatureConfig = struct {
         const writer = result.writer(allocator);
 
         try writer.writeAll("# Multi-Party Signing Policy\n");
-        try writer.print("threshold: {d}\n", .{self.threshold});
+        try std.fmt.format(writer,"threshold: {d}\n", .{self.threshold});
         if (self.policy_name) |name| {
-            try writer.print("policy_name: \"{s}\"\n", .{name});
+            try std.fmt.format(writer,"policy_name: \"{s}\"\n", .{name});
         }
         if (self.authorized_signers.len > 0) {
             try writer.writeAll("signers:\n");
             for (self.authorized_signers) |signer| {
-                try writer.print("  - {s}\n", .{signer});
+                try std.fmt.format(writer,"  - {s}\n", .{signer});
             }
         }
         if (self.required_signers.len > 0) {
             try writer.writeAll("required_signers:\n");
             for (self.required_signers) |signer| {
-                try writer.print("  - {s}\n", .{signer});
+                try std.fmt.format(writer,"  - {s}\n", .{signer});
             }
         }
 
@@ -1586,23 +1586,23 @@ pub const MultiSignature = struct {
         const writer = result.writer(allocator);
 
         try writer.writeAll("# Axiom Multi-Party Signature\n");
-        try writer.print("version: {d}\n", .{self.version});
-        try writer.print("algorithm: {s}\n", .{self.algorithm});
+        try std.fmt.format(writer,"version: {d}\n", .{self.version});
+        try std.fmt.format(writer,"algorithm: {s}\n", .{self.algorithm});
 
         try writer.writeAll("\nfiles:\n");
         for (self.files) |f| {
-            try writer.print("  - path: \"{s}\"\n", .{f.path});
-            try writer.print("    sha256: {x}\n", .{f.hash});
+            try std.fmt.format(writer,"  - path: \"{s}\"\n", .{f.path});
+            try std.fmt.format(writer,"    sha256: {x}\n", .{f.hash});
         }
 
         try writer.writeAll("\nsignatures:\n");
         for (self.signatures) |sig| {
-            try writer.print("  - key_id: {s}\n", .{sig.key_id});
+            try std.fmt.format(writer,"  - key_id: {s}\n", .{sig.key_id});
             if (sig.signer_name) |name| {
-                try writer.print("    signer: \"{s}\"\n", .{name});
+                try std.fmt.format(writer,"    signer: \"{s}\"\n", .{name});
             }
-            try writer.print("    timestamp: {d}\n", .{sig.timestamp});
-            try writer.print("    signature: {x}\n", .{sig.signature});
+            try std.fmt.format(writer,"    timestamp: {d}\n", .{sig.timestamp});
+            try std.fmt.format(writer,"    signature: {x}\n", .{sig.signature});
         }
 
         return result.toOwnedSlice(allocator);
