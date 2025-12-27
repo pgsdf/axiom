@@ -618,7 +618,7 @@ test "getClosureStats with base packages" {
 test "cloneManifest basic" {
     const allocator = std.testing.allocator;
 
-    var original = Manifest{
+    const original = Manifest{
         .name = "test-pkg",
         .version = .{ .major = 1, .minor = 2, .patch = 3 },
         .revision = 5,
@@ -648,7 +648,7 @@ test "cloneManifest with tags" {
     const allocator = std.testing.allocator;
 
     const tags = [_][]const u8{ "cli", "shell" };
-    var original = Manifest{
+    const original = Manifest{
         .name = "bash",
         .version = .{ .major = 5, .minor = 0, .patch = 0 },
         .revision = 1,
@@ -672,7 +672,7 @@ test "cloneManifest independence" {
     const original_name = try allocator.dupe(u8, "original");
     defer allocator.free(original_name);
 
-    var original = Manifest{
+    const original = Manifest{
         .name = original_name,
         .version = .{ .major = 1, .minor = 0, .patch = 0 },
         .revision = 1,
