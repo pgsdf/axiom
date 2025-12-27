@@ -350,8 +350,7 @@ pub const UserProfileManager = struct {
         const file = try std.fs.cwd().createFile(profile_path, .{});
         defer file.close();
 
-        var write_buf: [4096]u8 = undefined;
-        try prof.write(file.writer(&write_buf));
+        try prof.write(file);
 
         std.debug.print("  Profile created at {s}\n", .{mountpoint});
     }
@@ -429,8 +428,7 @@ pub const UserProfileManager = struct {
         const file = try std.fs.cwd().createFile(profile_path, .{});
         defer file.close();
 
-        var write_buf: [4096]u8 = undefined;
-        try prof.write(file.writer(&write_buf));
+        try prof.write(file);
 
         std.debug.print("Profile '{s}' updated (snapshot: {s})\n", .{ prof.name, snap_name });
     }
@@ -464,8 +462,7 @@ pub const UserProfileManager = struct {
         const file = try std.fs.cwd().createFile(lock_path, .{});
         defer file.close();
 
-        var write_buf: [4096]u8 = undefined;
-        try lock.write(file.writer(&write_buf));
+        try lock.write(file);
 
         std.debug.print("Lock file saved: {s}\n", .{lock_path});
     }
