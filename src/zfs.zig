@@ -2149,3 +2149,97 @@ test "concurrent reference counting" {
     // Ref count should be back to 0
     try std.testing.expectEqual(@as(u32, 0), zfs.getRefCount());
 }
+
+// ============================================================================
+// SECURITY TESTS: Command Injection Prevention
+// ============================================================================
+
+test "SECURITY: command injection - shell metacharacters in dataset names" {
+    // Test all shell metacharacters that could enable command injection
+    try std.testing.expect(!isValidDatasetName("pool;rm -rf /")); // Semicolon
+    try std.testing.expect(!isValidDatasetName("pool&rm -rf /")); // Ampersand
+    try std.testing.expect(!isValidDatasetName("pool|cat /etc/passwd")); // Pipe
+    try std.testing.expect(!isValidDatasetName("pool>malicious")); // Redirect
+    try std.testing.expect(!isValidDatasetName("pool<input")); // Input redirect
+    try std.testing.expect(!isValidDatasetName("pool`whoami`")); // Backtick command substitution
+    try std.testing.expect(!isValidDatasetName("pool$(whoami)")); // $() command substitution
+}
+
+test "SECURITY: command injection - quotes and escaping" {
+    // Single and double quotes used to break out of quoting
+    try std.testing.expect(!isValidDatasetName("pool'; rm -rf /'")); // Single quote
+    try std.testing.expect(!isValidDatasetName("pool\"; rm -rf /\"")); // Double quote
+    try std.testing.expect(!isValidDatasetName("pool' || echo pwned")); // Quote with OR
+}
+
+test "SECURITY: command injection - newlines and control chars" {
+    // Newlines can be used to inject separate commands
+    try std.testing.expect(!isValidDatasetName("pool\nrm -rf /")); // Newline
+    try std.testing.expect(!isValidDatasetName("pool\rrm -rf /")); // Carriage return
+    try std.testing.expect(!isValidDatasetName("pool\x00rm")); // NUL byte truncation
+}
+
+test "SECURITY: command injection - environment variable expansion" {
+    // Environment variable expansion attempts
+    try std.testing.expect(!isValidDatasetName("pool$HOME")); // Variable expansion
+    try std.testing.expect(!isValidDatasetName("pool${HOME}")); // Braced expansion
+    try std.testing.expect(!isValidDatasetName("pool$(cat /etc/passwd)")); // Command substitution
+}
+
+test "SECURITY: command injection - glob patterns" {
+    // Glob patterns that could cause unexpected behavior
+    try std.testing.expect(!isValidDatasetName("pool*")); // Glob star
+    try std.testing.expect(!isValidDatasetName("pool?")); // Glob question mark
+    try std.testing.expect(!isValidDatasetName("pool[a-z]")); // Glob range
+    try std.testing.expect(!isValidDatasetName("pool{a,b}")); // Brace expansion
+}
+
+test "SECURITY: command injection - special shell chars" {
+    // Other dangerous shell characters
+    try std.testing.expect(!isValidDatasetName("pool!history")); // History expansion
+    try std.testing.expect(!isValidDatasetName("pool~root")); // Tilde expansion
+    try std.testing.expect(!isValidDatasetName("pool\\necho pwned")); // Escape sequences
+}
+
+test "SECURITY: property name injection" {
+    // Property names have stricter validation
+    try std.testing.expect(!isValidPropertyName("prop;rm")); // Semicolon
+    try std.testing.expect(!isValidPropertyName("prop|cat")); // Pipe
+    try std.testing.expect(!isValidPropertyName("prop$VAR")); // Variable
+    try std.testing.expect(!isValidPropertyName("prop`cmd`")); // Backtick
+    try std.testing.expect(!isValidPropertyName("prop-name")); // Hyphen not allowed in properties
+    try std.testing.expect(!isValidPropertyName("prop/path")); // Slash not allowed
+    try std.testing.expect(!isValidPropertyName("")); // Empty
+}
+
+test "SECURITY: valid dataset names pass" {
+    // These should all be valid
+    try std.testing.expect(isValidDatasetName("zroot"));
+    try std.testing.expect(isValidDatasetName("zroot/axiom"));
+    try std.testing.expect(isValidDatasetName("zroot/axiom/store"));
+    try std.testing.expect(isValidDatasetName("pool-name_test"));
+    try std.testing.expect(isValidDatasetName("zroot/pkg@snapshot1"));
+    try std.testing.expect(isValidDatasetName("pool:with:colons"));
+    try std.testing.expect(isValidDatasetName("pool.with.dots"));
+    try std.testing.expect(isValidDatasetName("zroot/axiom#bookmark"));
+}
+
+test "SECURITY: valid property names pass" {
+    try std.testing.expect(isValidPropertyName("compression"));
+    try std.testing.expect(isValidPropertyName("recordsize"));
+    try std.testing.expect(isValidPropertyName("axiom:pkg_installed"));
+    try std.testing.expect(isValidPropertyName("user.custom_prop"));
+    try std.testing.expect(isValidPropertyName("com.company:property"));
+}
+
+test "SECURITY: empty and boundary cases" {
+    // Empty names should fail
+    try std.testing.expect(!isValidDatasetName(""));
+    try std.testing.expect(!isValidPropertyName(""));
+
+    // Single character edge cases
+    try std.testing.expect(isValidDatasetName("a"));
+    try std.testing.expect(isValidPropertyName("a"));
+    try std.testing.expect(!isValidDatasetName(" "));
+    try std.testing.expect(!isValidPropertyName(" "));
+}

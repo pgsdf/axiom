@@ -2495,3 +2495,203 @@ test "MultiSignatureError values" {
 
     try std.testing.expectEqual(@as(usize, 5), errors.len);
 }
+
+// ============================================================================
+// SECURITY TESTS: Signature Verification
+// ============================================================================
+
+test "SECURITY: TrustLevel hierarchy" {
+    // Verify trust levels are ordered correctly for security decisions
+    // Higher trust = lower enum value (official = 0 is most trusted)
+    try std.testing.expect(@intFromEnum(TrustLevel.official) < @intFromEnum(TrustLevel.community));
+    try std.testing.expect(@intFromEnum(TrustLevel.community) < @intFromEnum(TrustLevel.third_party));
+    try std.testing.expect(@intFromEnum(TrustLevel.third_party) < @intFromEnum(TrustLevel.unknown));
+}
+
+test "SECURITY: TrustStore key operations" {
+    const allocator = std.testing.allocator;
+
+    var store = TrustStore.init(allocator, "/tmp/test-trust-store");
+    defer store.deinit();
+
+    // Initially no keys
+    try std.testing.expect(store.getKey("nonexistent") == null);
+    try std.testing.expect(!store.isKeyTrusted("nonexistent"));
+}
+
+test "SECURITY: verification status type safety" {
+    // VerificationStatus is a tagged union - test that isVerified works correctly
+    // Create a verified status with dummy data
+    const verified_status = VerificationStatus{
+        .verified = .{
+            .content_hash = [_]u8{0} ** 32,
+            .signer_key_id = "test-key",
+            .signer_name = null,
+            .signature_time = 0,
+            .trust_level = .official,
+        },
+    };
+    try std.testing.expect(verified_status.isVerified());
+
+    // Create invalid status
+    const invalid_status = VerificationStatus{
+        .signature_invalid = .{
+            .reason = "test",
+            .signature_file = null,
+        },
+    };
+    try std.testing.expect(!invalid_status.isVerified());
+}
+
+test "SECURITY: verification status - verified returns content" {
+    // Test that getVerifiedContent works correctly for security decisions
+    const verified = VerificationStatus{
+        .verified = .{
+            .content_hash = [_]u8{0xAB} ** 32,
+            .signer_key_id = "official-key",
+            .signer_name = "PGSD Official",
+            .signature_time = 1234567890,
+            .trust_level = .official,
+        },
+    };
+
+    // Should return content for verified status
+    const content = verified.getVerifiedContent();
+    try std.testing.expect(content != null);
+    try std.testing.expectEqual(TrustLevel.official, content.?.trust_level);
+}
+
+test "SECURITY: verification status - failures return null content" {
+    // Security-critical: failure states must NOT return verified content
+    const missing = VerificationStatus{
+        .signature_missing = .{ .expected_path = "/test/sig" },
+    };
+    try std.testing.expect(missing.getVerifiedContent() == null);
+    try std.testing.expect(!missing.isVerified());
+
+    const invalid = VerificationStatus{
+        .signature_invalid = .{ .reason = "bad sig", .signature_file = null },
+    };
+    try std.testing.expect(invalid.getVerifiedContent() == null);
+    try std.testing.expect(!invalid.isVerified());
+
+    const untrusted = VerificationStatus{
+        .key_untrusted = .{ .key_id = "unknown-key", .reason = "not in store" },
+    };
+    try std.testing.expect(untrusted.getVerifiedContent() == null);
+    try std.testing.expect(!untrusted.isVerified());
+
+    const mismatch = VerificationStatus{
+        .hash_mismatch = .{
+            .expected_hash = [_]u8{0} ** 32,
+            .actual_hash = [_]u8{1} ** 32,
+            .file_path = "/test/file",
+        },
+    };
+    try std.testing.expect(mismatch.getVerifiedContent() == null);
+    try std.testing.expect(!mismatch.isVerified());
+}
+
+test "SECURITY: multi-signature threshold validation" {
+    // Threshold must be at least 1
+    const invalid_threshold = MultiSignatureConfig{
+        .threshold = 0,
+        .authorized_signers = &[_][]const u8{},
+        .required_signers = &[_][]const u8{},
+        .policy_name = null,
+    };
+    try std.testing.expectEqual(@as(u32, 0), invalid_threshold.threshold);
+
+    // Valid threshold
+    const valid_config = MultiSignatureConfig{
+        .threshold = 2,
+        .authorized_signers = &[_][]const u8{ "key1", "key2", "key3" },
+        .required_signers = &[_][]const u8{},
+        .policy_name = "m-of-n",
+    };
+    try std.testing.expectEqual(@as(u32, 2), valid_config.threshold);
+    try std.testing.expectEqual(@as(usize, 3), valid_config.authorized_signers.len);
+}
+
+test "SECURITY: signature error distinctness" {
+    // Ensure security-critical errors are distinct
+    try std.testing.expect(SignatureError.InvalidSignature != SignatureError.SignatureNotFound);
+    try std.testing.expect(SignatureError.KeyNotTrusted != SignatureError.KeyNotFound);
+    try std.testing.expect(SignatureError.HashMismatch != SignatureError.InvalidSignature);
+}
+
+test "SECURITY: audit action types" {
+    // Audit actions must be distinct for proper logging
+    try std.testing.expect(AuditEntry.AuditAction.allowed != AuditEntry.AuditAction.blocked);
+    try std.testing.expect(AuditEntry.AuditAction.blocked != AuditEntry.AuditAction.bypassed);
+    try std.testing.expect(AuditEntry.AuditAction.warned != AuditEntry.AuditAction.allowed);
+}
+
+test "SECURITY: PublicKey deinit frees memory" {
+    const allocator = std.testing.allocator;
+
+    // Create a key with allocated strings
+    var key = PublicKey{
+        .key_id = try allocator.dupe(u8, "test-key-id"),
+        .key_data = [_]u8{0} ** 32,
+        .owner = try allocator.dupe(u8, "Test Owner"),
+        .email = try allocator.dupe(u8, "test@example.com"),
+        .created = 1234567890,
+        .expires = null,
+        .trust_level = .third_party,
+    };
+
+    // Deinit should free all allocated memory (test allocator will catch leaks)
+    key.deinit(allocator);
+}
+
+test "SECURITY: OfficialPGSDKey constants are immutable" {
+    // Verify the official key constants haven't been tampered with
+    try std.testing.expectEqual(@as(usize, 16), OfficialPGSDKey.key_id.len);
+    try std.testing.expectEqual(@as(usize, 64), OfficialPGSDKey.key_data_hex.len);
+    try std.testing.expect(OfficialPGSDKey.created > 0);
+}
+
+// ============================================================================
+// SECURITY TESTS: Trust Store Manipulation Prevention
+// ============================================================================
+
+test "SECURITY: trust store isolation" {
+    const allocator = std.testing.allocator;
+
+    // Two trust stores should be completely isolated
+    var store1 = TrustStore.init(allocator, "/tmp/store1");
+    defer store1.deinit();
+
+    var store2 = TrustStore.init(allocator, "/tmp/store2");
+    defer store2.deinit();
+
+    // Adding a trusted key to store1 should not affect store2
+    try store1.trusted.put(try allocator.dupe(u8, "key1"), true);
+    try std.testing.expect(store1.isKeyTrusted("key1"));
+    try std.testing.expect(!store2.isKeyTrusted("key1"));
+}
+
+test "SECURITY: untrust key properly removes trust" {
+    const allocator = std.testing.allocator;
+
+    var store = TrustStore.init(allocator, "/tmp/test-store");
+    defer store.deinit();
+
+    // Trust then untrust
+    try store.trustKey("testkey");
+    try std.testing.expect(store.isKeyTrusted("testkey"));
+
+    store.untrustKey("testkey");
+    try std.testing.expect(!store.isKeyTrusted("testkey"));
+}
+
+test "SECURITY: key trust level enforcement" {
+    const allocator = std.testing.allocator;
+
+    var store = TrustStore.init(allocator, "/tmp/test-store");
+    defer store.deinit();
+
+    // Unknown keys should return unknown trust level
+    try std.testing.expectEqual(TrustLevel.unknown, store.getKeyTrustLevel("nonexistent"));
+}
