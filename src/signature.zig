@@ -2529,6 +2529,7 @@ test "SECURITY: verification status type safety" {
             .signer_name = null,
             .signature_time = 0,
             .trust_level = .official,
+            .files_verified = 1,
         },
     };
     try std.testing.expect(verified_status.isVerified());
@@ -2552,6 +2553,7 @@ test "SECURITY: verification status - verified returns content" {
             .signer_name = "PGSD Official",
             .signature_time = 1234567890,
             .trust_level = .official,
+            .files_verified = 42,
         },
     };
 
@@ -2564,7 +2566,7 @@ test "SECURITY: verification status - verified returns content" {
 test "SECURITY: verification status - failures return null content" {
     // Security-critical: failure states must NOT return verified content
     const missing = VerificationStatus{
-        .signature_missing = .{ .expected_path = "/test/sig" },
+        .signature_missing = .{ .package_path = "/test/pkg" },
     };
     try std.testing.expect(missing.getVerifiedContent() == null);
     try std.testing.expect(!missing.isVerified());
