@@ -679,3 +679,71 @@ pub fn createMockPackage(allocator: std.mem.Allocator, name: []const u8, version
         .build_id = build_id,
     };
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+test "GCStats defaults" {
+    const stats = GCStats{};
+    try std.testing.expectEqual(@as(usize, 0), stats.total_packages);
+    try std.testing.expectEqual(@as(usize, 0), stats.referenced_packages);
+    try std.testing.expectEqual(@as(usize, 0), stats.unreferenced_packages);
+    try std.testing.expectEqual(@as(usize, 0), stats.removed_packages);
+    try std.testing.expectEqual(@as(usize, 0), stats.space_freed);
+    try std.testing.expectEqual(@as(i64, 0), stats.scan_time_ms);
+    try std.testing.expectEqual(@as(i64, 0), stats.collect_time_ms);
+}
+
+test "GCStats tracking" {
+    var stats = GCStats{};
+
+    stats.total_packages = 100;
+    stats.referenced_packages = 80;
+    stats.unreferenced_packages = 20;
+    stats.removed_packages = 15;
+    stats.space_freed = 1024 * 1024 * 500; // 500MB
+
+    try std.testing.expectEqual(@as(usize, 100), stats.total_packages);
+    try std.testing.expectEqual(@as(usize, 80), stats.referenced_packages);
+    try std.testing.expectEqual(@as(usize, 20), stats.unreferenced_packages);
+    try std.testing.expectEqual(@as(usize, 15), stats.removed_packages);
+}
+
+test "GCError values" {
+    const errors = [_]GCError{
+        GCError.ScanFailed,
+        GCError.CollectionFailed,
+        GCError.LockAcquisitionFailed,
+        GCError.GCAlreadyRunning,
+    };
+
+    try std.testing.expectEqual(@as(usize, 4), errors.len);
+}
+
+test "createMockPackage" {
+    const allocator = std.testing.allocator;
+
+    var pkg = try createMockPackage(allocator, "test-pkg", .{ .major = 1, .minor = 2, .patch = 3 });
+    defer {
+        allocator.free(pkg.name);
+        allocator.free(pkg.build_id);
+    }
+
+    try std.testing.expectEqualStrings("test-pkg", pkg.name);
+    try std.testing.expectEqual(@as(u32, 1), pkg.version.major);
+    try std.testing.expectEqual(@as(u32, 2), pkg.version.minor);
+    try std.testing.expectEqual(@as(u32, 3), pkg.version.patch);
+    try std.testing.expectEqual(@as(u32, 1), pkg.revision);
+    try std.testing.expectEqualStrings("mock123", pkg.build_id);
+}
+
+test "DEFAULT_GC_GRACE_PERIOD_SECONDS" {
+    // 24 hours in seconds
+    try std.testing.expectEqual(@as(i64, 24 * 60 * 60), DEFAULT_GC_GRACE_PERIOD_SECONDS);
+    try std.testing.expectEqual(@as(i64, 86400), DEFAULT_GC_GRACE_PERIOD_SECONDS);
+}
+
+test "GC_LOCK_FILE_PATH" {
+    try std.testing.expectEqualStrings("/var/run/axiom-gc.lock", GC_LOCK_FILE_PATH);
+}

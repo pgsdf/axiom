@@ -2316,3 +2316,182 @@ pub const MultiSignatureSigner = struct {
         return hasher.finalResult();
     }
 };
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+test "TrustLevel.description" {
+    try std.testing.expectEqualStrings("Official PGSD Release Key", TrustLevel.official.description());
+    try std.testing.expectEqualStrings("Trusted Community Maintainer", TrustLevel.community.description());
+    try std.testing.expectEqualStrings("User-Added Third Party Key", TrustLevel.third_party.description());
+    try std.testing.expectEqualStrings("Unknown/Untrusted Key", TrustLevel.unknown.description());
+}
+
+test "VerificationStatus.isVerified" {
+    const verified_content = VerifiedContent{
+        .content_hash = [_]u8{0} ** 32,
+        .signer_key_id = "test-key",
+        .signer_name = null,
+        .signature_time = 1702400000,
+        .trust_level = .official,
+        .files_verified = 10,
+    };
+
+    const verified = VerificationStatus{ .verified = verified_content };
+    try std.testing.expect(verified.isVerified());
+
+    const missing = VerificationStatus{ .signature_missing = .{ .package_path = "/test" } };
+    try std.testing.expect(!missing.isVerified());
+
+    const invalid = VerificationStatus{ .signature_invalid = .{ .key_id = null, .reason = "test", .is_parse_error = true } };
+    try std.testing.expect(!invalid.isVerified());
+}
+
+test "VerificationStatus.getVerifiedContent" {
+    const verified_content = VerifiedContent{
+        .content_hash = [_]u8{0} ** 32,
+        .signer_key_id = "test-key",
+        .signer_name = "Test Signer",
+        .signature_time = 1702400000,
+        .trust_level = .community,
+        .files_verified = 5,
+    };
+
+    const verified = VerificationStatus{ .verified = verified_content };
+    const content = verified.getVerifiedContent();
+    try std.testing.expect(content != null);
+    try std.testing.expectEqual(@as(usize, 5), content.?.files_verified);
+
+    const missing = VerificationStatus{ .signature_missing = .{ .package_path = "/test" } };
+    try std.testing.expect(missing.getVerifiedContent() == null);
+}
+
+test "VerificationStatus.getMessage" {
+    const verified = VerificationStatus{ .verified = .{
+        .content_hash = [_]u8{0} ** 32,
+        .signer_key_id = "key",
+        .signer_name = null,
+        .signature_time = 0,
+        .trust_level = .official,
+        .files_verified = 0,
+    } };
+    try std.testing.expectEqualStrings("Package signature verified", verified.getMessage());
+
+    const missing = VerificationStatus{ .signature_missing = .{ .package_path = "/test" } };
+    try std.testing.expectEqualStrings("No signature file found", missing.getMessage());
+
+    const invalid = VerificationStatus{ .signature_invalid = .{ .key_id = null, .reason = "bad", .is_parse_error = false } };
+    try std.testing.expectEqualStrings("Signature is invalid", invalid.getMessage());
+
+    const untrusted = VerificationStatus{ .key_untrusted = .{ .key_id = "key", .signer_name = null, .key_exists = false } };
+    try std.testing.expectEqualStrings("Signing key is not trusted", untrusted.getMessage());
+
+    const mismatch = VerificationStatus{ .hash_mismatch = .{
+        .file_path = "/test",
+        .expected_hash = [_]u8{0} ** 32,
+        .actual_hash = [_]u8{1} ** 32,
+        .total_failed = 1,
+    } };
+    try std.testing.expectEqualStrings("File content has been modified", mismatch.getMessage());
+}
+
+test "VerificationStatus.requireVerified" {
+    const verified = VerificationStatus{ .verified = .{
+        .content_hash = [_]u8{0} ** 32,
+        .signer_key_id = "key",
+        .signer_name = null,
+        .signature_time = 0,
+        .trust_level = .official,
+        .files_verified = 0,
+    } };
+    const content = try verified.requireVerified();
+    try std.testing.expectEqualStrings("key", content.signer_key_id);
+
+    const missing = VerificationStatus{ .signature_missing = .{ .package_path = "/test" } };
+    try std.testing.expectError(SignatureError.NotVerified, missing.requireVerified());
+}
+
+test "OfficialPGSDKey constants" {
+    try std.testing.expectEqualStrings("PGSD0001A7E3F9B2", OfficialPGSDKey.key_id);
+    try std.testing.expectEqualStrings("PGSD Official", OfficialPGSDKey.owner);
+    try std.testing.expectEqualStrings("security@pgsd.io", OfficialPGSDKey.email);
+    try std.testing.expectEqual(@as(usize, 64), OfficialPGSDKey.key_data_hex.len);
+}
+
+test "OfficialPGSDKey.getKey" {
+    const allocator = std.testing.allocator;
+
+    var key = try OfficialPGSDKey.getKey(allocator);
+    defer {
+        allocator.free(key.key_id);
+        allocator.free(key.owner);
+        allocator.free(key.email);
+    }
+
+    try std.testing.expectEqualStrings("PGSD0001A7E3F9B2", key.key_id);
+    try std.testing.expectEqualStrings("PGSD Official", key.owner);
+    try std.testing.expectEqualStrings("security@pgsd.io", key.email);
+    try std.testing.expectEqual(TrustLevel.official, key.trust_level);
+    try std.testing.expect(key.expires == null);
+}
+
+test "AuditLog.init" {
+    const allocator = std.testing.allocator;
+
+    var log = AuditLog.init(allocator, "/var/log/axiom-audit.log");
+    defer log.deinit();
+
+    try std.testing.expectEqualStrings("/var/log/axiom-audit.log", log.log_path);
+    try std.testing.expectEqual(@as(usize, 0), log.entries.items.len);
+}
+
+test "AuditEntry.AuditAction enum" {
+    try std.testing.expectEqual(AuditEntry.AuditAction.allowed, AuditEntry.AuditAction.allowed);
+    try std.testing.expectEqual(AuditEntry.AuditAction.blocked, AuditEntry.AuditAction.blocked);
+    try std.testing.expectEqual(AuditEntry.AuditAction.warned, AuditEntry.AuditAction.warned);
+    try std.testing.expectEqual(AuditEntry.AuditAction.bypassed, AuditEntry.AuditAction.bypassed);
+}
+
+test "MultiSignatureConfig defaults" {
+    const config = MultiSignatureConfig{
+        .threshold = 2,
+        .authorized_signers = &[_][]const u8{},
+        .required_signers = &[_][]const u8{},
+        .policy_name = null,
+    };
+
+    try std.testing.expectEqual(@as(u32, 2), config.threshold);
+    try std.testing.expectEqual(@as(usize, 0), config.authorized_signers.len);
+    try std.testing.expect(config.policy_name == null);
+}
+
+test "SignatureError values" {
+    // Ensure all error values are distinct
+    const errors = [_]SignatureError{
+        SignatureError.InvalidSignature,
+        SignatureError.SignatureNotFound,
+        SignatureError.KeyNotFound,
+        SignatureError.KeyNotTrusted,
+        SignatureError.HashMismatch,
+        SignatureError.InvalidKeyFormat,
+        SignatureError.InvalidSignatureFormat,
+        SignatureError.SigningFailed,
+        SignatureError.VerificationFailed,
+        SignatureError.NotVerified,
+    };
+
+    try std.testing.expectEqual(@as(usize, 10), errors.len);
+}
+
+test "MultiSignatureError values" {
+    const errors = [_]MultiSignatureError{
+        MultiSignatureError.ThresholdNotMet,
+        MultiSignatureError.DuplicateSignature,
+        MultiSignatureError.SignerNotAuthorized,
+        MultiSignatureError.NoSignatures,
+        MultiSignatureError.InvalidThreshold,
+    };
+
+    try std.testing.expectEqual(@as(usize, 5), errors.len);
+}
