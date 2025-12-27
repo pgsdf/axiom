@@ -48,8 +48,12 @@ pub const CacheInfo = struct {
         try buffer.appendSlice(allocator, "\",\"protocol_version\":\"");
         try validation.writeJsonEscaped(writer, self.protocol_version);
         try buffer.appendSlice(allocator, "\",");
-        try std.fmt.format(writer, "\"package_count\":{d},", .{self.package_count});
-        try std.fmt.format(writer, "\"total_size\":{d},", .{self.total_size});
+        var buf1: [64]u8 = undefined;
+        const str1 = std.fmt.bufPrint(&buf1, "\"package_count\":{d},", .{self.package_count}) catch unreachable;
+        try writer.writeAll(str1);
+        var buf2: [64]u8 = undefined;
+        const str2 = std.fmt.bufPrint(&buf2, "\"total_size\":{d},", .{self.total_size}) catch unreachable;
+        try writer.writeAll(str2);
 
         if (self.public_key) |key| {
             try buffer.appendSlice(allocator, "\"public_key\":\"");
@@ -137,9 +141,15 @@ pub const PackageMeta = struct {
         try buffer.appendSlice(allocator, "\",\"hash\":\"");
         try validation.writeJsonEscaped(writer, self.hash);
         try buffer.appendSlice(allocator, "\",");
-        try std.fmt.format(writer, "\"size\":{d},", .{self.size});
-        try std.fmt.format(writer, "\"compressed_size\":{d},", .{self.compressed_size});
-        try std.fmt.format(writer, "\"compression\":\"{s}\",", .{@tagName(self.compression)});
+        var buf3: [64]u8 = undefined;
+        const str3 = std.fmt.bufPrint(&buf3, "\"size\":{d},", .{self.size}) catch unreachable;
+        try writer.writeAll(str3);
+        var buf4: [64]u8 = undefined;
+        const str4 = std.fmt.bufPrint(&buf4, "\"compressed_size\":{d},", .{self.compressed_size}) catch unreachable;
+        try writer.writeAll(str4);
+        var buf5: [64]u8 = undefined;
+        const str5 = std.fmt.bufPrint(&buf5, "\"compression\":\"{s}\",", .{@tagName(self.compression)}) catch unreachable;
+        try writer.writeAll(str5);
 
         try buffer.appendSlice(allocator, "\"dependencies\":[");
         for (self.dependencies, 0..) |dep, i| {
@@ -979,20 +989,26 @@ fn sendHttpResponse(stream: std.net.Stream, response: *const CacheResponse) !voi
     const writer = fbs.writer();
 
     // Status line
-    try std.fmt.format(writer,"HTTP/1.1 {d} {s}\r\n", .{
+    var buf_status: [256]u8 = undefined;
+    const str_status = std.fmt.bufPrint(&buf_status, "HTTP/1.1 {d} {s}\r\n", .{
         @intFromEnum(response.status),
         response.status.message(),
-    });
+    }) catch unreachable;
+    try writer.writeAll(str_status);
 
     // Headers
     var iter = response.headers.iterator();
     while (iter.next()) |entry| {
-        try std.fmt.format(writer,"{s}: {s}\r\n", .{ entry.key_ptr.*, entry.value_ptr.* });
+        var buf_header: [512]u8 = undefined;
+        const str_header = std.fmt.bufPrint(&buf_header, "{s}: {s}\r\n", .{ entry.key_ptr.*, entry.value_ptr.* }) catch unreachable;
+        try writer.writeAll(str_header);
     }
 
     // Content length
     if (response.body) |body| {
-        try std.fmt.format(writer,"Content-Length: {d}\r\n", .{body.len});
+        var buf_len: [64]u8 = undefined;
+        const str_len = std.fmt.bufPrint(&buf_len, "Content-Length: {d}\r\n", .{body.len}) catch unreachable;
+        try writer.writeAll(str_len);
     }
 
     try writer.writeAll("\r\n");

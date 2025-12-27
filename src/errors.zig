@@ -109,15 +109,20 @@ pub const ErrorInfo = struct {
         self: ErrorInfo,
         writer: anytype,
     ) !void {
-        try std.fmt.format(writer,"[{s}] {s}:{d} in {s}: {s}", .{
-            self.category.toString(),
-            self.source_file,
-            self.source_line,
-            self.source_fn,
-            self.operation,
-        });
+        try writer.writeAll("[");
+        try writer.writeAll(self.category.toString());
+        try writer.writeAll("] ");
+        try writer.writeAll(self.source_file);
+        var line_buf: [16]u8 = undefined;
+        const line_str = std.fmt.bufPrint(&line_buf, ":{d} in ", .{self.source_line}) catch unreachable;
+        try writer.writeAll(line_str);
+        try writer.writeAll(self.source_fn);
+        try writer.writeAll(": ");
+        try writer.writeAll(self.operation);
         if (self.resource) |res| {
-            try std.fmt.format(writer," ({s})", .{res});
+            try writer.writeAll(" (");
+            try writer.writeAll(res);
+            try writer.writeAll(")");
         }
     }
 };

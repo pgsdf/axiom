@@ -372,10 +372,16 @@ pub const PortsMigrator = struct {
                 defer buffer.deinit(self.allocator);
                 const writer = buffer.writer(self.allocator);
 
-                try std.fmt.format(writer,"# Axiom Local Signing Key (SECRET - keep private!)\n", .{});
-                try std.fmt.format(writer,"# Generated automatically for signing locally-built packages\n", .{});
-                try std.fmt.format(writer,"key_id: {s}\n", .{key_id});
-                try std.fmt.format(writer,"secret_key: {x}\n", .{key_pair.secret_key});
+                try writer.writeAll("# Axiom Local Signing Key (SECRET - keep private!)\n");
+                try writer.writeAll("# Generated automatically for signing locally-built packages\n");
+                try writer.writeAll("key_id: ");
+                try writer.writeAll(key_id);
+                try writer.writeAll("\n");
+                {
+                    var buf: [256]u8 = undefined;
+                    const str = std.fmt.bufPrint(&buf, "secret_key: {x}\n", .{key_pair.secret_key}) catch unreachable;
+                    try writer.writeAll(str);
+                }
 
                 _ = try file.writeAll(buffer.items);
             }
@@ -389,12 +395,24 @@ pub const PortsMigrator = struct {
                 defer buffer.deinit(self.allocator);
                 const writer = buffer.writer(self.allocator);
 
-                try std.fmt.format(writer,"# Axiom Local Signing Key (PUBLIC)\n", .{});
-                try std.fmt.format(writer,"# This key is used to verify packages built on this machine\n", .{});
-                try std.fmt.format(writer,"key_id: {s}\n", .{key_id});
-                try std.fmt.format(writer,"key_data: {x}\n", .{key_pair.public_key});
-                try std.fmt.format(writer,"owner: \"Local Build ({s})\"\n", .{hostname});
-                try std.fmt.format(writer,"created: {d}\n", .{std.time.timestamp()});
+                try writer.writeAll("# Axiom Local Signing Key (PUBLIC)\n");
+                try writer.writeAll("# This key is used to verify packages built on this machine\n");
+                try writer.writeAll("key_id: ");
+                try writer.writeAll(key_id);
+                try writer.writeAll("\n");
+                {
+                    var buf: [256]u8 = undefined;
+                    const str = std.fmt.bufPrint(&buf, "key_data: {x}\n", .{key_pair.public_key}) catch unreachable;
+                    try writer.writeAll(str);
+                }
+                try writer.writeAll("owner: \"Local Build (");
+                try writer.writeAll(hostname);
+                try writer.writeAll(")\"\n");
+                {
+                    var buf: [64]u8 = undefined;
+                    const str = std.fmt.bufPrint(&buf, "created: {d}\n", .{std.time.timestamp()}) catch unreachable;
+                    try writer.writeAll(str);
+                }
 
                 _ = try file.writeAll(buffer.items);
             }
@@ -5223,7 +5241,11 @@ pub const PortsMigrator = struct {
         try writer.writeAll("\"\n");
 
         try writer.writeAll("revision: ");
-        try std.fmt.format(writer, "{d}\n", .{meta.revision});
+        {
+            var buf: [64]u8 = undefined;
+            const str = std.fmt.bufPrint(&buf, "{d}\n", .{meta.revision}) catch unreachable;
+            try writer.writeAll(str);
+        }
 
         try writer.writeAll("description: ");
         try writer.writeAll(meta.comment);
@@ -5277,8 +5299,16 @@ pub const PortsMigrator = struct {
 
             try writer.writeAll("\nkernel:\n");
             try writer.writeAll("  kmod: true\n");
-            try std.fmt.format(writer, "  freebsd_version_min: {d}\n", .{major_min});
-            try std.fmt.format(writer, "  freebsd_version_max: {d}\n", .{major_max});
+            {
+                var buf: [64]u8 = undefined;
+                const str = std.fmt.bufPrint(&buf, "  freebsd_version_min: {d}\n", .{major_min}) catch unreachable;
+                try writer.writeAll(str);
+            }
+            {
+                var buf: [64]u8 = undefined;
+                const str = std.fmt.bufPrint(&buf, "  freebsd_version_max: {d}\n", .{major_max}) catch unreachable;
+                try writer.writeAll(str);
+            }
             try writer.writeAll("  # Note: kernel_idents left empty - compatible with any ident\n");
             try writer.writeAll("  # Add specific kernel idents if this kmod requires them:\n");
             try writer.writeAll("  # kernel_idents:\n");
@@ -5287,7 +5317,9 @@ pub const PortsMigrator = struct {
             try writer.writeAll("  require_exact_ident: false\n");
             try writer.writeAll("  # kld_names populated from port's installed .ko files:\n");
             try writer.writeAll("  kld_names:\n");
-            try std.fmt.format(writer, "    - \"{s}.ko\"\n", .{meta.name});
+            try writer.writeAll("    - \"");
+            try writer.writeAll(meta.name);
+            try writer.writeAll(".ko\"\n");
         }
 
         return output.toOwnedSlice(self.allocator);
@@ -5378,20 +5410,48 @@ pub fn generateReport(allocator: std.mem.Allocator, results: []const MigrationRe
     try writer.writeAll("Ports Migration Report\n");
     try writer.writeAll("======================\n\n");
 
-    try std.fmt.format(writer, "Total ports processed: {d}\n", .{results.len});
-    try std.fmt.format(writer, "  Generated: {d}\n", .{generated});
-    try std.fmt.format(writer, "  Built: {d}\n", .{built});
-    try std.fmt.format(writer, "  Imported: {d}\n", .{imported});
-    try std.fmt.format(writer, "  Failed: {d}\n", .{failed});
-    try std.fmt.format(writer, "  Skipped: {d}\n", .{skipped});
+    {
+        var buf: [64]u8 = undefined;
+        const str = std.fmt.bufPrint(&buf, "Total ports processed: {d}\n", .{results.len}) catch unreachable;
+        try writer.writeAll(str);
+    }
+    {
+        var buf: [64]u8 = undefined;
+        const str = std.fmt.bufPrint(&buf, "  Generated: {d}\n", .{generated}) catch unreachable;
+        try writer.writeAll(str);
+    }
+    {
+        var buf: [64]u8 = undefined;
+        const str = std.fmt.bufPrint(&buf, "  Built: {d}\n", .{built}) catch unreachable;
+        try writer.writeAll(str);
+    }
+    {
+        var buf: [64]u8 = undefined;
+        const str = std.fmt.bufPrint(&buf, "  Imported: {d}\n", .{imported}) catch unreachable;
+        try writer.writeAll(str);
+    }
+    {
+        var buf: [64]u8 = undefined;
+        const str = std.fmt.bufPrint(&buf, "  Failed: {d}\n", .{failed}) catch unreachable;
+        try writer.writeAll(str);
+    }
+    {
+        var buf: [64]u8 = undefined;
+        const str = std.fmt.bufPrint(&buf, "  Skipped: {d}\n", .{skipped}) catch unreachable;
+        try writer.writeAll(str);
+    }
 
     if (failed > 0) {
         try writer.writeAll("\nFailed ports:\n");
         for (results) |r| {
             if (r.status == .failed) {
-                try std.fmt.format(writer, "  - {s}\n", .{r.origin});
+                try writer.writeAll("  - ");
+                try writer.writeAll(r.origin);
+                try writer.writeAll("\n");
                 for (r.errors.items) |err| {
-                    try std.fmt.format(writer, "      Error: {s}\n", .{err});
+                    try writer.writeAll("      Error: ");
+                    try writer.writeAll(err);
+                    try writer.writeAll("\n");
                 }
             }
         }

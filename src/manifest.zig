@@ -489,34 +489,65 @@ pub const Manifest = struct {
         defer result.deinit(allocator);
         const writer = result.writer(allocator);
 
-        try std.fmt.format(writer,"name: {s}\n", .{self.name});
-        try std.fmt.format(writer,"version: {}.{}.{}\n", .{ self.version.major, self.version.minor, self.version.patch });
-        try std.fmt.format(writer,"revision: {d}\n", .{self.revision});
+        try writer.writeAll("name: ");
+        try writer.writeAll(self.name);
+        try writer.writeAll("\n");
+        var ver_buf: [64]u8 = undefined;
+        const ver_str = std.fmt.bufPrint(&ver_buf, "version: {}.{}.{}\n", .{ self.version.major, self.version.minor, self.version.patch }) catch unreachable;
+        try writer.writeAll(ver_str);
+        var rev_buf: [32]u8 = undefined;
+        const rev_str = std.fmt.bufPrint(&rev_buf, "revision: {d}\n", .{self.revision}) catch unreachable;
+        try writer.writeAll(rev_str);
 
-        if (self.description) |d| try std.fmt.format(writer,"description: {s}\n", .{d});
-        if (self.license) |l| try std.fmt.format(writer,"license: {s}\n", .{l});
-        if (self.homepage) |h| try std.fmt.format(writer,"homepage: {s}\n", .{h});
-        if (self.maintainer) |m| try std.fmt.format(writer,"maintainer: {s}\n", .{m});
-        if (self.origin) |o| try std.fmt.format(writer,"origin: {s}\n", .{o});
+        if (self.description) |d| {
+            try writer.writeAll("description: ");
+            try writer.writeAll(d);
+            try writer.writeAll("\n");
+        }
+        if (self.license) |l| {
+            try writer.writeAll("license: ");
+            try writer.writeAll(l);
+            try writer.writeAll("\n");
+        }
+        if (self.homepage) |h| {
+            try writer.writeAll("homepage: ");
+            try writer.writeAll(h);
+            try writer.writeAll("\n");
+        }
+        if (self.maintainer) |m| {
+            try writer.writeAll("maintainer: ");
+            try writer.writeAll(m);
+            try writer.writeAll("\n");
+        }
+        if (self.origin) |o| {
+            try writer.writeAll("origin: ");
+            try writer.writeAll(o);
+            try writer.writeAll("\n");
+        }
 
         if (self.tags.len > 0) {
             try writer.writeAll("tags:\n");
             for (self.tags) |tag| {
-                try std.fmt.format(writer,"  - {s}\n", .{tag});
+                try writer.writeAll("  - ");
+                try writer.writeAll(tag);
+                try writer.writeAll("\n");
             }
         }
 
         if (self.provides.len > 0) {
             try writer.writeAll("provides:\n");
             for (self.provides) |p| {
-                try std.fmt.format(writer,"  - {s}\n", .{p});
+                try writer.writeAll("  - ");
+                try writer.writeAll(p);
+                try writer.writeAll("\n");
             }
         }
 
         if (self.conflicts.len > 0) {
             try writer.writeAll("conflicts:\n");
             for (self.conflicts) |c| {
-                try std.fmt.format(writer,"  - {s}", .{c.name});
+                try writer.writeAll("  - ");
+                try writer.writeAll(c.name);
                 if (c.constraint) |constraint| {
                     try writeConstraint(writer, constraint);
                 }
@@ -527,7 +558,8 @@ pub const Manifest = struct {
         if (self.replaces.len > 0) {
             try writer.writeAll("replaces:\n");
             for (self.replaces) |r| {
-                try std.fmt.format(writer,"  - {s}", .{r.name});
+                try writer.writeAll("  - ");
+                try writer.writeAll(r.name);
                 if (r.constraint) |constraint| {
                     try writeConstraint(writer, constraint);
                 }
@@ -538,12 +570,18 @@ pub const Manifest = struct {
         // Serialize kernel section if present
         if (self.kernel) |k| {
             try writer.writeAll("kernel:\n");
-            try std.fmt.format(writer,"  kmod: {s}\n", .{if (k.kmod) "true" else "false"});
+            try writer.writeAll("  kmod: ");
+            try writer.writeAll(if (k.kmod) "true" else "false");
+            try writer.writeAll("\n");
             if (k.freebsd_version_min) |v| {
-                try std.fmt.format(writer,"  freebsd_version_min: {d}\n", .{v});
+                var min_buf: [64]u8 = undefined;
+                const min_str = std.fmt.bufPrint(&min_buf, "  freebsd_version_min: {d}\n", .{v}) catch unreachable;
+                try writer.writeAll(min_str);
             }
             if (k.freebsd_version_max) |v| {
-                try std.fmt.format(writer,"  freebsd_version_max: {d}\n", .{v});
+                var max_buf: [64]u8 = undefined;
+                const max_str = std.fmt.bufPrint(&max_buf, "  freebsd_version_max: {d}\n", .{v}) catch unreachable;
+                try writer.writeAll(max_str);
             }
             if (k.require_exact_ident) {
                 try writer.writeAll("  require_exact_ident: true\n");
@@ -551,13 +589,17 @@ pub const Manifest = struct {
             if (k.kernel_idents.len > 0) {
                 try writer.writeAll("  kernel_idents:\n");
                 for (k.kernel_idents) |ident| {
-                    try std.fmt.format(writer,"    - {s}\n", .{ident});
+                    try writer.writeAll("    - ");
+                    try writer.writeAll(ident);
+                    try writer.writeAll("\n");
                 }
             }
             if (k.kld_names.len > 0) {
                 try writer.writeAll("  kld_names:\n");
                 for (k.kld_names) |name| {
-                    try std.fmt.format(writer,"    - {s}\n", .{name});
+                    try writer.writeAll("    - ");
+                    try writer.writeAll(name);
+                    try writer.writeAll("\n");
                 }
             }
         }
@@ -875,28 +917,32 @@ fn parseVersionSpec(spec: []const u8) !VersionConstraint {
 
 /// Write a version constraint to a writer
 fn writeConstraint(writer: anytype, constraint: VersionConstraint) !void {
+    var buf: [64]u8 = undefined;
     switch (constraint) {
-        .exact => |v| try std.fmt.format(writer,"={}.{}.{}", .{ v.major, v.minor, v.patch }),
-        .tilde => |v| try std.fmt.format(writer,"~{}.{}.{}", .{ v.major, v.minor, v.patch }),
-        .caret => |v| try std.fmt.format(writer,"^{}.{}.{}", .{ v.major, v.minor, v.patch }),
+        .exact => |v| {
+            const str = std.fmt.bufPrint(&buf, "={}.{}.{}", .{ v.major, v.minor, v.patch }) catch unreachable;
+            try writer.writeAll(str);
+        },
+        .tilde => |v| {
+            const str = std.fmt.bufPrint(&buf, "~{}.{}.{}", .{ v.major, v.minor, v.patch }) catch unreachable;
+            try writer.writeAll(str);
+        },
+        .caret => |v| {
+            const str = std.fmt.bufPrint(&buf, "^{}.{}.{}", .{ v.major, v.minor, v.patch }) catch unreachable;
+            try writer.writeAll(str);
+        },
         .any => {},
         .range => |r| {
             if (r.min) |min| {
-                try std.fmt.format(writer,"{s}{}.{}.{}", .{
-                    if (r.min_inclusive) ">=" else ">",
-                    min.major,
-                    min.minor,
-                    min.patch,
-                });
+                try writer.writeAll(if (r.min_inclusive) ">=" else ">");
+                const min_str = std.fmt.bufPrint(&buf, "{}.{}.{}", .{ min.major, min.minor, min.patch }) catch unreachable;
+                try writer.writeAll(min_str);
             }
             if (r.max) |max| {
                 if (r.min != null) try writer.writeAll(",");
-                try std.fmt.format(writer,"{s}{}.{}.{}", .{
-                    if (r.max_inclusive) "<=" else "<",
-                    max.major,
-                    max.minor,
-                    max.patch,
-                });
+                try writer.writeAll(if (r.max_inclusive) "<=" else "<");
+                const max_str = std.fmt.bufPrint(&buf, "{}.{}.{}", .{ max.major, max.minor, max.patch }) catch unreachable;
+                try writer.writeAll(max_str);
             }
         },
     }

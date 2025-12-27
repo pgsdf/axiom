@@ -411,38 +411,54 @@ pub fn formatClosure(
 
     const writer = output.writer(allocator);
 
-    try std.fmt.format(writer,"Closure for: ", .{});
+    try writer.writeAll("Closure for: ");
     for (closure.roots.items, 0..) |root, i| {
-        if (i > 0) try std.fmt.format(writer,", ", .{});
-        try std.fmt.format(writer,"{s}@{d}.{d}.{d}", .{
+        if (i > 0) try writer.writeAll(", ");
+        var buf: [256]u8 = undefined;
+        const str = std.fmt.bufPrint(&buf, "{s}@{d}.{d}.{d}", .{
             root.name,
             root.version.major,
             root.version.minor,
             root.version.patch,
-        });
+        }) catch unreachable;
+        try writer.writeAll(str);
     }
-    try std.fmt.format(writer,"\n\n", .{});
+    try writer.writeAll("\n\n");
 
     const stats = getClosureStats(closure);
-    try std.fmt.format(writer,"Statistics:\n", .{});
-    try std.fmt.format(writer,"  Packages: {d}\n", .{stats.package_count});
-    try std.fmt.format(writer,"  Max depth: {d}\n", .{stats.max_depth});
-    try std.fmt.format(writer,"  Base packages excluded: {d}\n\n", .{stats.base_excluded_count});
+    try writer.writeAll("Statistics:\n");
+    {
+        var buf: [64]u8 = undefined;
+        const str = std.fmt.bufPrint(&buf, "  Packages: {d}\n", .{stats.package_count}) catch unreachable;
+        try writer.writeAll(str);
+    }
+    {
+        var buf: [64]u8 = undefined;
+        const str = std.fmt.bufPrint(&buf, "  Max depth: {d}\n", .{stats.max_depth}) catch unreachable;
+        try writer.writeAll(str);
+    }
+    {
+        var buf: [64]u8 = undefined;
+        const str = std.fmt.bufPrint(&buf, "  Base packages excluded: {d}\n\n", .{stats.base_excluded_count}) catch unreachable;
+        try writer.writeAll(str);
+    }
 
     if (options.show_tree) {
-        try std.fmt.format(writer,"Dependency tree:\n", .{});
+        try writer.writeAll("Dependency tree:\n");
         for (closure.roots.items) |root| {
             try formatTreeNode(writer, closure, root, 0, options.max_depth);
         }
     } else {
-        try std.fmt.format(writer,"Packages (topological order):\n", .{});
+        try writer.writeAll("Packages (topological order):\n");
         for (closure.topo_order.items) |pkg_id| {
-            try std.fmt.format(writer,"  {s}@{d}.{d}.{d}\n", .{
+            var buf: [256]u8 = undefined;
+            const str = std.fmt.bufPrint(&buf, "  {s}@{d}.{d}.{d}\n", .{
                 pkg_id.name,
                 pkg_id.version.major,
                 pkg_id.version.minor,
                 pkg_id.version.patch,
-            });
+            }) catch unreachable;
+            try writer.writeAll(str);
         }
     }
 
@@ -463,15 +479,17 @@ fn formatTreeNode(
     // Print indent
     var i: u32 = 0;
     while (i < indent) : (i += 1) {
-        try std.fmt.format(writer,"  ", .{});
+        try writer.writeAll("  ");
     }
 
-    try std.fmt.format(writer,"{s}@{d}.{d}.{d}\n", .{
+    var buf: [256]u8 = undefined;
+    const str = std.fmt.bufPrint(&buf, "{s}@{d}.{d}.{d}\n", .{
         pkg_id.name,
         pkg_id.version.major,
         pkg_id.version.minor,
         pkg_id.version.patch,
-    });
+    }) catch unreachable;
+    try writer.writeAll(str);
 
     // Find and print dependencies
     const key = packageIdToKey(std.heap.page_allocator, pkg_id) catch return;

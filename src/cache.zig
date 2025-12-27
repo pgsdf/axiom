@@ -263,32 +263,50 @@ pub const CacheConfig = struct {
         const writer = buffer.writer(self.allocator);
 
         // Write caches
-        try std.fmt.format(writer,"caches:\n", .{});
+        try writer.writeAll("caches:\n");
         for (self.caches.items) |cache| {
-            try std.fmt.format(writer,"  - url: {s}\n", .{cache.url});
-            try std.fmt.format(writer,"    priority: {d}\n", .{cache.priority});
+            var url_buf: [256]u8 = undefined;
+            const url_str = std.fmt.bufPrint(&url_buf, "  - url: {s}\n", .{cache.url}) catch unreachable;
+            try writer.writeAll(url_str);
+            var priority_buf: [64]u8 = undefined;
+            const priority_str = std.fmt.bufPrint(&priority_buf, "    priority: {d}\n", .{cache.priority}) catch unreachable;
+            try writer.writeAll(priority_str);
             if (cache.trusted_keys.len > 0) {
-                try std.fmt.format(writer,"    trusted_keys:\n", .{});
+                try writer.writeAll("    trusted_keys:\n");
                 for (cache.trusted_keys) |key| {
-                    try std.fmt.format(writer,"      - {s}\n", .{key});
+                    var key_buf: [256]u8 = undefined;
+                    const key_str = std.fmt.bufPrint(&key_buf, "      - {s}\n", .{key}) catch unreachable;
+                    try writer.writeAll(key_str);
                 }
             }
         }
 
         // Write local cache config
-        try std.fmt.format(writer,"\nlocal_cache:\n", .{});
-        try std.fmt.format(writer,"  path: {s}\n", .{self.local.path});
-        try std.fmt.format(writer,"  max_size: {d}\n", .{self.local.max_size_bytes});
-        try std.fmt.format(writer,"  cleanup_policy: {s}\n", .{@tagName(self.local.cleanup_policy)});
+        try writer.writeAll("\nlocal_cache:\n");
+        var path_buf: [512]u8 = undefined;
+        const path_str = std.fmt.bufPrint(&path_buf, "  path: {s}\n", .{self.local.path}) catch unreachable;
+        try writer.writeAll(path_str);
+        var max_size_buf: [64]u8 = undefined;
+        const max_size_str = std.fmt.bufPrint(&max_size_buf, "  max_size: {d}\n", .{self.local.max_size_bytes}) catch unreachable;
+        try writer.writeAll(max_size_str);
+        var policy_buf: [64]u8 = undefined;
+        const policy_str = std.fmt.bufPrint(&policy_buf, "  cleanup_policy: {s}\n", .{@tagName(self.local.cleanup_policy)}) catch unreachable;
+        try writer.writeAll(policy_str);
 
         // Write push config
-        try std.fmt.format(writer,"\npush:\n", .{});
-        try std.fmt.format(writer,"  enabled: {}\n", .{self.push.enabled});
+        try writer.writeAll("\npush:\n");
+        var enabled_buf: [64]u8 = undefined;
+        const enabled_str = std.fmt.bufPrint(&enabled_buf, "  enabled: {}\n", .{self.push.enabled}) catch unreachable;
+        try writer.writeAll(enabled_str);
         if (self.push.url) |url| {
-            try std.fmt.format(writer,"  url: {s}\n", .{url});
+            var url_buf: [256]u8 = undefined;
+            const url_str = std.fmt.bufPrint(&url_buf, "  url: {s}\n", .{url}) catch unreachable;
+            try writer.writeAll(url_str);
         }
         if (self.push.key_path) |key| {
-            try std.fmt.format(writer,"  key: {s}\n", .{key});
+            var key_buf: [256]u8 = undefined;
+            const key_str = std.fmt.bufPrint(&key_buf, "  key: {s}\n", .{key}) catch unreachable;
+            try writer.writeAll(key_str);
         }
 
         _ = try file.writeAll(buffer.items);

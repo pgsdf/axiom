@@ -27,7 +27,9 @@ pub const Version = struct {
         self: Version,
         writer: anytype,
     ) !void {
-        try std.fmt.format(writer,"{d}.{d}.{d}", .{ self.major, self.minor, self.patch });
+        var buf: [32]u8 = undefined;
+        const str = std.fmt.bufPrint(&buf, "{d}.{d}.{d}", .{ self.major, self.minor, self.patch }) catch unreachable;
+        try writer.writeAll(str);
     }
 
     /// Compare two versions
@@ -182,12 +184,13 @@ pub const PackageId = struct {
         self: PackageId,
         writer: anytype,
     ) !void {
-        try std.fmt.format(writer,"{s}/{f}/{d}/{s}", .{
-            self.name,
-            self.version,
-            self.revision,
-            self.build_id,
-        });
+        try writer.writeAll(self.name);
+        try writer.writeAll("/");
+        try self.version.format(writer);
+        var rev_buf: [16]u8 = undefined;
+        const rev_str = std.fmt.bufPrint(&rev_buf, "/{d}/", .{self.revision}) catch unreachable;
+        try writer.writeAll(rev_str);
+        try writer.writeAll(self.build_id);
     }
 };
 

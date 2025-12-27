@@ -74,35 +74,57 @@ pub const RuntimeManifest = struct {
 
         const writer = output.writer(allocator);
 
-        try std.fmt.format(writer,"name: {s}\n", .{self.name});
-        try std.fmt.format(writer,"version: {d}.{d}.{d}\n", .{
+        try writer.writeAll("name: ");
+        try writer.writeAll(self.name);
+        try writer.writeAll("\n");
+
+        var version_buf: [64]u8 = undefined;
+        const version_str = std.fmt.bufPrint(&version_buf, "version: {d}.{d}.{d}\n", .{
             self.version.major,
             self.version.minor,
             self.version.patch,
-        });
-        try std.fmt.format(writer,"description: {s}\n", .{self.description});
-        try std.fmt.format(writer,"abi_version: {s}\n", .{self.abi_version});
-        try std.fmt.format(writer,"stable: {}\n", .{self.stable});
+        }) catch unreachable;
+        try writer.writeAll(version_str);
 
-        try std.fmt.format(writer,"core_packages:\n", .{});
+        try writer.writeAll("description: ");
+        try writer.writeAll(self.description);
+        try writer.writeAll("\n");
+
+        try writer.writeAll("abi_version: ");
+        try writer.writeAll(self.abi_version);
+        try writer.writeAll("\n");
+
+        var stable_buf: [64]u8 = undefined;
+        const stable_str = std.fmt.bufPrint(&stable_buf, "stable: {}\n", .{self.stable}) catch unreachable;
+        try writer.writeAll(stable_str);
+
+        try writer.writeAll("core_packages:\n");
         for (self.core_packages) |pkg| {
-            try std.fmt.format(writer,"  - {s}\n", .{pkg});
+            try writer.writeAll("  - ");
+            try writer.writeAll(pkg);
+            try writer.writeAll("\n");
         }
 
         if (self.extensions.len > 0) {
-            try std.fmt.format(writer,"extensions:\n", .{});
+            try writer.writeAll("extensions:\n");
             for (self.extensions) |ext| {
-                try std.fmt.format(writer,"  - name: {s}\n", .{ext.name});
-                try std.fmt.format(writer,"    description: {s}\n", .{ext.description});
+                try writer.writeAll("  - name: ");
+                try writer.writeAll(ext.name);
+                try writer.writeAll("\n");
+                try writer.writeAll("    description: ");
+                try writer.writeAll(ext.description);
+                try writer.writeAll("\n");
             }
         }
 
         if (self.min_compatible) |min| {
-            try std.fmt.format(writer,"min_compatible: {d}.{d}.{d}\n", .{
+            var min_buf: [64]u8 = undefined;
+            const min_str = std.fmt.bufPrint(&min_buf, "min_compatible: {d}.{d}.{d}\n", .{
                 min.major,
                 min.minor,
                 min.patch,
-            });
+            }) catch unreachable;
+            try writer.writeAll(min_str);
         }
 
         return try output.toOwnedSlice(allocator);

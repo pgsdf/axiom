@@ -310,36 +310,56 @@ pub const DependencyExplanation = struct {
 
     /// Format explanation for display
     pub fn format(self: *DependencyExplanation, writer: anytype) !void {
-        try std.fmt.format(writer,"Package {s} {f} is required because:\n", .{
+        var buf1: [512]u8 = undefined;
+        const str1 = std.fmt.bufPrint(&buf1, "Package {s} {f} is required because:\n", .{
             self.target.name,
             self.target.version,
-        });
+        }) catch unreachable;
+        try writer.writeAll(str1);
 
         for (self.paths.items, 0..) |path, i| {
-            try std.fmt.format(writer,"\n  Path {d}:\n", .{i + 1});
+            var buf2: [64]u8 = undefined;
+            const str2 = std.fmt.bufPrint(&buf2, "\n  Path {d}:\n", .{i + 1}) catch unreachable;
+            try writer.writeAll(str2);
             for (path.items, 0..) |step, j| {
                 const indent = "    " ** (j + 1);
                 switch (step.reason) {
-                    .direct => try std.fmt.format(writer,"{s}{s} {f} (directly requested)\n", .{
-                        indent,
-                        step.package.name,
-                        step.package.version,
-                    }),
-                    .dependency => try std.fmt.format(writer,"{s}{s} {f} (dependency of previous)\n", .{
-                        indent,
-                        step.package.name,
-                        step.package.version,
-                    }),
-                    .virtual => try std.fmt.format(writer,"{s}{s} {f} (provides virtual)\n", .{
-                        indent,
-                        step.package.name,
-                        step.package.version,
-                    }),
-                    .feature => try std.fmt.format(writer,"{s}{s} {f} (required by feature)\n", .{
-                        indent,
-                        step.package.name,
-                        step.package.version,
-                    }),
+                    .direct => {
+                        var buf3: [512]u8 = undefined;
+                        const str3 = std.fmt.bufPrint(&buf3, "{s}{s} {f} (directly requested)\n", .{
+                            indent,
+                            step.package.name,
+                            step.package.version,
+                        }) catch unreachable;
+                        try writer.writeAll(str3);
+                    },
+                    .dependency => {
+                        var buf4: [512]u8 = undefined;
+                        const str4 = std.fmt.bufPrint(&buf4, "{s}{s} {f} (dependency of previous)\n", .{
+                            indent,
+                            step.package.name,
+                            step.package.version,
+                        }) catch unreachable;
+                        try writer.writeAll(str4);
+                    },
+                    .virtual => {
+                        var buf5: [512]u8 = undefined;
+                        const str5 = std.fmt.bufPrint(&buf5, "{s}{s} {f} (provides virtual)\n", .{
+                            indent,
+                            step.package.name,
+                            step.package.version,
+                        }) catch unreachable;
+                        try writer.writeAll(str5);
+                    },
+                    .feature => {
+                        var buf6: [512]u8 = undefined;
+                        const str6 = std.fmt.bufPrint(&buf6, "{s}{s} {f} (required by feature)\n", .{
+                            indent,
+                            step.package.name,
+                            step.package.version,
+                        }) catch unreachable;
+                        try writer.writeAll(str6);
+                    },
                 }
             }
         }

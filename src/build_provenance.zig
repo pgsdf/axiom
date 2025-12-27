@@ -750,46 +750,80 @@ pub fn serializeProvenance(allocator: Allocator, provenance: *const Provenance) 
     var buffer: std.ArrayList(u8) = .empty;
     const writer = buffer.writer(allocator);
 
-    try std.fmt.format(writer,"format_version: \"{s}\"\n\n", .{provenance.format_version});
+    var buf1: [256]u8 = undefined;
+    const str1 = std.fmt.bufPrint(&buf1, "format_version: \"{s}\"\n\n", .{provenance.format_version}) catch unreachable;
+    try writer.writeAll(str1);
 
     try writer.writeAll("builder:\n");
-    try std.fmt.format(writer,"  name: \"{s}\"\n", .{provenance.builder.name});
-    try std.fmt.format(writer,"  version: \"{s}\"\n", .{provenance.builder.version});
-    try std.fmt.format(writer,"  host: \"{s}\"\n", .{provenance.builder.host});
+    var buf2: [256]u8 = undefined;
+    const str2 = std.fmt.bufPrint(&buf2, "  name: \"{s}\"\n", .{provenance.builder.name}) catch unreachable;
+    try writer.writeAll(str2);
+    var buf3: [256]u8 = undefined;
+    const str3 = std.fmt.bufPrint(&buf3, "  version: \"{s}\"\n", .{provenance.builder.version}) catch unreachable;
+    try writer.writeAll(str3);
+    var buf4: [256]u8 = undefined;
+    const str4 = std.fmt.bufPrint(&buf4, "  host: \"{s}\"\n", .{provenance.builder.host}) catch unreachable;
+    try writer.writeAll(str4);
 
     try writer.writeAll("\nsource:\n");
-    try std.fmt.format(writer,"  url: \"{s}\"\n", .{provenance.source.url});
-    try std.fmt.format(writer,"  sha256: \"{s}\"\n", .{provenance.source.sha256});
-    try std.fmt.format(writer,"  fetched_at: \"{s}\"\n", .{provenance.source.fetched_at});
+    var buf5: [512]u8 = undefined;
+    const str5 = std.fmt.bufPrint(&buf5, "  url: \"{s}\"\n", .{provenance.source.url}) catch unreachable;
+    try writer.writeAll(str5);
+    var buf6: [256]u8 = undefined;
+    const str6 = std.fmt.bufPrint(&buf6, "  sha256: \"{s}\"\n", .{provenance.source.sha256}) catch unreachable;
+    try writer.writeAll(str6);
+    var buf7: [256]u8 = undefined;
+    const str7 = std.fmt.bufPrint(&buf7, "  fetched_at: \"{s}\"\n", .{provenance.source.fetched_at}) catch unreachable;
+    try writer.writeAll(str7);
 
     try writer.writeAll("\nbuild:\n");
-    try std.fmt.format(writer,"  started_at: \"{s}\"\n", .{provenance.build.started_at});
-    try std.fmt.format(writer,"  completed_at: \"{s}\"\n", .{provenance.build.completed_at});
+    var buf8: [256]u8 = undefined;
+    const str8 = std.fmt.bufPrint(&buf8, "  started_at: \"{s}\"\n", .{provenance.build.started_at}) catch unreachable;
+    try writer.writeAll(str8);
+    var buf9: [256]u8 = undefined;
+    const str9 = std.fmt.bufPrint(&buf9, "  completed_at: \"{s}\"\n", .{provenance.build.completed_at}) catch unreachable;
+    try writer.writeAll(str9);
 
     if (provenance.build.environment.len > 0) {
         try writer.writeAll("  environment:\n");
         for (provenance.build.environment) |env| {
-            try std.fmt.format(writer,"    {s}: \"{s}\"\n", .{ env.name, env.value });
+            var buf10: [512]u8 = undefined;
+            const str10 = std.fmt.bufPrint(&buf10, "    {s}: \"{s}\"\n", .{ env.name, env.value }) catch unreachable;
+            try writer.writeAll(str10);
         }
     }
 
     if (provenance.build.commands.len > 0) {
         try writer.writeAll("  commands:\n");
         for (provenance.build.commands) |cmd| {
-            try std.fmt.format(writer,"    - \"{s}\"\n", .{cmd});
+            var buf11: [512]u8 = undefined;
+            const str11 = std.fmt.bufPrint(&buf11, "    - \"{s}\"\n", .{cmd}) catch unreachable;
+            try writer.writeAll(str11);
         }
     }
 
     try writer.writeAll("\noutput:\n");
-    try std.fmt.format(writer,"  hash: \"{s}\"\n", .{provenance.output.hash});
-    try std.fmt.format(writer,"  files_count: {d}\n", .{provenance.output.files_count});
-    try std.fmt.format(writer,"  total_size: {d}\n", .{provenance.output.total_size});
+    var buf12: [256]u8 = undefined;
+    const str12 = std.fmt.bufPrint(&buf12, "  hash: \"{s}\"\n", .{provenance.output.hash}) catch unreachable;
+    try writer.writeAll(str12);
+    var buf13: [64]u8 = undefined;
+    const str13 = std.fmt.bufPrint(&buf13, "  files_count: {d}\n", .{provenance.output.files_count}) catch unreachable;
+    try writer.writeAll(str13);
+    var buf14: [64]u8 = undefined;
+    const str14 = std.fmt.bufPrint(&buf14, "  total_size: {d}\n", .{provenance.output.total_size}) catch unreachable;
+    try writer.writeAll(str14);
 
     if (provenance.signature) |sig| {
         try writer.writeAll("\nsignature:\n");
-        try std.fmt.format(writer,"  key_id: \"{s}\"\n", .{sig.key_id});
-        try std.fmt.format(writer,"  algorithm: \"{s}\"\n", .{sig.algorithm});
-        try std.fmt.format(writer,"  value: \"{s}\"\n", .{sig.value});
+        var buf15: [256]u8 = undefined;
+        const str15 = std.fmt.bufPrint(&buf15, "  key_id: \"{s}\"\n", .{sig.key_id}) catch unreachable;
+        try writer.writeAll(str15);
+        var buf16: [256]u8 = undefined;
+        const str16 = std.fmt.bufPrint(&buf16, "  algorithm: \"{s}\"\n", .{sig.algorithm}) catch unreachable;
+        try writer.writeAll(str16);
+        var buf17: [512]u8 = undefined;
+        const str17 = std.fmt.bufPrint(&buf17, "  value: \"{s}\"\n", .{sig.value}) catch unreachable;
+        try writer.writeAll(str17);
     }
 
     return buffer.toOwnedSlice(allocator);

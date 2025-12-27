@@ -184,17 +184,23 @@ pub const DesktopIntegration = struct {
 
         const writer = output.writer(self.allocator);
 
-        try std.fmt.format(writer,"[Desktop Entry]\n", .{});
-        try std.fmt.format(writer,"Type=Application\n", .{});
-        try std.fmt.format(writer,"Version=1.0\n", .{});
-        try std.fmt.format(writer,"Name={s}\n", .{entry.name});
+        try writer.writeAll("[Desktop Entry]\n");
+        try writer.writeAll("Type=Application\n");
+        try writer.writeAll("Version=1.0\n");
+        try writer.writeAll("Name=");
+        try writer.writeAll(entry.name);
+        try writer.writeAll("\n");
 
         if (entry.generic_name) |gn| {
-            try std.fmt.format(writer,"GenericName={s}\n", .{gn});
+            try writer.writeAll("GenericName=");
+            try writer.writeAll(gn);
+            try writer.writeAll("\n");
         }
 
         if (entry.comment) |c| {
-            try std.fmt.format(writer,"Comment={s}\n", .{c});
+            try writer.writeAll("Comment=");
+            try writer.writeAll(c);
+            try writer.writeAll("\n");
         }
 
         // Build executable path
@@ -204,63 +210,81 @@ pub const DesktopIntegration = struct {
             entry.executable,
         });
         defer self.allocator.free(exec_path);
-        try std.fmt.format(writer,"Exec={s} %F\n", .{exec_path});
+        try writer.writeAll("Exec=");
+        try writer.writeAll(exec_path);
+        try writer.writeAll(" %F\n");
 
         if (entry.icon) |icon| {
             // Use package ID as icon name
-            try std.fmt.format(writer,"Icon=axiom-{s}\n", .{pkg_id.name});
+            try writer.writeAll("Icon=axiom-");
+            try writer.writeAll(pkg_id.name);
+            try writer.writeAll("\n");
             _ = icon;
         }
 
-        try std.fmt.format(writer,"Terminal={}\n", .{entry.terminal});
-        try std.fmt.format(writer,"StartupNotify={}\n", .{entry.startup_notify});
+        try writer.writeAll("Terminal=");
+        try writer.writeAll(if (entry.terminal) "true" else "false");
+        try writer.writeAll("\n");
+        try writer.writeAll("StartupNotify=");
+        try writer.writeAll(if (entry.startup_notify) "true" else "false");
+        try writer.writeAll("\n");
 
         if (entry.categories.len > 0) {
-            try std.fmt.format(writer,"Categories=", .{});
+            try writer.writeAll("Categories=");
             for (entry.categories, 0..) |cat, i| {
-                if (i > 0) try std.fmt.format(writer,";", .{});
-                try std.fmt.format(writer,"{s}", .{cat});
+                if (i > 0) try writer.writeAll(";");
+                try writer.writeAll(cat);
             }
-            try std.fmt.format(writer,";\n", .{});
+            try writer.writeAll(";\n");
         }
 
         if (entry.keywords.len > 0) {
-            try std.fmt.format(writer,"Keywords=", .{});
+            try writer.writeAll("Keywords=");
             for (entry.keywords, 0..) |kw, i| {
-                if (i > 0) try std.fmt.format(writer,";", .{});
-                try std.fmt.format(writer,"{s}", .{kw});
+                if (i > 0) try writer.writeAll(";");
+                try writer.writeAll(kw);
             }
-            try std.fmt.format(writer,";\n", .{});
+            try writer.writeAll(";\n");
         }
 
         if (entry.mime_types.len > 0) {
-            try std.fmt.format(writer,"MimeType=", .{});
+            try writer.writeAll("MimeType=");
             for (entry.mime_types, 0..) |mt, i| {
-                if (i > 0) try std.fmt.format(writer,";", .{});
-                try std.fmt.format(writer,"{s}", .{mt});
+                if (i > 0) try writer.writeAll(";");
+                try writer.writeAll(mt);
             }
-            try std.fmt.format(writer,";\n", .{});
+            try writer.writeAll(";\n");
         }
 
         if (entry.no_display) {
-            try std.fmt.format(writer,"NoDisplay=true\n", .{});
+            try writer.writeAll("NoDisplay=true\n");
         }
 
         // Add actions
         if (entry.actions.len > 0) {
-            try std.fmt.format(writer,"\nActions=", .{});
+            try writer.writeAll("\nActions=");
             for (entry.actions, 0..) |action, i| {
-                if (i > 0) try std.fmt.format(writer,";", .{});
-                try std.fmt.format(writer,"{s}", .{action.id});
+                if (i > 0) try writer.writeAll(";");
+                try writer.writeAll(action.id);
             }
-            try std.fmt.format(writer,";\n", .{});
+            try writer.writeAll(";\n");
 
             for (entry.actions) |action| {
-                try std.fmt.format(writer,"\n[Desktop Action {s}]\n", .{action.id});
-                try std.fmt.format(writer,"Name={s}\n", .{action.name});
-                try std.fmt.format(writer,"Exec={s}/{s}\n", .{ pkg_root, action.executable });
+                try writer.writeAll("\n[Desktop Action ");
+                try writer.writeAll(action.id);
+                try writer.writeAll("]\n");
+                try writer.writeAll("Name=");
+                try writer.writeAll(action.name);
+                try writer.writeAll("\n");
+                try writer.writeAll("Exec=");
+                try writer.writeAll(pkg_root);
+                try writer.writeAll("/");
+                try writer.writeAll(action.executable);
+                try writer.writeAll("\n");
                 if (action.icon) |icon| {
-                    try std.fmt.format(writer,"Icon={s}\n", .{icon});
+                    try writer.writeAll("Icon=");
+                    try writer.writeAll(icon);
+                    try writer.writeAll("\n");
                 }
             }
         }

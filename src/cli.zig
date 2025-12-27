@@ -2406,8 +2406,10 @@ pub const CLI = struct {
 
     // Output formatters
     fn outputTreeFormat(self: *CLI, writer: anytype, graph: DependencyGraph, lock: anytype, max_depth: ?u32) !void {
-        try std.fmt.format(writer,"Dependency Tree: {s}\n", .{lock.profile_name});
-        try std.fmt.format(writer,"════════════════════════════════════════\n\n", .{});
+        try writer.writeAll("Dependency Tree: ");
+        try writer.writeAll(lock.profile_name);
+        try writer.writeAll("\n");
+        try writer.writeAll("════════════════════════════════════════\n\n");
 
         // Print requested packages first
         for (lock.resolved) |pkg| {
@@ -2415,7 +2417,7 @@ pub const CLI = struct {
                 var visited = std.StringHashMap(void).init(self.allocator);
                 defer visited.deinit();
                 try self.printTreeNode(writer, graph, pkg.id.name, 0, max_depth, &visited);
-                try std.fmt.format(writer,"\n", .{});
+                try writer.writeAll("\n");
             }
         }
     }
@@ -2428,17 +2430,21 @@ pub const CLI = struct {
         // Print indentation
         var i: u32 = 0;
         while (i < depth) : (i += 1) {
-            try std.fmt.format(writer,"│   ", .{});
+            try writer.writeAll("│   ");
         }
 
         const already_visited = visited.contains(pkg);
         if (already_visited) {
-            try std.fmt.format(writer,"├── {s} (circular)\n", .{pkg});
+            try writer.writeAll("├── ");
+            try writer.writeAll(pkg);
+            try writer.writeAll(" (circular)\n");
             return;
         }
 
         try visited.put(pkg, {});
-        try std.fmt.format(writer,"├── {s}\n", .{pkg});
+        try writer.writeAll("├── ");
+        try writer.writeAll(pkg);
+        try writer.writeAll("\n");
 
         if (graph.edges.get(pkg)) |deps| {
             for (deps.items) |dep| {
@@ -2451,65 +2457,83 @@ pub const CLI = struct {
 
     fn outputDotFormat(self: *CLI, writer: anytype, graph: DependencyGraph, lock: anytype) !void {
         _ = self;
-        try std.fmt.format(writer,"digraph dependencies {{\n", .{});
-        try std.fmt.format(writer,"    rankdir=LR;\n", .{});
-        try std.fmt.format(writer,"    node [shape=box];\n", .{});
-        try std.fmt.format(writer,"\n", .{});
+        try writer.writeAll("digraph dependencies {\n");
+        try writer.writeAll("    rankdir=LR;\n");
+        try writer.writeAll("    node [shape=box];\n");
+        try writer.writeAll("\n");
 
         // Mark requested packages with different style
-        try std.fmt.format(writer,"    // Requested packages\n", .{});
+        try writer.writeAll("    // Requested packages\n");
         for (lock.resolved) |pkg| {
             if (pkg.requested) {
-                try std.fmt.format(writer,"    \"{s}\" [style=filled, fillcolor=lightblue];\n", .{pkg.id.name});
+                try writer.writeAll("    \"");
+                try writer.writeAll(pkg.id.name);
+                try writer.writeAll("\" [style=filled, fillcolor=lightblue];\n");
             }
         }
-        try std.fmt.format(writer,"\n", .{});
+        try writer.writeAll("\n");
 
         // Output edges
-        try std.fmt.format(writer,"    // Dependencies\n", .{});
+        try writer.writeAll("    // Dependencies\n");
         var it = graph.edges.iterator();
         while (it.next()) |entry| {
             for (entry.value_ptr.items) |dep| {
-                try std.fmt.format(writer,"    \"{s}\" -> \"{s}\";\n", .{ entry.key_ptr.*, dep });
+                try writer.writeAll("    \"");
+                try writer.writeAll(entry.key_ptr.*);
+                try writer.writeAll("\" -> \"");
+                try writer.writeAll(dep);
+                try writer.writeAll("\";\n");
             }
         }
 
-        try std.fmt.format(writer,"}}\n", .{});
+        try writer.writeAll("}\n");
     }
 
     fn outputJsonFormat(self: *CLI, writer: anytype, graph: DependencyGraph, lock: anytype) !void {
         _ = self;
-        try std.fmt.format(writer,"{{\n", .{});
-        try std.fmt.format(writer,"  \"profile\": \"{s}\",\n", .{lock.profile_name});
-        try std.fmt.format(writer,"  \"package_count\": {d},\n", .{lock.resolved.len});
-        try std.fmt.format(writer,"  \"packages\": [\n", .{});
+        try writer.writeAll("{\n");
+        try writer.writeAll("  \"profile\": \"");
+        try writer.writeAll(lock.profile_name);
+        try writer.writeAll("\",\n");
+        var count_buf: [32]u8 = undefined;
+        const count_str = std.fmt.bufPrint(&count_buf, "  \"package_count\": {d},\n", .{lock.resolved.len}) catch unreachable;
+        try writer.writeAll(count_str);
+        try writer.writeAll("  \"packages\": [\n");
 
         for (lock.resolved, 0..) |pkg, idx| {
-            try std.fmt.format(writer,"    {{\n", .{});
-            try std.fmt.format(writer,"      \"name\": \"{s}\",\n", .{pkg.id.name});
-            try std.fmt.format(writer,"      \"version\": \"{d}.{d}.{d}\",\n", .{ pkg.id.version.major, pkg.id.version.minor, pkg.id.version.patch });
-            try std.fmt.format(writer,"      \"requested\": {s},\n", .{if (pkg.requested) "true" else "false"});
-            try std.fmt.format(writer,"      \"dependencies\": [", .{});
+            try writer.writeAll("    {\n");
+            try writer.writeAll("      \"name\": \"");
+            try writer.writeAll(pkg.id.name);
+            try writer.writeAll("\",\n");
+            var ver_buf: [64]u8 = undefined;
+            const ver_str = std.fmt.bufPrint(&ver_buf, "      \"version\": \"{d}.{d}.{d}\",\n", .{ pkg.id.version.major, pkg.id.version.minor, pkg.id.version.patch }) catch unreachable;
+            try writer.writeAll(ver_str);
+            try writer.writeAll("      \"requested\": ");
+            try writer.writeAll(if (pkg.requested) "true" else "false");
+            try writer.writeAll(",\n");
+            try writer.writeAll("      \"dependencies\": [");
 
             if (graph.edges.get(pkg.id.name)) |deps| {
                 for (deps.items, 0..) |dep, dep_idx| {
-                    try std.fmt.format(writer,"\"{s}\"", .{dep});
+                    try writer.writeAll("\"");
+                    try writer.writeAll(dep);
+                    try writer.writeAll("\"");
                     if (dep_idx < deps.items.len - 1) {
-                        try std.fmt.format(writer,", ", .{});
+                        try writer.writeAll(", ");
                     }
                 }
             }
-            try std.fmt.format(writer,"]\n", .{});
+            try writer.writeAll("]\n");
 
             if (idx < lock.resolved.len - 1) {
-                try std.fmt.format(writer,"    }},\n", .{});
+                try writer.writeAll("    },\n");
             } else {
-                try std.fmt.format(writer,"    }}\n", .{});
+                try writer.writeAll("    }\n");
             }
         }
 
-        try std.fmt.format(writer,"  ]\n", .{});
-        try std.fmt.format(writer,"}}\n", .{});
+        try writer.writeAll("  ]\n");
+        try writer.writeAll("}\n");
     }
 
     // Garbage collection
@@ -2775,9 +2799,15 @@ pub const CLI = struct {
             defer buffer.deinit(self.allocator);
             const writer = buffer.writer(self.allocator);
 
-            try std.fmt.format(writer,"# Axiom Secret Key - KEEP PRIVATE!\n", .{});
-            try std.fmt.format(writer,"key_id: {s}\n", .{key_id});
-            try std.fmt.format(writer,"secret_key: {x}\n", .{key_pair.secret_key});
+            try writer.writeAll("# Axiom Secret Key - KEEP PRIVATE!\n");
+            try writer.writeAll("key_id: ");
+            try writer.writeAll(key_id);
+            try writer.writeAll("\n");
+            try writer.writeAll("secret_key: ");
+            var hex_buf: [128]u8 = undefined;
+            const hex_str = std.fmt.bufPrint(&hex_buf, "{x}", .{key_pair.secret_key}) catch unreachable;
+            try writer.writeAll(hex_str);
+            try writer.writeAll("\n");
 
             _ = try secret_file.writeAll(buffer.items);
         }
