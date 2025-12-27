@@ -41,7 +41,7 @@ fn runMockTests(allocator: std.mem.Allocator) !void {
 
     // Test exact
     const exact = types.VersionConstraint{ .exact = test_version };
-    std.debug.print("  Version {f} satisfies ={f}: {}\n", .{
+    std.debug.print("  Version {f} satisfies ={f}: {any}\n", .{
         test_version,
         test_version,
         exact.satisfies(test_version),
@@ -51,11 +51,11 @@ fn runMockTests(allocator: std.mem.Allocator) !void {
     const tilde = types.VersionConstraint{
         .tilde = types.Version{ .major = 5, .minor = 2, .patch = 0 },
     };
-    std.debug.print("  Version {f} satisfies ~5.2.0: {}\n", .{
+    std.debug.print("  Version {f} satisfies ~5.2.0: {any}\n", .{
         test_version,
         tilde.satisfies(test_version),
     });
-    std.debug.print("  Version 5.3.0 satisfies ~5.2.0: {}\n", .{
+    std.debug.print("  Version 5.3.0 satisfies ~5.2.0: {any}\n", .{
         tilde.satisfies(types.Version{ .major = 5, .minor = 3, .patch = 0 }),
     });
 
@@ -63,11 +63,11 @@ fn runMockTests(allocator: std.mem.Allocator) !void {
     const caret = types.VersionConstraint{
         .caret = types.Version{ .major = 5, .minor = 0, .patch = 0 },
     };
-    std.debug.print("  Version {f} satisfies ^5.0.0: {}\n", .{
+    std.debug.print("  Version {f} satisfies ^5.0.0: {any}\n", .{
         test_version,
         caret.satisfies(test_version),
     });
-    std.debug.print("  Version 6.0.0 satisfies ^5.0.0: {}\n", .{
+    std.debug.print("  Version 6.0.0 satisfies ^5.0.0: {any}\n", .{
         caret.satisfies(types.Version{ .major = 6, .minor = 0, .patch = 0 }),
     });
 
@@ -80,7 +80,7 @@ fn runMockTests(allocator: std.mem.Allocator) !void {
             .max_inclusive = false,
         },
     };
-    std.debug.print("  Version {f} satisfies >=5.0.0,<6.0.0: {}\n", .{
+    std.debug.print("  Version {f} satisfies >=5.0.0,<6.0.0: {any}\n", .{
         test_version,
         range.satisfies(test_version),
     });
