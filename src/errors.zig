@@ -317,7 +317,6 @@ pub fn logLoggingError(
     operation: []const u8,
 ) void {
     // Use stderr directly to avoid potential recursion
-    const stderr_file = std.io.getStdErr();
     var buf: [4096]u8 = undefined;
     const msg = std.fmt.bufPrint(&buf, "[WARN] {s}:{d} in {s}: {s}: {any}\n", .{
         src.file,
@@ -326,7 +325,7 @@ pub fn logLoggingError(
         operation,
         err,
     }) catch return;
-    _ = stderr_file.write(msg) catch {};
+    _ = std.posix.write(std.posix.STDERR_FILENO, msg) catch {};
 }
 
 /// Log an error during output formatting operations

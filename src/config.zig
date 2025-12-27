@@ -161,7 +161,7 @@ pub const Config = struct {
         for (self.allocated_strings.items) |s| {
             self.allocator.free(s);
         }
-        self.allocated_strings.deinit();
+        self.allocated_strings.deinit(self.allocator);
     }
 
     /// Helper to format and track allocated strings
