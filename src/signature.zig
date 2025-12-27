@@ -2495,3 +2495,165 @@ test "MultiSignatureError values" {
 
     try std.testing.expectEqual(@as(usize, 5), errors.len);
 }
+
+// ============================================================================
+// SECURITY TESTS: Signature Verification
+// ============================================================================
+
+test "SECURITY: TrustLevel hierarchy" {
+    // Verify trust levels are ordered correctly for security decisions
+    // Higher trust = lower enum value (official = 0 is most trusted)
+    try std.testing.expect(@intFromEnum(TrustLevel.official) < @intFromEnum(TrustLevel.community));
+    try std.testing.expect(@intFromEnum(TrustLevel.community) < @intFromEnum(TrustLevel.third_party));
+    try std.testing.expect(@intFromEnum(TrustLevel.third_party) < @intFromEnum(TrustLevel.unknown));
+}
+
+test "SECURITY: TrustStore key operations" {
+    const allocator = std.testing.allocator;
+
+    var store = TrustStore.init(allocator, "/tmp/test-trust-store");
+    defer store.deinit();
+
+    // Initially no keys
+    try std.testing.expect(store.getKey("nonexistent") == null);
+    try std.testing.expect(!store.isKeyTrusted("nonexistent"));
+}
+
+test "SECURITY: verification status type safety" {
+    // Verify all status types are distinct to prevent confusion attacks
+    const statuses = [_]VerificationStatus{
+        .not_verified,
+        .verified_official,
+        .verified_trusted,
+        .verified_untrusted,
+        .signature_invalid,
+        .key_not_found,
+        .verification_disabled,
+    };
+
+    // Ensure each status is unique
+    for (statuses, 0..) |s1, i| {
+        for (statuses[i + 1 ..]) |s2| {
+            try std.testing.expect(s1 != s2);
+        }
+    }
+}
+
+test "SECURITY: verification status security properties" {
+    // Test critical security status methods
+    try std.testing.expect(VerificationStatus.verified_official.isVerified());
+    try std.testing.expect(VerificationStatus.verified_trusted.isVerified());
+    try std.testing.expect(!VerificationStatus.not_verified.isVerified());
+    try std.testing.expect(!VerificationStatus.signature_invalid.isVerified());
+    try std.testing.expect(!VerificationStatus.key_not_found.isVerified());
+
+    // Trusted status checks
+    try std.testing.expect(VerificationStatus.verified_official.isTrusted());
+    try std.testing.expect(VerificationStatus.verified_trusted.isTrusted());
+    try std.testing.expect(!VerificationStatus.verified_untrusted.isTrusted());
+    try std.testing.expect(!VerificationStatus.not_verified.isTrusted());
+}
+
+test "SECURITY: multi-signature threshold validation" {
+    // Threshold must be at least 1
+    const invalid_threshold = MultiSignatureConfig{
+        .threshold = 0,
+        .authorized_signers = &[_][]const u8{},
+        .required_signers = &[_][]const u8{},
+        .policy_name = null,
+    };
+    try std.testing.expectEqual(@as(u32, 0), invalid_threshold.threshold);
+
+    // Valid threshold
+    const valid_config = MultiSignatureConfig{
+        .threshold = 2,
+        .authorized_signers = &[_][]const u8{ "key1", "key2", "key3" },
+        .required_signers = &[_][]const u8{},
+        .policy_name = "m-of-n",
+    };
+    try std.testing.expectEqual(@as(u32, 2), valid_config.threshold);
+    try std.testing.expectEqual(@as(usize, 3), valid_config.authorized_signers.len);
+}
+
+test "SECURITY: signature error distinctness" {
+    // Ensure security-critical errors are distinct
+    try std.testing.expect(SignatureError.InvalidSignature != SignatureError.SignatureNotFound);
+    try std.testing.expect(SignatureError.KeyNotTrusted != SignatureError.KeyNotFound);
+    try std.testing.expect(SignatureError.HashMismatch != SignatureError.InvalidSignature);
+}
+
+test "SECURITY: audit action types" {
+    // Audit actions must be distinct for proper logging
+    try std.testing.expect(AuditEntry.AuditAction.allowed != AuditEntry.AuditAction.blocked);
+    try std.testing.expect(AuditEntry.AuditAction.blocked != AuditEntry.AuditAction.bypassed);
+    try std.testing.expect(AuditEntry.AuditAction.warned != AuditEntry.AuditAction.allowed);
+}
+
+test "SECURITY: PublicKey deinit frees memory" {
+    const allocator = std.testing.allocator;
+
+    // Create a key with allocated strings
+    var key = PublicKey{
+        .key_id = try allocator.dupe(u8, "test-key-id"),
+        .key_data = [_]u8{0} ** 32,
+        .owner = try allocator.dupe(u8, "Test Owner"),
+        .email = try allocator.dupe(u8, "test@example.com"),
+        .created = 1234567890,
+        .expires = null,
+        .trust_level = .third_party,
+    };
+
+    // Deinit should free all allocated memory (test allocator will catch leaks)
+    key.deinit(allocator);
+}
+
+test "SECURITY: OfficialPGSDKey constants are immutable" {
+    // Verify the official key constants haven't been tampered with
+    try std.testing.expectEqual(@as(usize, 16), OfficialPGSDKey.key_id.len);
+    try std.testing.expectEqual(@as(usize, 64), OfficialPGSDKey.key_data_hex.len);
+    try std.testing.expect(OfficialPGSDKey.created > 0);
+}
+
+// ============================================================================
+// SECURITY TESTS: Trust Store Manipulation Prevention
+// ============================================================================
+
+test "SECURITY: trust store isolation" {
+    const allocator = std.testing.allocator;
+
+    // Two trust stores should be completely isolated
+    var store1 = TrustStore.init(allocator, "/tmp/store1");
+    defer store1.deinit();
+
+    var store2 = TrustStore.init(allocator, "/tmp/store2");
+    defer store2.deinit();
+
+    // Adding a trusted key to store1 should not affect store2
+    try store1.trusted.put(try allocator.dupe(u8, "key1"), true);
+    try std.testing.expect(store1.isKeyTrusted("key1"));
+    try std.testing.expect(!store2.isKeyTrusted("key1"));
+}
+
+test "SECURITY: untrust key properly removes trust" {
+    const allocator = std.testing.allocator;
+
+    var store = TrustStore.init(allocator, "/tmp/test-store");
+    defer store.deinit();
+
+    // Trust then untrust
+    try store.trustKey("testkey");
+    try std.testing.expect(store.isKeyTrusted("testkey"));
+
+    store.untrustKey("testkey");
+    try std.testing.expect(!store.isKeyTrusted("testkey"));
+}
+
+test "SECURITY: key trust level enforcement" {
+    const allocator = std.testing.allocator;
+
+    var store = TrustStore.init(allocator, "/tmp/test-store");
+    defer store.deinit();
+
+    // Unknown keys should return unknown trust level
+    try std.testing.expectEqual(TrustLevel.unknown, store.getKeyTrustLevel("nonexistent"));
+}

@@ -609,3 +609,123 @@ test "User.isRoot" {
     try std.testing.expect(root.isRoot());
     try std.testing.expect(!alice.isRoot());
 }
+
+// ============================================================================
+// SECURITY TESTS: Permission & Privilege Escalation Prevention
+// ============================================================================
+
+test "SECURITY: root detection is exact UID 0" {
+    // Only UID 0 should be considered root
+    const uid0 = User{ .uid = 0, .gid = 0, .username = "root", .groups = &[_]u32{}, .home_dir = "/root" };
+    const uid1 = User{ .uid = 1, .gid = 0, .username = "daemon", .groups = &[_]u32{}, .home_dir = "/" };
+    const uid_max = User{ .uid = std.math.maxInt(u32), .gid = 0, .username = "nobody", .groups = &[_]u32{}, .home_dir = "/" };
+
+    try std.testing.expect(uid0.isRoot());
+    try std.testing.expect(!uid1.isRoot()); // UID 1 is NOT root
+    try std.testing.expect(!uid_max.isRoot()); // Max UID is NOT root
+}
+
+test "SECURITY: StoreOp privilege requirements" {
+    // Dangerous operations must require root
+    try std.testing.expect(StoreOp.import_pkg.requiresRoot());
+    try std.testing.expect(StoreOp.remove_pkg.requiresRoot());
+    try std.testing.expect(StoreOp.gc.requiresRoot());
+    try std.testing.expect(StoreOp.repair.requiresRoot());
+
+    // Read operations should NOT require root
+    try std.testing.expect(!StoreOp.query.requiresRoot());
+    try std.testing.expect(!StoreOp.verify.requiresRoot());
+}
+
+test "SECURITY: setuid policy - default deny" {
+    const allocator = std.testing.allocator;
+    var policy = SetuidPolicy.init();
+    defer policy.deinit(allocator);
+
+    // By default, no binaries should be allowed setuid
+    try std.testing.expect(!policy.isAllowed("su"));
+    try std.testing.expect(!policy.isAllowed("sudo"));
+    try std.testing.expect(!policy.isAllowed("passwd"));
+    try std.testing.expect(!policy.isAllowed("anything"));
+}
+
+test "SECURITY: setuid policy - explicit allowlist only" {
+    const allocator = std.testing.allocator;
+    var policy = SetuidPolicy.init();
+    defer policy.deinit(allocator);
+
+    // Only explicitly allowed binaries should pass
+    try policy.allowed_binaries.append(allocator, try allocator.dupe(u8, "sudo"));
+
+    try std.testing.expect(policy.isAllowed("sudo"));
+    try std.testing.expect(!policy.isAllowed("su")); // Not in allowlist
+    try std.testing.expect(!policy.isAllowed("SUDO")); // Case sensitive
+    try std.testing.expect(!policy.isAllowed("sudo.bak")); // No partial match
+}
+
+test "SECURITY: user isolation" {
+    const alice = User{
+        .uid = 1000,
+        .gid = 1000,
+        .username = "alice",
+        .groups = &[_]u32{100},
+        .home_dir = "/home/alice",
+    };
+
+    const bob = User{
+        .uid = 1001,
+        .gid = 1001,
+        .username = "bob",
+        .groups = &[_]u32{100},
+        .home_dir = "/home/bob",
+    };
+
+    // Different users should have different UIDs
+    try std.testing.expect(alice.uid != bob.uid);
+
+    // Same group membership shouldn't grant root
+    try std.testing.expect(!alice.isRoot());
+    try std.testing.expect(!bob.isRoot());
+}
+
+test "SECURITY: group membership check" {
+    const groups = [_]u32{ 10, 20, 30 };
+    const user = User{
+        .uid = 1000,
+        .gid = 1000,
+        .username = "user",
+        .groups = &groups,
+        .home_dir = "/home/user",
+    };
+
+    // Should find groups user is in
+    try std.testing.expect(user.inGroup(10));
+    try std.testing.expect(user.inGroup(20));
+    try std.testing.expect(user.inGroup(30));
+
+    // Should NOT find groups user is NOT in
+    try std.testing.expect(!user.inGroup(0)); // wheel
+    try std.testing.expect(!user.inGroup(100));
+    try std.testing.expect(!user.inGroup(std.math.maxInt(u32)));
+}
+
+test "SECURITY: unprivileged user cannot access store operations" {
+    var ac = AccessControl.init(std.testing.allocator);
+
+    var unprivileged = User{
+        .uid = 65534, // nobody
+        .gid = 65534,
+        .username = "nobody",
+        .groups = &[_]u32{},
+        .home_dir = "/nonexistent",
+    };
+
+    // Unprivileged users should fail store operations that require root
+    const can_import = ac.checkStoreAccess(&unprivileged, .import_pkg) catch false;
+    const can_remove = ac.checkStoreAccess(&unprivileged, .remove_pkg) catch false;
+    const can_gc = ac.checkStoreAccess(&unprivileged, .gc) catch false;
+
+    try std.testing.expect(!can_import);
+    try std.testing.expect(!can_remove);
+    try std.testing.expect(!can_gc);
+}

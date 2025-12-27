@@ -876,3 +876,122 @@ test "serializeProvenance" {
     try std.testing.expect(std.mem.indexOf(u8, yaml, "builder:") != null);
     try std.testing.expect(std.mem.indexOf(u8, yaml, "source:") != null);
 }
+
+// ============================================================================
+// SECURITY TESTS: Hash Verification & Tampering Detection
+// ============================================================================
+
+test "SECURITY: hash uniqueness" {
+    const allocator = std.testing.allocator;
+
+    // Create two provenances with slightly different content
+    var prov1 = try createProvenance(
+        allocator,
+        "builder1",
+        "1.0.0",
+        "host1",
+        "https://example.com/pkg1.tar.gz",
+        "hash1",
+    );
+    defer prov1.deinit(allocator);
+
+    var prov2 = try createProvenance(
+        allocator,
+        "builder2", // Different builder
+        "1.0.0",
+        "host1",
+        "https://example.com/pkg1.tar.gz",
+        "hash1",
+    );
+    defer prov2.deinit(allocator);
+
+    const hash1 = try prov1.computeHash(allocator);
+    defer allocator.free(hash1);
+
+    const hash2 = try prov2.computeHash(allocator);
+    defer allocator.free(hash2);
+
+    // Hashes should be different for different content
+    try std.testing.expect(!std.mem.eql(u8, hash1, hash2));
+}
+
+test "SECURITY: hash determinism" {
+    const allocator = std.testing.allocator;
+
+    // Same provenance should produce same hash
+    var prov = try createProvenance(
+        allocator,
+        "test-builder",
+        "1.0.0",
+        "localhost",
+        "https://example.com/test.tar.gz",
+        "abc123",
+    );
+    defer prov.deinit(allocator);
+
+    const hash1 = try prov.computeHash(allocator);
+    defer allocator.free(hash1);
+
+    const hash2 = try prov.computeHash(allocator);
+    defer allocator.free(hash2);
+
+    // Same input should produce identical hash
+    try std.testing.expectEqualStrings(hash1, hash2);
+}
+
+test "SECURITY: hash length is correct for SHA256" {
+    const allocator = std.testing.allocator;
+
+    var prov = try createProvenance(
+        allocator,
+        "test-builder",
+        "1.0.0",
+        "localhost",
+        "https://example.com/test.tar.gz",
+        "abc123",
+    );
+    defer prov.deinit(allocator);
+
+    const hash = try prov.computeHash(allocator);
+    defer allocator.free(hash);
+
+    // SHA256 produces 64 hex characters
+    try std.testing.expectEqual(@as(usize, 64), hash.len);
+
+    // All characters should be valid hex
+    for (hash) |c| {
+        const valid = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
+        try std.testing.expect(valid);
+    }
+}
+
+test "SECURITY: ProvenanceVerifier policy defaults" {
+    var verifier = ProvenanceVerifier.init(std.testing.allocator);
+    defer verifier.deinit();
+
+    // Provenance should be required by default for security
+    try std.testing.expect(verifier.policy.require_provenance);
+}
+
+test "SECURITY: provenance format includes security-critical fields" {
+    const allocator = std.testing.allocator;
+
+    var prov = try createProvenance(
+        allocator,
+        "secure-builder",
+        "2.0.0",
+        "build.example.com",
+        "https://example.com/package.tar.gz",
+        "sha256:abc123def456",
+    );
+    defer prov.deinit(allocator);
+
+    const yaml = try serializeProvenance(allocator, &prov);
+    defer allocator.free(yaml);
+
+    // Critical security fields must be present
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "builder:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "source:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "url:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, yaml, "hash:") != null);
+}
