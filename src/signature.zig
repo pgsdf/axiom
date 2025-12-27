@@ -2537,8 +2537,9 @@ test "SECURITY: verification status type safety" {
     // Create invalid status
     const invalid_status = VerificationStatus{
         .signature_invalid = .{
+            .key_id = null,
             .reason = "test",
-            .signature_file = null,
+            .is_parse_error = false,
         },
     };
     try std.testing.expect(!invalid_status.isVerified());
@@ -2572,7 +2573,7 @@ test "SECURITY: verification status - failures return null content" {
     try std.testing.expect(!missing.isVerified());
 
     const invalid = VerificationStatus{
-        .signature_invalid = .{ .reason = "bad sig", .signature_file = null },
+        .signature_invalid = .{ .key_id = null, .reason = "bad sig", .is_parse_error = false },
     };
     try std.testing.expect(invalid.getVerifiedContent() == null);
     try std.testing.expect(!invalid.isVerified());
