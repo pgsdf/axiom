@@ -74,6 +74,7 @@ const be_integration = @import("be_integration.zig");
 const multi_user_security = @import("multi_user_security.zig");
 const error_recovery = @import("error_recovery.zig");
 const testing_framework = @import("testing_framework.zig");
+const lockbox = @import("lockbox.zig");
 
 const ZfsHandle = zfs.ZfsHandle;
 const PackageStore = store.PackageStore;
@@ -134,6 +135,10 @@ const ErrorReporter = error_recovery.ErrorReporter;
 const VerificationStatus = error_recovery.VerificationStatus;
 const TestRunner = testing_framework.TestRunner;
 const TestConfig = testing_framework.TestConfig;
+const LockboxManager = lockbox.LockboxManager;
+const LockboxParser = lockbox.LockboxParser;
+const LockboxEmitter = lockbox.LockboxEmitter;
+const LockboxValidator = lockbox.LockboxValidator;
 
 /// CLI command enumeration
 pub const Command = enum {
@@ -332,6 +337,15 @@ pub const Command = enum {
     test_integration,
     test_regression,
     test_fuzz,
+
+    // Lockbox operations (Artifact Lockbox)
+    lockbox_ingest,
+    lockbox_normalize,
+    lockbox_deploy,
+    lockbox_rollback,
+    lockbox_verify,
+    lockbox_show,
+    lockbox_audit,
 
     unknown,
 };
@@ -552,6 +566,16 @@ pub fn parseCommand(cmd: []const u8) Command {
     if (std.mem.eql(u8, cmd, "test-integration")) return .test_integration;
     if (std.mem.eql(u8, cmd, "test-regression")) return .test_regression;
     if (std.mem.eql(u8, cmd, "test-fuzz")) return .test_fuzz;
+
+    // Lockbox commands (Artifact Lockbox)
+    if (std.mem.eql(u8, cmd, "lockbox")) return .lockbox_show;
+    if (std.mem.eql(u8, cmd, "lockbox-ingest")) return .lockbox_ingest;
+    if (std.mem.eql(u8, cmd, "lockbox-normalize")) return .lockbox_normalize;
+    if (std.mem.eql(u8, cmd, "lockbox-deploy")) return .lockbox_deploy;
+    if (std.mem.eql(u8, cmd, "lockbox-rollback")) return .lockbox_rollback;
+    if (std.mem.eql(u8, cmd, "lockbox-verify")) return .lockbox_verify;
+    if (std.mem.eql(u8, cmd, "lockbox-show")) return .lockbox_show;
+    if (std.mem.eql(u8, cmd, "lockbox-audit")) return .lockbox_audit;
 
     return .unknown;
 }
@@ -829,6 +853,15 @@ pub const CLI = struct {
             .test_integration => try self.testIntegration(args[1..]),
             .test_regression => try self.testRegression(args[1..]),
             .test_fuzz => try self.testFuzz(args[1..]),
+
+            // Lockbox commands (Artifact Lockbox)
+            .lockbox_ingest => try self.lockboxIngest(args[1..]),
+            .lockbox_normalize => try self.lockboxNormalize(args[1..]),
+            .lockbox_deploy => try self.lockboxDeploy(args[1..]),
+            .lockbox_rollback => try self.lockboxRollback(args[1..]),
+            .lockbox_verify => try self.lockboxVerify(args[1..]),
+            .lockbox_show => try self.lockboxShow(args[1..]),
+            .lockbox_audit => try self.lockboxAudit(args[1..]),
 
             .unknown => {
                 std.debug.print("Unknown command: {s}\n", .{args[0]});
@@ -9465,6 +9498,501 @@ pub const CLI = struct {
             std.debug.print("\n✓ No crashes found.\n", .{});
         } else {
             std.debug.print("\n✗ {d} crash(es) found! Check fuzz output for details.\n", .{results.crashes});
+        }
+    }
+
+    // =========================================================================
+    // Lockbox Commands (Artifact Lockbox)
+    // =========================================================================
+
+    /// Ingest a vendor artifact from lockbox.yaml
+    fn lockboxIngest(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom lockbox-ingest <lockbox.yaml>\n", .{});
+            std.debug.print("\nIngest a third-party vendor artifact.\n", .{});
+            std.debug.print("\nThis command reads a lockbox.yaml specification, validates it,\n", .{});
+            std.debug.print("computes the content hash, and prepares the artifact for deployment.\n", .{});
+            std.debug.print("\nOptions:\n", .{});
+            std.debug.print("  --output <file>  Output path for canonical JSON (default: lockbox.canonical.json)\n", .{});
+            return;
+        }
+
+        const yaml_path = args[0];
+        var output_path: []const u8 = "lockbox.canonical.json";
+
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--output") and i + 1 < args.len) {
+                output_path = args[i + 1];
+                i += 1;
+            }
+        }
+
+        std.debug.print("Lockbox Artifact Ingest\n", .{});
+        std.debug.print("=======================\n\n", .{});
+        std.debug.print("Input:  {s}\n", .{yaml_path});
+        std.debug.print("Output: {s}\n\n", .{output_path});
+
+        var manager = LockboxManager.init(self.allocator, "zroot/axiom/lockbox");
+        defer manager.deinit();
+        manager.setZfsHandle(self.zfs_handle);
+
+        var spec = manager.ingest(yaml_path) catch |err| {
+            std.debug.print("Failed to ingest artifact: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer spec.deinit(self.allocator);
+
+        // Emit canonical JSON
+        manager.normalize(&spec, output_path) catch |err| {
+            std.debug.print("Failed to normalize artifact: {s}\n", .{@errorName(err)});
+            return;
+        };
+
+        std.debug.print("Artifact ingested successfully.\n\n", .{});
+        std.debug.print("Identity:\n", .{});
+        std.debug.print("  Name:    {s}\n", .{spec.identity.name});
+        std.debug.print("  Version: {s}\n", .{spec.identity.version});
+        std.debug.print("  Vendor:  {s}\n", .{spec.identity.vendor.name});
+
+        if (spec.machine_identity) |mi| {
+            std.debug.print("\nContent Hash: {s}\n", .{mi.content_hash});
+        }
+
+        std.debug.print("\nCanonical JSON written to: {s}\n", .{output_path});
+    }
+
+    /// Normalize lockbox specification to canonical JSON
+    fn lockboxNormalize(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom lockbox-normalize <lockbox.yaml> [--output <file>]\n", .{});
+            std.debug.print("\nNormalize a lockbox specification to canonical JSON.\n", .{});
+            std.debug.print("\nCanonical JSON is the ONLY format used for hashing and signing.\n", .{});
+            std.debug.print("This ensures cryptographic determinism regardless of YAML formatting.\n", .{});
+            return;
+        }
+
+        const yaml_path = args[0];
+        var output_path: []const u8 = "lockbox.canonical.json";
+
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--output") and i + 1 < args.len) {
+                output_path = args[i + 1];
+                i += 1;
+            }
+        }
+
+        std.debug.print("Lockbox Normalize\n", .{});
+        std.debug.print("=================\n\n", .{});
+
+        // Parse YAML
+        const file = std.fs.cwd().openFile(yaml_path, .{}) catch |err| {
+            std.debug.print("Failed to open file: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer file.close();
+
+        const content = file.readToEndAlloc(self.allocator, 10 * 1024 * 1024) catch |err| {
+            std.debug.print("Failed to read file: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer self.allocator.free(content);
+
+        var parser = LockboxParser.init(self.allocator);
+        defer parser.deinit();
+
+        var spec = parser.parseYaml(content) catch |err| {
+            std.debug.print("Failed to parse YAML: {s}\n", .{@errorName(err)});
+            for (parser.getErrors()) |e| {
+                std.debug.print("  - {s}\n", .{e});
+            }
+            return;
+        };
+        defer spec.deinit(self.allocator);
+
+        // Compute content hash
+        const content_hash = spec.computeContentHash(self.allocator) catch |err| {
+            std.debug.print("Failed to compute content hash: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer self.allocator.free(content_hash);
+
+        // Emit canonical JSON
+        var emitter = LockboxEmitter.init(self.allocator);
+        const json = emitter.emitCanonicalJson(&spec) catch |err| {
+            std.debug.print("Failed to emit canonical JSON: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer self.allocator.free(json);
+
+        // Write output
+        const out_file = std.fs.cwd().createFile(output_path, .{}) catch |err| {
+            std.debug.print("Failed to create output file: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer out_file.close();
+        out_file.writeAll(json) catch |err| {
+            std.debug.print("Failed to write output: {s}\n", .{@errorName(err)});
+            return;
+        };
+
+        std.debug.print("Canonical JSON written to: {s}\n", .{output_path});
+        std.debug.print("Content hash: {s}\n", .{content_hash});
+    }
+
+    /// Deploy a lockbox artifact
+    fn lockboxDeploy(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom lockbox-deploy <lockbox.yaml|lockbox.canonical.json>\n", .{});
+            std.debug.print("\nDeploy a vendor artifact to its target location.\n", .{});
+            std.debug.print("\nDeployment is atomic via ZFS and includes automatic snapshot creation\n", .{});
+            std.debug.print("for rollback capability.\n", .{});
+            std.debug.print("\nOptions:\n", .{});
+            std.debug.print("  --no-snapshot    Skip pre-deployment snapshot\n", .{});
+            std.debug.print("  --dry-run        Show what would be done without making changes\n", .{});
+            return;
+        }
+
+        const spec_path = args[0];
+        var dry_run = false;
+
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--dry-run")) {
+                dry_run = true;
+            }
+        }
+
+        std.debug.print("Lockbox Deploy\n", .{});
+        std.debug.print("==============\n\n", .{});
+        std.debug.print("Specification: {s}\n", .{spec_path});
+
+        if (dry_run) {
+            std.debug.print("Mode: DRY RUN (no changes will be made)\n", .{});
+        }
+
+        // Parse specification
+        const file = std.fs.cwd().openFile(spec_path, .{}) catch |err| {
+            std.debug.print("Failed to open file: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer file.close();
+
+        const content = file.readToEndAlloc(self.allocator, 10 * 1024 * 1024) catch |err| {
+            std.debug.print("Failed to read file: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer self.allocator.free(content);
+
+        var parser = LockboxParser.init(self.allocator);
+        defer parser.deinit();
+
+        var spec = parser.parseYaml(content) catch |err| {
+            std.debug.print("Failed to parse specification: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer spec.deinit(self.allocator);
+
+        if (spec.deployment == null) {
+            std.debug.print("Error: No deployment target specified in lockbox specification.\n", .{});
+            return;
+        }
+
+        const deployment = spec.deployment.?;
+        std.debug.print("\nDeployment target:\n", .{});
+        std.debug.print("  Path:     {s}\n", .{deployment.path});
+        if (deployment.dataset) |ds| {
+            std.debug.print("  Dataset:  {s}\n", .{ds});
+        }
+        std.debug.print("  Snapshot: {s}\n", .{if (deployment.snapshot) "yes" else "no"});
+
+        if (dry_run) {
+            std.debug.print("\nDry run complete. No changes made.\n", .{});
+            return;
+        }
+
+        var manager = LockboxManager.init(self.allocator, "zroot/axiom/lockbox");
+        defer manager.deinit();
+        manager.setZfsHandle(self.zfs_handle);
+
+        manager.deploy(&spec) catch |err| {
+            std.debug.print("Deployment failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+
+        std.debug.print("\nDeployment successful.\n", .{});
+    }
+
+    /// Rollback a lockbox deployment
+    fn lockboxRollback(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 2) {
+            std.debug.print("Usage: axiom lockbox-rollback <lockbox.yaml> <snapshot-name>\n", .{});
+            std.debug.print("\nRollback a deployed artifact to a previous state.\n", .{});
+            std.debug.print("\nThis uses ZFS rollback to atomically restore the previous state.\n", .{});
+            std.debug.print("All changes made after the snapshot will be lost.\n", .{});
+            return;
+        }
+
+        const spec_path = args[0];
+        const snapshot_name = args[1];
+
+        std.debug.print("Lockbox Rollback\n", .{});
+        std.debug.print("================\n\n", .{});
+        std.debug.print("Specification: {s}\n", .{spec_path});
+        std.debug.print("Snapshot:      {s}\n", .{snapshot_name});
+
+        // Parse specification
+        const file = std.fs.cwd().openFile(spec_path, .{}) catch |err| {
+            std.debug.print("Failed to open file: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer file.close();
+
+        const content = file.readToEndAlloc(self.allocator, 10 * 1024 * 1024) catch |err| {
+            std.debug.print("Failed to read file: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer self.allocator.free(content);
+
+        var parser = LockboxParser.init(self.allocator);
+        defer parser.deinit();
+
+        var spec = parser.parseYaml(content) catch |err| {
+            std.debug.print("Failed to parse specification: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer spec.deinit(self.allocator);
+
+        var manager = LockboxManager.init(self.allocator, "zroot/axiom/lockbox");
+        defer manager.deinit();
+        manager.setZfsHandle(self.zfs_handle);
+
+        manager.rollback(&spec, snapshot_name) catch |err| {
+            std.debug.print("Rollback failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+
+        std.debug.print("\nRollback successful.\n", .{});
+    }
+
+    /// Verify lockbox artifact integrity
+    fn lockboxVerify(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom lockbox-verify <lockbox.yaml|lockbox.canonical.json>\n", .{});
+            std.debug.print("\nVerify the integrity of a lockbox artifact.\n", .{});
+            std.debug.print("\nThis recomputes the content hash and compares it against the\n", .{});
+            std.debug.print("stored machine identity to detect any modifications.\n", .{});
+            return;
+        }
+
+        const spec_path = args[0];
+
+        std.debug.print("Lockbox Verify\n", .{});
+        std.debug.print("==============\n\n", .{});
+        std.debug.print("Specification: {s}\n\n", .{spec_path});
+
+        // Parse specification
+        const file = std.fs.cwd().openFile(spec_path, .{}) catch |err| {
+            std.debug.print("Failed to open file: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer file.close();
+
+        const content = file.readToEndAlloc(self.allocator, 10 * 1024 * 1024) catch |err| {
+            std.debug.print("Failed to read file: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer self.allocator.free(content);
+
+        var parser = LockboxParser.init(self.allocator);
+        defer parser.deinit();
+
+        var spec = parser.parseYaml(content) catch |err| {
+            std.debug.print("Failed to parse specification: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer spec.deinit(self.allocator);
+
+        // Validate
+        var validator = LockboxValidator.init(self.allocator);
+        defer validator.deinit();
+
+        var result = validator.validate(&spec) catch |err| {
+            std.debug.print("Validation failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer result.deinit(self.allocator);
+
+        if (!result.valid) {
+            std.debug.print("Validation errors:\n", .{});
+            for (result.errors) |e| {
+                std.debug.print("  - {s}\n", .{e});
+            }
+            return;
+        }
+
+        // Verify integrity
+        var manager = LockboxManager.init(self.allocator, "zroot/axiom/lockbox");
+        defer manager.deinit();
+
+        const verified = manager.verify(&spec) catch |err| {
+            std.debug.print("Verification failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+
+        if (verified) {
+            std.debug.print("✓ Artifact integrity verified.\n", .{});
+            if (spec.machine_identity) |mi| {
+                std.debug.print("  Content hash: {s}\n", .{mi.content_hash});
+            }
+        } else {
+            std.debug.print("✗ Artifact integrity check FAILED.\n", .{});
+            std.debug.print("  The content hash does not match the stored identity.\n", .{});
+            std.debug.print("  This may indicate tampering or corruption.\n", .{});
+        }
+    }
+
+    /// Show lockbox specification details
+    fn lockboxShow(self: *CLI, args: []const []const u8) !void {
+        if (args.len < 1) {
+            std.debug.print("Usage: axiom lockbox-show <lockbox.yaml|lockbox.canonical.json>\n", .{});
+            std.debug.print("\nDisplay detailed information about a lockbox artifact.\n", .{});
+            std.debug.print("\nOptions:\n", .{});
+            std.debug.print("  --json    Output as canonical JSON\n", .{});
+            std.debug.print("  --yaml    Output as YAML (default)\n", .{});
+            std.debug.print("  --hash    Show only the content hash\n", .{});
+            return;
+        }
+
+        const spec_path = args[0];
+        var output_json = false;
+        var hash_only = false;
+
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--json")) {
+                output_json = true;
+            } else if (std.mem.eql(u8, args[i], "--hash")) {
+                hash_only = true;
+            }
+        }
+
+        // Parse specification
+        const file = std.fs.cwd().openFile(spec_path, .{}) catch |err| {
+            std.debug.print("Failed to open file: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer file.close();
+
+        const content = file.readToEndAlloc(self.allocator, 10 * 1024 * 1024) catch |err| {
+            std.debug.print("Failed to read file: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer self.allocator.free(content);
+
+        var parser = LockboxParser.init(self.allocator);
+        defer parser.deinit();
+
+        var spec = parser.parseYaml(content) catch |err| {
+            std.debug.print("Failed to parse specification: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer spec.deinit(self.allocator);
+
+        // Compute content hash if needed
+        const content_hash = spec.computeContentHash(self.allocator) catch |err| {
+            std.debug.print("Failed to compute content hash: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer self.allocator.free(content_hash);
+
+        if (hash_only) {
+            std.debug.print("{s}\n", .{content_hash});
+            return;
+        }
+
+        if (output_json) {
+            var emitter = LockboxEmitter.init(self.allocator);
+            const json = emitter.emitCanonicalJson(&spec) catch |err| {
+                std.debug.print("Failed to emit JSON: {s}\n", .{@errorName(err)});
+                return;
+            };
+            defer self.allocator.free(json);
+            std.debug.print("{s}\n", .{json});
+        } else {
+            std.debug.print("Lockbox Artifact\n", .{});
+            std.debug.print("================\n\n", .{});
+
+            std.debug.print("Identity:\n", .{});
+            std.debug.print("  Name:        {s}\n", .{spec.identity.name});
+            std.debug.print("  Version:     {s}\n", .{spec.identity.version});
+            std.debug.print("  Vendor:      {s}\n", .{spec.identity.vendor.name});
+            if (spec.identity.description) |d| {
+                std.debug.print("  Description: {s}\n", .{d});
+            }
+
+            std.debug.print("\nSource:\n", .{});
+            std.debug.print("  URL:    {s}\n", .{spec.source.url});
+            std.debug.print("  SHA256: {s}\n", .{spec.source.sha256});
+            if (spec.source.size) |s| {
+                std.debug.print("  Size:   {d} bytes\n", .{s});
+            }
+
+            std.debug.print("\nFilesystem:\n", .{});
+            std.debug.print("  Files: {d}\n", .{spec.filesystem.files.len});
+            if (spec.filesystem.merkle_root) |mr| {
+                std.debug.print("  Merkle root: {s}\n", .{mr});
+            }
+
+            if (spec.deployment) |d| {
+                std.debug.print("\nDeployment:\n", .{});
+                std.debug.print("  Path:     {s}\n", .{d.path});
+                if (d.dataset) |ds| {
+                    std.debug.print("  Dataset:  {s}\n", .{ds});
+                }
+                std.debug.print("  Snapshot: {s}\n", .{if (d.snapshot) "yes" else "no"});
+            }
+
+            std.debug.print("\nContent Hash: {s}\n", .{content_hash});
+        }
+    }
+
+    /// Show lockbox audit log
+    fn lockboxAudit(self: *CLI, args: []const []const u8) !void {
+        _ = args;
+
+        std.debug.print("Lockbox Audit Log\n", .{});
+        std.debug.print("=================\n\n", .{});
+
+        // In a real implementation, this would read from persistent storage
+        var manager = LockboxManager.init(self.allocator, "zroot/axiom/lockbox");
+        defer manager.deinit();
+
+        const log = manager.getAuditLog();
+
+        if (log.len == 0) {
+            std.debug.print("No audit entries found.\n", .{});
+            std.debug.print("\nThe audit log records all lockbox operations:\n", .{});
+            std.debug.print("  - ingest:    Artifact ingestion\n", .{});
+            std.debug.print("  - normalize: Canonical JSON generation\n", .{});
+            std.debug.print("  - deploy:    Artifact deployment\n", .{});
+            std.debug.print("  - rollback:  Rollback to previous state\n", .{});
+            std.debug.print("  - verify:    Integrity verification\n", .{});
+            return;
+        }
+
+        std.debug.print("Timestamp                    Operation    Content Hash (first 16 chars)    Actor\n", .{});
+        std.debug.print("---------                    ---------    -----------------------------    -----\n", .{});
+
+        for (log) |entry| {
+            const hash_short = if (entry.content_hash.len >= 16) entry.content_hash[0..16] else entry.content_hash;
+            std.debug.print("{s}  {s: <10}   {s}...  {s}\n", .{
+                entry.timestamp,
+                entry.operation.toString(),
+                hash_short,
+                entry.actor,
+            });
         }
     }
 };
