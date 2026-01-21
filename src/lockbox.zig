@@ -40,13 +40,13 @@ pub const LockboxParser = struct {
     pub fn init(allocator: Allocator) Self {
         return .{
             .allocator = allocator,
-            .errors = std.ArrayList([]const u8).init(allocator),
+            .errors = .empty,
         };
     }
 
     pub fn deinit(self: *Self) void {
         for (self.errors.items) |e| self.allocator.free(e);
-        self.errors.deinit();
+        self.errors.deinit(self.allocator);
     }
 
     /// Parse lockbox specification from YAML content
@@ -78,10 +78,10 @@ pub const LockboxParser = struct {
         var deployment_dataset: ?[]const u8 = null;
         var deployment_snapshot: bool = true;
 
-        var files = std.ArrayList(FileEntry).init(self.allocator);
+        var files: std.ArrayList(FileEntry) = .empty;
         errdefer {
             for (files.items) |*f| f.deinit(self.allocator);
-            files.deinit();
+            files.deinit(self.allocator);
         }
 
         // Current file being parsed
@@ -169,7 +169,7 @@ pub const LockboxParser = struct {
                         if (std.mem.startsWith(u8, trimmed, "- path:")) {
                             // Save previous file if exists
                             if (current_file) |*cf| {
-                                try files.append(cf.*);
+                                try files.append(self.allocator, cf.*);
                             }
                             // Start new file entry
                             current_file = FileEntry{
@@ -211,7 +211,7 @@ pub const LockboxParser = struct {
 
         // Save last file if any
         if (current_file) |*cf| {
-            try files.append(cf.*);
+            try files.append(self.allocator, cf.*);
         }
 
         // Validate required fields
@@ -257,7 +257,7 @@ pub const LockboxParser = struct {
         };
 
         spec.filesystem = .{
-            .files = try files.toOwnedSlice(),
+            .files = try files.toOwnedSlice(self.allocator),
         };
 
         if (deployment_path != null) {
@@ -289,7 +289,7 @@ pub const LockboxParser = struct {
     }
 
     fn addError(self: *Self, msg: []const u8) !void {
-        try self.errors.append(try self.allocator.dupe(u8, msg));
+        try self.errors.append(self.allocator, try self.allocator.dupe(u8, msg));
     }
 
     /// Get validation errors
@@ -416,14 +416,14 @@ pub const LockboxValidator = struct {
     pub fn init(allocator: Allocator) Self {
         return .{
             .allocator = allocator,
-            .errors = std.ArrayList([]const u8).init(allocator),
+            .errors = .empty,
             .strict_mode = true,
         };
     }
 
     pub fn deinit(self: *Self) void {
         for (self.errors.items) |e| self.allocator.free(e);
-        self.errors.deinit();
+        self.errors.deinit(self.allocator);
     }
 
     /// Validate a lockbox specification
@@ -572,7 +572,7 @@ pub const LockboxValidator = struct {
     }
 
     fn addError(self: *Self, msg: []const u8) !void {
-        try self.errors.append(try self.allocator.dupe(u8, msg));
+        try self.errors.append(self.allocator, try self.allocator.dupe(u8, msg));
     }
 };
 
@@ -595,13 +595,13 @@ pub const LockboxManager = struct {
             .allocator = allocator,
             .zfs_handle = null,
             .base_dataset = base_dataset,
-            .audit_log = std.ArrayList(AuditEntry).init(allocator),
+            .audit_log = .empty,
         };
     }
 
     pub fn deinit(self: *Self) void {
         for (self.audit_log.items) |*entry| entry.deinit(self.allocator);
-        self.audit_log.deinit();
+        self.audit_log.deinit(self.allocator);
     }
 
     /// Set ZFS handle for deployment operations
@@ -761,7 +761,7 @@ pub const LockboxManager = struct {
     }
 
     fn logAudit(self: *Self, operation: AuditEntry.Operation, content_hash: []const u8, actor: []const u8) !void {
-        try self.audit_log.append(.{
+        try self.audit_log.append(self.allocator, .{
             .operation = operation,
             .timestamp = try self.getCurrentTimestamp(),
             .content_hash = try self.allocator.dupe(u8, content_hash),
