@@ -724,7 +724,7 @@ test "GCError values" {
 test "createMockPackage" {
     const allocator = std.testing.allocator;
 
-    var pkg = try createMockPackage(allocator, "test-pkg", .{ .major = 1, .minor = 2, .patch = 3 });
+    const pkg = try createMockPackage(allocator, "test-pkg", .{ .major = 1, .minor = 2, .patch = 3 });
     defer {
         allocator.free(pkg.name);
         allocator.free(pkg.build_id);

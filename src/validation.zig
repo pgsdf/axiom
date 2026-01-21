@@ -21,6 +21,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const manifest = @import("manifest.zig");
 
 // ============================================================================
 // URL Validation
@@ -1085,14 +1086,14 @@ test "SECURITY: timestamp validation - negative epoch" {
 
 test "SECURITY: package name validation edge cases" {
     // Valid package names
-    try std.testing.expect(isValidPackageName("bash"));
-    try std.testing.expect(isValidPackageName("lib-ssl"));
-    try std.testing.expect(isValidPackageName("pkg_name"));
+    try std.testing.expect(manifest.isValidPackageName("bash"));
+    try std.testing.expect(manifest.isValidPackageName("lib-ssl"));
+    try std.testing.expect(manifest.isValidPackageName("pkg_name"));
 
     // Invalid - could enable path traversal or command injection
-    try std.testing.expect(!isValidPackageName(""));
-    try std.testing.expect(!isValidPackageName("../etc/passwd"));
-    try std.testing.expect(!isValidPackageName("pkg;rm -rf /"));
-    try std.testing.expect(!isValidPackageName("pkg|cat /etc/shadow"));
-    try std.testing.expect(!isValidPackageName("pkg`whoami`"));
+    try std.testing.expect(!manifest.isValidPackageName(""));
+    try std.testing.expect(!manifest.isValidPackageName("../etc/passwd"));
+    try std.testing.expect(!manifest.isValidPackageName("pkg;rm -rf /"));
+    try std.testing.expect(!manifest.isValidPackageName("pkg|cat /etc/shadow"));
+    try std.testing.expect(!manifest.isValidPackageName("pkg`whoami`"));
 }

@@ -28,7 +28,7 @@ pub const CanonicalJson = struct {
         return buffer.toOwnedSlice(self.allocator);
     }
 
-    fn writeValue(self: *Self, buffer: *std.ArrayList(u8), value: JsonValue) !void {
+    fn writeValue(self: *Self, buffer: *std.ArrayList(u8), value: JsonValue) Allocator.Error!void {
         switch (value) {
             .null => try buffer.appendSlice(self.allocator, "null"),
             .bool => |b| try buffer.appendSlice(self.allocator, if (b) "true" else "false"),
@@ -43,7 +43,7 @@ pub const CanonicalJson = struct {
         }
     }
 
-    fn writeString(self: *Self, buffer: *std.ArrayList(u8), s: []const u8) !void {
+    fn writeString(self: *Self, buffer: *std.ArrayList(u8), s: []const u8) Allocator.Error!void {
         try buffer.append(self.allocator, '"');
 
         for (s) |c| {
@@ -71,7 +71,7 @@ pub const CanonicalJson = struct {
         try buffer.append(self.allocator, '"');
     }
 
-    fn writeArray(self: *Self, buffer: *std.ArrayList(u8), arr: []const JsonValue) !void {
+    fn writeArray(self: *Self, buffer: *std.ArrayList(u8), arr: []const JsonValue) Allocator.Error!void {
         try buffer.append(self.allocator, '[');
 
         for (arr, 0..) |item, i| {
@@ -82,7 +82,7 @@ pub const CanonicalJson = struct {
         try buffer.append(self.allocator, ']');
     }
 
-    fn writeObject(self: *Self, buffer: *std.ArrayList(u8), obj: []const JsonKeyValue) !void {
+    fn writeObject(self: *Self, buffer: *std.ArrayList(u8), obj: []const JsonKeyValue) Allocator.Error!void {
         // Sort keys lexicographically for canonical output
         const sorted = try self.allocator.alloc(JsonKeyValue, obj.len);
         defer self.allocator.free(sorted);
