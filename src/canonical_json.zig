@@ -183,16 +183,16 @@ pub const JsonObjectBuilder = struct {
     pub fn init(allocator: Allocator) Self {
         return .{
             .allocator = allocator,
-            .pairs = std.ArrayList(JsonKeyValue).init(allocator),
+            .pairs = .empty,
         };
     }
 
     pub fn deinit(self: *Self) void {
-        self.pairs.deinit();
+        self.pairs.deinit(self.allocator);
     }
 
     pub fn put(self: *Self, key: []const u8, value: JsonValue) !void {
-        try self.pairs.append(.{ .key = key, .value = value });
+        try self.pairs.append(self.allocator, .{ .key = key, .value = value });
     }
 
     pub fn putString(self: *Self, key: []const u8, value: []const u8) !void {
@@ -217,7 +217,7 @@ pub const JsonObjectBuilder = struct {
 
     /// Build and return owned slice (caller must free)
     pub fn buildOwned(self: *Self) ![]const JsonKeyValue {
-        return self.pairs.toOwnedSlice();
+        return self.pairs.toOwnedSlice(self.allocator);
     }
 };
 
@@ -231,16 +231,16 @@ pub const JsonArrayBuilder = struct {
     pub fn init(allocator: Allocator) Self {
         return .{
             .allocator = allocator,
-            .items = std.ArrayList(JsonValue).init(allocator),
+            .items = .empty,
         };
     }
 
     pub fn deinit(self: *Self) void {
-        self.items.deinit();
+        self.items.deinit(self.allocator);
     }
 
     pub fn append(self: *Self, value: JsonValue) !void {
-        try self.items.append(value);
+        try self.items.append(self.allocator, value);
     }
 
     pub fn appendString(self: *Self, value: []const u8) !void {
@@ -256,7 +256,7 @@ pub const JsonArrayBuilder = struct {
     }
 
     pub fn buildOwned(self: *Self) ![]const JsonValue {
-        return self.items.toOwnedSlice();
+        return self.items.toOwnedSlice(self.allocator);
     }
 };
 
