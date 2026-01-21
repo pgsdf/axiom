@@ -693,14 +693,14 @@ pub const LockboxManager = struct {
         // Create snapshot before deployment if enabled
         if (deployment.snapshot) {
             if (deployment.dataset) |ds| {
-                const snapshot_name = try std.fmt.allocPrint(
+                const snap_name = try std.fmt.allocPrint(
                     self.allocator,
-                    "{s}@lockbox-pre-{s}",
-                    .{ ds, spec.machine_identity.?.content_hash[0..8] },
+                    "lockbox-pre-{s}",
+                    .{spec.machine_identity.?.content_hash[0..8]},
                 );
-                defer self.allocator.free(snapshot_name);
+                defer self.allocator.free(snap_name);
 
-                zfs_h.snapshot(snapshot_name) catch |err| {
+                zfs_h.snapshot(self.allocator, ds, snap_name, false) catch |err| {
                     // Snapshot might fail if dataset doesn't exist yet
                     if (err != error.DatasetNotFound) return err;
                 };
@@ -729,7 +729,7 @@ pub const LockboxManager = struct {
             );
             defer self.allocator.free(full_snapshot);
 
-            try zfs_h.rollback(full_snapshot);
+            try zfs_h.rollback(self.allocator, full_snapshot);
         }
 
         // Log audit entry

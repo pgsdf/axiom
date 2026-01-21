@@ -475,6 +475,45 @@ pub const ZfsHandle = struct {
         }
     }
 
+    /// Rollback a dataset to a snapshot
+    pub fn rollback(
+        self: *ZfsHandle,
+        allocator: std.mem.Allocator,
+        snapshot_path: []const u8,
+    ) !void {
+        // Validate the snapshot path
+        if (!isValidDatasetName(snapshot_path)) {
+            return ZfsError.InvalidDatasetName;
+        }
+
+        // Check for @ in path (must be a snapshot)
+        if (std.mem.indexOf(u8, snapshot_path, "@") == null) {
+            return ZfsError.InvalidOperation;
+        }
+
+        const c_path = try allocator.dupeZ(u8, snapshot_path);
+        defer allocator.free(c_path);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        // Open the snapshot
+        const snap_handle = c.zfs_open(self.handle, c_path.ptr, c.ZFS_TYPE_SNAPSHOT);
+        if (snap_handle == null) {
+            const errno_val = c.libzfs_errno(self.handle);
+            return libzfsErrorToZig(errno_val);
+        }
+        defer c.zfs_close(snap_handle);
+
+        // Perform the rollback (force=false to not destroy dependent snapshots)
+        const result = c.zfs_rollback(snap_handle, null, 0);
+
+        if (result != 0) {
+            const errno_val = c.libzfs_errno(self.handle);
+            return libzfsErrorToZig(errno_val);
+        }
+    }
+
     /// Clone a snapshot to create a new dataset
     pub fn clone(
         self: *ZfsHandle,
