@@ -1,0 +1,249 @@
+# Axiom Artifact Lockbox
+
+## Overview
+
+Axiom Artifact Lockbox is a specialized tool for deterministic ingestion, normalization, and deployment of third-party vendor software artifacts on FreeBSD and BSD-derived systems.
+
+**Lockbox is not:**
+- A general package manager
+- A build system
+- A sandbox or container runtime
+
+**Lockbox provides:**
+- Operational control over vendor binaries
+- Reproducibility and auditability
+- Atomic deployment via ZFS
+- Guaranteed rollback capability
+
+## Design Principles
+
+1. **Canonical truth is simple and human readable** - YAML for authoring, JSON for machine verification
+2. **Machine verification must be deterministic** - Content hashes derived only from canonical JSON
+3. **Human authoring and machine hashing are separate concerns** - YAML is never hashed directly
+4. **No implicit behavior** - All operations are explicit
+5. **All mutations are explicit and reversible** - Every deployment can be rolled back
+
+## Configuration Format
+
+### Dual Format Support
+
+Lockbox accepts metadata in either format:
+- `lockbox.yaml` - Human authoring format
+- `lockbox.json` - Machine-readable format
+
+Both formats are parsed into the same strict typed data model.
+
+### Generated Output
+
+Lockbox emits `lockbox.canonical.json`:
+- Machine generated
+- Canonicalized (sorted keys, no whitespace)
+- Deterministic
+- Never edited by humans
+
+**All content IDs, hashes, and signatures are derived from:**
+- `lockbox.canonical.json`
+- The Merkle root of the artifact filesystem manifest
+
+## YAML Specification
+
+### Example lockbox.yaml
+
+```yaml
+format_version: "1.0"
+schema_version: "1.0"
+
+identity:
+  name: "oracle-jdk"
+  version: "17.0.2"
+  description: "Oracle JDK 17 LTS"
+  vendor:
+    name: "oracle"
+    display_name: "Oracle Corporation"
+    url: "https://www.oracle.com/java/"
+
+source:
+  url: "https://download.oracle.com/java/17/archive/jdk-17.0.2_linux-x64_bin.tar.gz"
+  sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  filename: "jdk-17.0.2_linux-x64_bin.tar.gz"
+  size: 185646944
+  fetched_at: "2025-01-01T12:00:00Z"
+
+filesystem:
+  files:
+    - path: "bin/java"
+      sha256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+      size: 16384
+      mode: "0755"
+      type: regular
+    - path: "lib/libjvm.so"
+      sha256: "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+      size: 25165824
+      mode: "0755"
+      type: regular
+
+deployment:
+  path: "/opt/oracle/jdk-17"
+  dataset: "zroot/axiom/lockbox/oracle-jdk-17"
+  snapshot: true
+```
+
+### YAML Constraints
+
+When using YAML:
+- All scalar values must resolve to explicit types
+- Versions are **strings** (e.g., `version: "1.0"`)
+- File modes are **strings** (e.g., `mode: "0755"`)
+- Timestamps are RFC 3339 UTC strings
+- No floats allowed
+- No implicit typing
+- Unknown keys are rejected
+- Comments are allowed (ignored by canonicalization)
+
+## Canonical JSON Format
+
+Canonical JSON must:
+- Be UTF-8 encoded
+- Have lexicographically sorted object keys
+- Use normalized number formats
+- Contain no insignificant whitespace
+- Follow a single, stable schema version
+
+### Example Output
+
+```json
+{"deployment":{"dataset":"zroot/axiom/lockbox/oracle-jdk-17","path":"/opt/oracle/jdk-17","snapshot":true},"filesystem":{"files":[{"mode":"0755","path":"bin/java","sha256":"abcdef...","size":16384,"type":"regular"}]},"format_version":"1.0","identity":{"name":"oracle-jdk","vendor":{"name":"oracle"},"version":"17.0.2"},"schema_version":"1.0","source":{"sha256":"0123456789...","url":"https://download.oracle.com/..."}}
+```
+
+## Artifact Identity
+
+An artifact is identified by:
+
+| Type | Description |
+|------|-------------|
+| **Human Identity** | name, version, vendor (for human reference) |
+| **Machine Identity** | Content hash from canonical JSON + filesystem Merkle root |
+
+**Human-friendly names are not authoritative. Content hashes are authoritative.**
+
+## CLI Commands
+
+### lockbox-ingest
+
+Ingest a vendor artifact from a lockbox.yaml specification.
+
+```bash
+axiom lockbox-ingest <lockbox.yaml> [--output <file>]
+```
+
+This command:
+1. Reads and validates the YAML specification
+2. Computes the content hash
+3. Generates canonical JSON
+4. Prepares the artifact for deployment
+
+### lockbox-normalize
+
+Normalize a lockbox specification to canonical JSON.
+
+```bash
+axiom lockbox-normalize <lockbox.yaml> [--output <file>]
+```
+
+Canonical JSON is the **only** format used for hashing and signing, ensuring cryptographic determinism regardless of YAML formatting.
+
+### lockbox-deploy
+
+Deploy a vendor artifact to its target location.
+
+```bash
+axiom lockbox-deploy <lockbox.yaml|lockbox.canonical.json> [--dry-run] [--no-snapshot]
+```
+
+Deployment is atomic via ZFS and includes automatic snapshot creation for rollback capability.
+
+### lockbox-rollback
+
+Rollback a deployed artifact to a previous state.
+
+```bash
+axiom lockbox-rollback <lockbox.yaml> <snapshot-name>
+```
+
+Uses ZFS rollback to atomically restore the previous state.
+
+### lockbox-verify
+
+Verify the integrity of a lockbox artifact.
+
+```bash
+axiom lockbox-verify <lockbox.yaml|lockbox.canonical.json>
+```
+
+Recomputes the content hash and compares it against the stored machine identity.
+
+### lockbox-show
+
+Display detailed information about a lockbox artifact.
+
+```bash
+axiom lockbox-show <lockbox.yaml|lockbox.canonical.json> [--json] [--yaml] [--hash]
+```
+
+### lockbox-audit
+
+Show the audit log of lockbox operations.
+
+```bash
+axiom lockbox-audit
+```
+
+## Scope Boundaries
+
+### Lockbox Must NOT:
+- Replace pkg or ports
+- Resolve system dependencies
+- Auto-update vendor software
+- Guess user intent
+- Mutate global system state implicitly
+
+### Lockbox Must:
+- Fail loudly on invariant violations
+- Guarantee atomic deployment via ZFS
+- Guarantee rollback capability
+- Preserve full audit history
+
+## Integration with Axiom
+
+Lockbox fits naturally within the Axiom ecosystem:
+
+- Uses the same ZFS infrastructure as Axiom package management
+- Shares signing and verification infrastructure
+- Follows Axiom's design philosophy of determinism and reproducibility
+- Can coexist with standard Axiom packages
+
+## Enterprise Use Cases
+
+1. **Oracle JDK/JRE Deployment** - Manage Java versions across systems
+2. **VMware Tools** - Deploy VMware guest tools consistently
+3. **Commercial Database Software** - Oracle, DB2, SQL Server drivers
+4. **Vendor Monitoring Agents** - Datadog, New Relic, etc.
+5. **Proprietary Middleware** - WebLogic, WebSphere components
+
+## Audit and Compliance
+
+Lockbox maintains a complete audit trail:
+
+| Operation | Description |
+|-----------|-------------|
+| `ingest` | Artifact ingestion with content hash |
+| `normalize` | Canonical JSON generation |
+| `deploy` | Deployment to target with snapshot |
+| `rollback` | Rollback to previous state |
+| `verify` | Integrity verification |
+
+Each entry includes:
+- Timestamp (RFC 3339 UTC)
+- Operation type
+- Content hash at time of operation
+- Actor (user or system)

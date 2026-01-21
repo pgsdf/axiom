@@ -22,6 +22,12 @@ pub const FormatVersions = struct {
 
     /// Cache index format (cache-index.yaml)
     pub const cache_index: []const u8 = "1.0";
+
+    /// Lockbox specification format (lockbox.yaml / lockbox.json)
+    pub const lockbox: []const u8 = "1.0";
+
+    /// Lockbox schema version for canonical JSON
+    pub const lockbox_schema: []const u8 = "1.0";
 };
 
 /// Parsed semantic version for comparison
@@ -113,6 +119,7 @@ pub const FormatType = enum {
     store,
     provenance,
     cache_index,
+    lockbox,
 
     /// Get the current expected version for this format type
     pub fn currentVersion(self: FormatType) []const u8 {
@@ -123,6 +130,7 @@ pub const FormatType = enum {
             .store => FormatVersions.store,
             .provenance => FormatVersions.provenance,
             .cache_index => FormatVersions.cache_index,
+            .lockbox => FormatVersions.lockbox,
         };
     }
 
@@ -135,6 +143,7 @@ pub const FormatType = enum {
             .store => "store layout",
             .provenance => "provenance",
             .cache_index => "cache index",
+            .lockbox => "lockbox specification",
         };
     }
 };
