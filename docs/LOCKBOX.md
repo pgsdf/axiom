@@ -213,6 +213,57 @@ axiom lockbox-audit
 - Guarantee rollback capability
 - Preserve full audit history
 
+## ZFS Integration
+
+Lockbox leverages ZFS for atomic deployment and guaranteed rollback capability.
+
+### Snapshots
+
+When `snapshot: true` is set in the deployment configuration, Lockbox automatically creates a ZFS snapshot before deploying:
+
+```
+<dataset>@lockbox-pre-<content-hash-prefix>
+```
+
+For example:
+```
+zroot/axiom/lockbox/oracle-jdk-17@lockbox-pre-a1b2c3d4
+```
+
+The snapshot captures the exact state of the dataset before deployment, enabling instant rollback if needed.
+
+### Rollback
+
+The `lockbox-rollback` command uses ZFS's native rollback functionality:
+
+```bash
+axiom lockbox-rollback <lockbox.yaml> <snapshot-name>
+```
+
+This performs an atomic rollback to the specified snapshot, restoring:
+- All files to their previous state
+- File permissions and ownership
+- Directory structure
+
+**Important:** ZFS rollback destroys all changes made after the snapshot. Use with caution.
+
+### Dataset Management
+
+Lockbox expects the deployment dataset to exist. The dataset path is specified in the lockbox specification:
+
+```yaml
+deployment:
+  dataset: "zroot/axiom/lockbox/oracle-jdk-17"
+  path: "/opt/oracle/jdk-17"
+  snapshot: true
+```
+
+The `path` is the mountpoint where the dataset will be accessible. Lockbox does not automatically create datasets - this must be done beforehand using standard ZFS commands:
+
+```bash
+zfs create -o mountpoint=/opt/oracle/jdk-17 zroot/axiom/lockbox/oracle-jdk-17
+```
+
 ## Integration with Axiom
 
 Lockbox fits naturally within the Axiom ecosystem:
