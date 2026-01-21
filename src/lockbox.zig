@@ -271,6 +271,197 @@ pub const LockboxParser = struct {
         return spec;
     }
 
+    /// Parse lockbox specification from JSON content
+    pub fn parseJson(self: *Self, content: []const u8) !LockboxSpec {
+        var spec: LockboxSpec = undefined;
+
+        // Initialize with defaults
+        spec.format_version = try self.allocator.dupe(u8, FORMAT_VERSION);
+        spec.schema_version = try self.allocator.dupe(u8, SCHEMA_VERSION);
+        spec.machine_identity = null;
+        spec.deployment = null;
+        spec.filesystem = null;
+
+        // Use std.json to parse
+        const parsed = std.json.parseFromSlice(std.json.Value, self.allocator, content, .{}) catch {
+            try self.addError("Failed to parse JSON");
+            return error.JsonParseError;
+        };
+        defer parsed.deinit();
+
+        const root = parsed.value;
+        if (root != .object) {
+            try self.addError("JSON root must be an object");
+            return error.JsonParseError;
+        }
+
+        const obj = root.object;
+
+        // Parse format_version
+        if (obj.get("format_version")) |v| {
+            if (v == .string) {
+                self.allocator.free(spec.format_version);
+                spec.format_version = try self.allocator.dupe(u8, v.string);
+            }
+        }
+
+        // Parse schema_version
+        if (obj.get("schema_version")) |v| {
+            if (v == .string) {
+                self.allocator.free(spec.schema_version);
+                spec.schema_version = try self.allocator.dupe(u8, v.string);
+            }
+        }
+
+        // Parse identity
+        if (obj.get("identity")) |identity_val| {
+            if (identity_val == .object) {
+                const identity_obj = identity_val.object;
+                const name = if (identity_obj.get("name")) |v| (if (v == .string) v.string else null) else null;
+                const version = if (identity_obj.get("version")) |v| (if (v == .string) v.string else null) else null;
+                const description = if (identity_obj.get("description")) |v| (if (v == .string) v.string else null) else null;
+
+                if (name == null or version == null) {
+                    try self.addError("identity requires name and version");
+                    return error.JsonParseError;
+                }
+
+                var vendor: Vendor = .{
+                    .name = "unknown",
+                    .display_name = null,
+                    .url = null,
+                };
+
+                if (identity_obj.get("vendor")) |vendor_val| {
+                    if (vendor_val == .object) {
+                        const vendor_obj = vendor_val.object;
+                        if (vendor_obj.get("name")) |v| {
+                            if (v == .string) vendor.name = try self.allocator.dupe(u8, v.string);
+                        }
+                        if (vendor_obj.get("display_name")) |v| {
+                            if (v == .string) vendor.display_name = try self.allocator.dupe(u8, v.string);
+                        }
+                        if (vendor_obj.get("url")) |v| {
+                            if (v == .string) vendor.url = try self.allocator.dupe(u8, v.string);
+                        }
+                    }
+                }
+
+                spec.identity = .{
+                    .name = try self.allocator.dupe(u8, name.?),
+                    .version = try self.allocator.dupe(u8, version.?),
+                    .description = if (description) |d| try self.allocator.dupe(u8, d) else null,
+                    .vendor = vendor,
+                };
+            }
+        } else {
+            try self.addError("Missing required field: identity");
+            return error.JsonParseError;
+        }
+
+        // Parse source
+        if (obj.get("source")) |source_val| {
+            if (source_val == .object) {
+                const source_obj = source_val.object;
+                const url = if (source_obj.get("url")) |v| (if (v == .string) v.string else null) else null;
+                const sha256 = if (source_obj.get("sha256")) |v| (if (v == .string) v.string else null) else null;
+
+                if (url == null or sha256 == null) {
+                    try self.addError("source requires url and sha256");
+                    return error.JsonParseError;
+                }
+
+                const filename = if (source_obj.get("filename")) |v| (if (v == .string) try self.allocator.dupe(u8, v.string) else null) else null;
+                const fetched_at = if (source_obj.get("fetched_at")) |v| (if (v == .string) try self.allocator.dupe(u8, v.string) else null) else null;
+
+                var size: ?u64 = null;
+                if (source_obj.get("size")) |v| {
+                    if (v == .integer) size = @intCast(v.integer);
+                }
+
+                spec.source = .{
+                    .url = try self.allocator.dupe(u8, url.?),
+                    .sha256 = try self.allocator.dupe(u8, sha256.?),
+                    .filename = filename,
+                    .size = size,
+                    .fetched_at = fetched_at,
+                };
+            }
+        } else {
+            try self.addError("Missing required field: source");
+            return error.JsonParseError;
+        }
+
+        // Parse filesystem (optional)
+        if (obj.get("filesystem")) |fs_val| {
+            if (fs_val == .object) {
+                const fs_obj = fs_val.object;
+                if (fs_obj.get("files")) |files_val| {
+                    if (files_val == .array) {
+                        var files: std.ArrayList(FileEntry) = .empty;
+                        errdefer {
+                            for (files.items) |*f| f.deinit(self.allocator);
+                            files.deinit(self.allocator);
+                        }
+
+                        for (files_val.array.items) |file_val| {
+                            if (file_val == .object) {
+                                const file_obj = file_val.object;
+                                const path = if (file_obj.get("path")) |v| (if (v == .string) v.string else null) else null;
+                                const file_sha256 = if (file_obj.get("sha256")) |v| (if (v == .string) v.string else null) else null;
+
+                                if (path != null and file_sha256 != null) {
+                                    var file_size: ?u64 = null;
+                                    if (file_obj.get("size")) |v| {
+                                        if (v == .integer) file_size = @intCast(v.integer);
+                                    }
+                                    const mode = if (file_obj.get("mode")) |v| (if (v == .string) try self.allocator.dupe(u8, v.string) else null) else null;
+                                    const file_type = if (file_obj.get("type")) |v| (if (v == .string) try self.allocator.dupe(u8, v.string) else null) else null;
+
+                                    try files.append(self.allocator, .{
+                                        .path = try self.allocator.dupe(u8, path.?),
+                                        .sha256 = try self.allocator.dupe(u8, file_sha256.?),
+                                        .size = file_size,
+                                        .mode = mode,
+                                        .file_type = file_type,
+                                    });
+                                }
+                            }
+                        }
+
+                        spec.filesystem = .{
+                            .files = try files.toOwnedSlice(self.allocator),
+                        };
+                    }
+                }
+            }
+        }
+
+        // Parse deployment (optional)
+        if (obj.get("deployment")) |deploy_val| {
+            if (deploy_val == .object) {
+                const deploy_obj = deploy_val.object;
+                const path = if (deploy_obj.get("path")) |v| (if (v == .string) v.string else null) else null;
+
+                if (path != null) {
+                    const dataset = if (deploy_obj.get("dataset")) |v| (if (v == .string) try self.allocator.dupe(u8, v.string) else null) else null;
+                    var snapshot: bool = true;
+                    if (deploy_obj.get("snapshot")) |v| {
+                        if (v == .bool) snapshot = v.bool;
+                    }
+
+                    spec.deployment = .{
+                        .path = try self.allocator.dupe(u8, path.?),
+                        .dataset = dataset,
+                        .snapshot = snapshot,
+                    };
+                }
+            }
+        }
+
+        return spec;
+    }
+
     fn extractValue(self: *Self, line: []const u8, prefix: []const u8) ![]const u8 {
         _ = self;
         const after_prefix = line[prefix.len..];

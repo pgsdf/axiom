@@ -281,6 +281,73 @@ Lockbox fits naturally within the Axiom ecosystem:
 4. **Vendor Monitoring Agents** - Datadog, New Relic, etc.
 5. **Proprietary Middleware** - WebLogic, WebSphere components
 
+## Canonicalization Boundary
+
+The `lockbox_canon` module provides a clean API boundary for all canonicalization operations. This module is intentionally kept separate from Axiom's existing YAML pipeline to avoid conflicts with package manifest processing.
+
+### API Overview
+
+```zig
+const lockbox_canon = @import("lockbox_canon.zig");
+
+// Initialize the canonicalization boundary
+var canon = lockbox_canon.LockboxCanon.init(allocator);
+defer canon.deinit();
+
+// Canonicalize from file (auto-detects format)
+var result = try canon.canonicalizeFile("lockbox.yaml");
+defer result.deinit();
+
+// Access results
+std.debug.print("Content ID: {s}\n", .{result.content_id});
+std.debug.print("Canonical JSON: {s}\n", .{result.canonical_bytes});
+```
+
+### Canonicalization Flow
+
+1. **Input Detection**: Accepts `.yaml`, `.yml`, or `.json` files
+2. **Parsing**: Strict typed parsing into `LockboxSpec`
+3. **Emission**: Deterministic canonical JSON output
+4. **Hashing**: SHA-256 content hash computation
+5. **Signing** (optional): Ed25519 signature over content ID
+
+### Convenience Functions
+
+```zig
+// Get canonical JSON bytes
+const canonical = try lockbox_canon.canonicalizeFile(allocator, "lockbox.yaml");
+defer allocator.free(canonical);
+
+// Compute content ID
+const id = try lockbox_canon.computeContentId(allocator, "lockbox.yaml");
+
+// Check semantic equivalence
+const same = try lockbox_canon.areEquivalent(allocator, "a.yaml", "b.json");
+```
+
+### Signing
+
+The canonicalization boundary supports optional signing:
+
+```zig
+var signed = try canon.canonicalizeAndSign(
+    content,
+    .yaml,
+    key_pair,
+    "KEY123",
+    "Signer Name",
+);
+defer signed.deinit();
+
+// Write detached signature
+try canon.writeSignatureToFile(&signed, "lockbox.sig");
+```
+
+Signatures are computed over the content ID (not the raw bytes), ensuring:
+- Format-independent verification (YAML and JSON produce identical signatures)
+- Merkle root inclusion in signed data
+- Standard Ed25519 signature format
+
 ## Audit and Compliance
 
 Lockbox maintains a complete audit trail:
