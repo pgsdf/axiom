@@ -118,7 +118,7 @@ pub const CanonicalJson = struct {
         hasher.final(&hash);
 
         var hex: [64]u8 = undefined;
-        _ = std.fmt.bufPrint(&hex, "{x}", .{std.fmt.fmtSliceHexLower(&hash)}) catch unreachable;
+        _ = std.fmt.bufPrint(&hex, "{x}", .{hash}) catch unreachable;
         return hex;
     }
 };

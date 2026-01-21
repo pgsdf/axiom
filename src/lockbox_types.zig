@@ -219,7 +219,7 @@ pub const FilesystemManifest = struct {
         hasher.final(&hash);
 
         const hex = try allocator.alloc(u8, 64);
-        _ = std.fmt.bufPrint(hex, "{x}", .{std.fmt.fmtSliceHexLower(&hash)}) catch unreachable;
+        _ = std.fmt.bufPrint(hex, "{x}", .{hash}) catch unreachable;
         return hex;
     }
 
@@ -449,7 +449,7 @@ pub const LockboxSpec = struct {
         hasher.final(&hash);
 
         const hex = try allocator.alloc(u8, 64);
-        _ = std.fmt.bufPrint(hex, "{x}", .{std.fmt.fmtSliceHexLower(&hash)}) catch unreachable;
+        _ = std.fmt.bufPrint(hex, "{x}", .{hash}) catch unreachable;
         return hex;
     }
 };
