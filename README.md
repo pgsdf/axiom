@@ -1,21 +1,73 @@
-# Axiom System Manager
+# Axiom
 
-Axiom is the system manager for the Pacific Grove Software Distribution (PGSD). It provides an immutable ZFS-backed software store, declarative profiles, deterministic dependency resolution, and atomic environment activation.
+**Axiom** is a ZFS-native system manager and package infrastructure for the
+Pacific Grove Software Distribution (PGSD).
 
-## Architecture
+It provides an **immutable ZFS-backed software store**, **declarative system
+profiles**, **deterministic dependency resolution**, and **atomic environment
+activation**.
 
-Axiom is built on six core principles:
+Axiom is designed for long-lived systems where **reproducibility,
+auditability, and rollback** matter more than convenience abstractions or opaque
+automation.
 
-1. **Canonical truth is simple and human readable** - YAML manifests, not complex DSLs
-2. **Immutable package store as ZFS datasets** - Leverages ZFS copy-on-write and snapshots
-3. **Profiles define whole system state** - Declarative configuration
-4. **Deterministic dependency resolution** - Reproducible builds
-5. **ZFS first operations** - Create, snapshot, clone, send, receive
-6. **Separation of concerns** - Build → Store → Index → Resolve → Realise → Activate
+Axiom is not a traditional package manager. It is a **system-level substrate**
+for building, storing, resolving, and activating software environments as
+*explicit, immutable artifacts*.
+
+---
+
+## What Problem Axiom Solves
+
+Modern Unix-like systems accumulate structural problems over time:
+
+- Package state drifts and becomes difficult to reproduce
+- Upgrades are destructive and rollback is unreliable
+- Dependency resolution is implicit and hard to audit
+- System state is scattered across mutable directories
+
+Axiom addresses these issues by treating **the entire software stack as data**:
+
+- Packages are immutable ZFS datasets
+- Desired system state is declared explicitly
+- Dependency resolution is deterministic and recorded
+- Activation is atomic and reversible
+
+If the system breaks, you do not repair it. You **roll back**.
+
+---
+
+## Core Concepts
+
+Axiom is built around a small set of strict principles:
+
+1. **Canonical truth is simple and human readable**  
+   YAML manifests, not complex DSLs.
+
+2. **Immutable package store as ZFS datasets**  
+   Leveraging ZFS copy-on-write, snapshots, and clones.
+
+3. **Profiles define whole system state**  
+   Declarative configuration as user intent.
+
+4. **Deterministic dependency resolution**  
+   Reproducible resolution producing explicit lock files.
+
+5. **ZFS-first operations**  
+   Create, snapshot, clone, send, receive as first-class actions.
+
+6. **Separation of concerns**  
+   Build → Store → Index → Resolve → Realize → Activate.
+
+These constraints are deliberate. They are what make long-term maintenance
+possible.
+
+---
 
 ## Dataset Model
 
 ```
+
 zroot/axiom/
 ├── store/pkg/<name>/<version>/<revision>/<build-id>/
 │   ├── manifest.yaml       # Package metadata
@@ -25,37 +77,69 @@ zroot/axiom/
 ├── profiles/<name>/
 │   ├── profile.yaml        # Requested packages
 │   └── profile.lock.yaml   # Resolved dependencies
-└── env/<name>/             # Realized environments (clones)
+└── env/<name>/             # Realized environments
+
 ```
+
+Packages are never modified in place. Environments are disposable. Profiles
+and lock files capture intent and resolution separately.
+
+---
+
+## High-Level Architecture
+
+```
+
+Build artifacts / Ports / Tarballs
+↓
+Package Import
+↓
+Immutable ZFS Store
+↓
+Profiles
+↓
+Resolver
+↓
+Lock Files
+↓
+Environments
+↓
+Activation
+
+````
+
+Each phase produces a concrete artifact that can be inspected, validated,
+reproduced, or rolled back later.
+
+---
 
 ## Quick Start
 
 ### Prerequisites
 
 - FreeBSD 14.x or GhostBSD with ZFS
-- Zig 0.15.0 or later
-- FreeBSD ports tree (`portsnap fetch extract` or `git clone`)
+- Zig 0.15.x
+- FreeBSD ports tree (`portsnap` or `git`)
 
-### Option 1: Automated Bootstrap (Recommended)
+### Automated Setup (Recommended)
 
-```bash
-# Step 1: Build and install Axiom
+```sh
 zig build
 sudo cp zig-out/bin/axiom /usr/local/bin/axiom
-
-# Step 2: Run the setup wizard (creates ZFS datasets)
 sudo axiom setup
+````
 
-# Step 3: Bootstrap from ports (automatic dependency ordering)
-sudo axiom bootstrap-ports --minimal    # Quick: gmake, m4, help2man
-# Or for full bootstrap:
-sudo axiom bootstrap-ports              # Full: includes autoconf, automake, etc.
+### Minimal Bootstrap
 
-# Step 4: Import packages
+```sh
+sudo axiom bootstrap-ports --minimal
 sudo axiom ports-import shells/bash
 sudo axiom ports-import editors/vim
+```
 
-# Step 5: Create profile, resolve, realize, activate
+### Create and Activate an Environment
+
+```sh
 sudo axiom profile-create myprofile
 sudo axiom profile-add-package myprofile bash vim
 sudo axiom resolve myprofile
@@ -63,441 +147,97 @@ sudo axiom realize myenv myprofile
 source /axiom/env/myenv/activate
 ```
 
-### Option 2: Manual Bootstrap
+For detailed setup and troubleshooting, see **SETUP.md** and **USER_GUIDE.md**.
 
-If you prefer manual control or `bootstrap-ports` fails:
+---
 
-```bash
-# After axiom setup, import in this exact order:
-sudo axiom ports-import misc/help2man   # Required by m4
-sudo axiom ports-import devel/m4        # Required by autoconf/gmake
-sudo axiom ports-import devel/gmake     # Required by most packages
-```
+## Who Axiom Is For
 
-> **Warning**: The bootstrap order matters! `help2man` must be built before `m4`,
-> and `m4` must be built before `gmake`. The dependency chain is automatically
-> handled by `ports-import`, but if you skip packages, you may see errors.
+Axiom is intended for:
 
-### Option 3: Import Bootstrap Tarball
+* System engineers who value **predictability over convenience**
+* Long-lived systems that must survive years or decades of upgrades
+* Research, infrastructure, and appliance-style deployments
+* Developers building **new OS distributions or platforms** on FreeBSD and ZFS
 
-For air-gapped systems or faster setup:
+Axiom is explicitly **not** a drop-in replacement for `pkg` or a convenience-first
+desktop package manager.
 
-```bash
-# Download pre-built bootstrap tarball
-curl -O https://axiom.pgsd.org/bootstrap/axiom-bootstrap-14.2-amd64.tar.zst
+---
 
-# Import it
-sudo axiom bootstrap-import axiom-bootstrap-14.2-amd64.tar.zst
-```
+## How Axiom Is Different
 
-## Common Errors and Solutions
+Axiom deliberately avoids several common design choices:
 
-| Error | Cause | Solution |
-|-------|-------|----------|
-| `PackageNotFound` during resolve | Package not imported | Run `axiom ports-import <origin>` first |
-| `missing dependency` during build | Bootstrap incomplete | Complete bootstrap chain, see above |
-| `ZFS dataset exists` | Previous failed run | `axiom gc` or manually destroy dataset |
-| Build fails with `gmake: not found` | gmake not bootstrapped | `axiom ports-import devel/gmake` |
+* No mutable global package state
+* No in-place upgrades
+* No implicit dependency resolution
+* No hidden rebuilds or side effects
 
-## Important Notes
+Instead, Axiom treats software as **versioned artifacts** and system state as
+**data**. Every step is explicit, inspectable, and reversible.
 
-- **All store operations require root** - Use `sudo` for import, resolve, realize
-- **Resolution requires packages in store** - Import before resolving profiles
-- **Environment activation modifies PATH** - Do NOT activate as root for untrusted packages
-- **The ports tree must exist** - Install with `portsnap fetch extract`
+This makes Axiom suitable for environments where correctness and traceability
+matter more than speed of iteration.
 
-## Dependency Resolution
+---
 
-The `axiom resolve` command supports various strategies and options for resolving package dependencies:
+## Project Status
 
-### Basic Usage
+Axiom is functional and actively developed.
 
-```bash
-sudo axiom resolve myprofile                    # Default: auto strategy, newest versions
-sudo axiom resolve myprofile --strategy sat     # Use SAT solver for complex graphs
-sudo axiom resolve myprofile --prefer stable    # Prefer older, stable versions
-```
+The project prioritizes **architectural stability over feature churn**.
+Core commitments are long-term:
 
-### Resolution Strategies
+* Immutable package store
+* Declarative profiles
+* Deterministic dependency resolution
+* ZFS-native atomic operations
 
-| Strategy | Description | Best For |
-|----------|-------------|----------|
-| `greedy` | Fast, picks first satisfying version | Simple dependency graphs |
-| `backtracking` | Tries alternatives on conflicts | Medium complexity graphs |
-| `sat` | SAT solver for optimal solution | Complex constraints |
-| `auto` | Greedy with SAT fallback (default) | General use |
+Breaking changes are deliberate, documented, and avoided unless strictly
+necessary.
 
-### Version Preferences
+---
 
-| Preference | Description | Use Case |
-|------------|-------------|----------|
-| `newest` | Latest satisfying version (default) | Development |
-| `stable` | Older, proven versions | Production servers |
-| `oldest` | Minimum satisfying version | Compatibility testing |
+## Sponsorship
 
-### Advanced Options
+Axiom is infrastructure software. Its value compounds over time, while its
+maintenance cost remains constant.
 
-```bash
-# Production-grade resolution
-sudo axiom resolve production --strategy backtracking --prefer stable
+If you or your organization depend on Axiom, consider supporting its
+development. Sponsorship focuses on **continuity and stewardship**, not
+exclusive features.
 
-# Fine-tune backtracking behavior
-sudo axiom resolve myprofile --max-backtracks 10 --total-backtracks 100
+See **SPONSORS.md** for details.
 
-# Resource limits for untrusted manifests
-sudo axiom resolve myprofile --strict --timeout 60 --max-memory 512
-
-# Show resolution statistics
-sudo axiom resolve myprofile --stats
-```
-
-See `axiom resolve --help` for all options.
-
-## Dependency Visualization
-
-Axiom provides tools for visualizing and debugging dependency graphs:
-
-### View Dependency Tree
-
-```bash
-axiom deps-graph myprofile                    # ASCII tree (default)
-axiom deps-graph myprofile --format dot       # Graphviz DOT format
-axiom deps-graph myprofile --format json      # JSON for tooling
-axiom deps-graph myprofile --depth 2          # Limit depth
-```
-
-### Analyze Dependencies
-
-```bash
-axiom deps-analyze myprofile
-# Shows: package count, depth, fanout, most depended-on package
-```
-
-### Trace Package Inclusion
-
-```bash
-axiom deps-why myprofile openssl
-# Shows why openssl is included and which packages depend on it
-```
-
-### Find Dependency Path
-
-```bash
-axiom deps-path myprofile bash openssl
-# Shows shortest path: bash → readline → ncurses → openssl
-```
-
-### Generate Graphviz Diagram
-
-```bash
-axiom deps-graph myprofile --format dot > deps.dot
-dot -Tpng deps.dot -o deps.png    # Requires graphviz
-```
-
-## HSM/PKCS#11 Signing
-
-Axiom supports hardware security modules for package signing via the PKCS#11 standard.
-
-### List Available HSM Slots
-
-```bash
-axiom hsm-list                                    # Use default library
-axiom hsm-list --library /usr/lib/libykcs11.so   # Use YubiKey
-axiom hsm-list --verbose                          # Show detailed info
-```
-
-### List Signing Keys
-
-```bash
-axiom hsm-keys --slot 0 --pin 123456             # List keys on slot 0
-axiom hsm-keys --library /usr/local/lib/softhsm/libsofthsm2.so --slot 0 --pin mypin
-```
-
-### Supported HSM Devices
-
-| Device | Linux Library | FreeBSD Library |
-|--------|--------------|-----------------|
-| SoftHSM | `/usr/lib/softhsm/libsofthsm2.so` | `/usr/local/lib/softhsm/libsofthsm2.so` |
-| YubiKey | `/usr/lib/libykcs11.so` | `/usr/local/lib/libykcs11.so` |
-| OpenSC | `/usr/lib/opensc-pkcs11.so` | `/usr/local/lib/opensc-pkcs11.so` |
-
-## Multi-Party Signing
-
-Axiom supports threshold signing requiring multiple signatures from authorized parties.
-
-### List Package Signatures
-
-```bash
-axiom signatures /axiom/store/mypackage-1.0.0
-```
-
-### Verify Threshold Requirement
-
-```bash
-# Require at least 2 trusted signatures
-axiom signatures mypackage --threshold 2
-```
-
-### Multi-Signature Policy
-
-Create a policy file to define signing requirements:
-
-```yaml
-# signing-policy.yaml
-threshold: 2
-policy_name: "Release Policy"
-signers:
-  - pgsd-release-key
-  - security-team-key
-  - qa-team-key
-required_signers:
-  - pgsd-release-key
-```
-
-## Service Management
-
-Axiom integrates with FreeBSD's rc.d service management system.
-
-### List Services
-
-```bash
-axiom service-list                              # List all services
-axiom service-list --profile /axiom/profiles/myprofile
-```
-
-### Service Control
-
-```bash
-axiom service-status nginx                      # Show service status
-axiom service-enable nginx                      # Enable at boot
-axiom service-disable nginx                     # Disable at boot
-axiom service-start nginx                       # Start service
-axiom service-stop nginx                        # Stop service
-axiom service-restart nginx                     # Restart service
-```
-
-### Service Declaration in Manifest
-
-Packages can declare services in their manifest:
-
-```yaml
-# manifest.yaml
-services:
-  - name: nginx
-    type: daemon
-    rc_script: etc/rc.d/nginx
-    description: "Web server"
-    default_enabled: true
-    dependencies:
-      - networking
-    ports:
-      - 80
-      - 443
-```
-
-## Boot Environments
-
-Axiom provides first-class support for ZFS boot environments, enabling atomic system upgrades with rollback.
-
-### List Boot Environments
-
-```bash
-axiom be                                        # List all boot environments
-axiom be-list                                   # Same as above
-```
-
-### Create Boot Environment
-
-```bash
-axiom be-create myenv                           # Create from current
-axiom be-create upgrade-test --source stable    # Clone from specific BE
-axiom be-create backup --activate               # Create and activate
-```
-
-### Manage Boot Environments
-
-```bash
-axiom be-activate myenv                         # Activate for next boot
-axiom be-activate test --temporary              # Temporary activation (one boot only)
-axiom be-destroy old-backup                     # Remove boot environment
-axiom be-rollback                               # Revert to previous BE
-axiom be-rename temp stable                     # Rename boot environment
-```
-
-### Mount/Unmount for Inspection
-
-```bash
-axiom be-mount backup                           # Mount to temp location
-axiom be-mount backup /mnt/backup               # Mount to specific path
-axiom be-unmount backup                         # Unmount when done
-```
-
-## Remote Binary Cache
-
-Axiom implements a binary cache protocol for efficient package distribution across networks.
-
-### Cache Server
-
-```bash
-axiom cache-server                              # Start on default port 8080
-axiom cache-server --port 9000                  # Custom port
-axiom cache-server --store /data/axiom          # Custom store path
-```
-
-### Cache Configuration
-
-Configure remote cache sources in `/etc/axiom/caches.yaml`:
-
-```yaml
-caches:
-  - url: https://cache.example.com
-    priority: 100
-    trust: release-key
-  - url: https://internal.example.com/axiom
-    priority: 50
-    trust: internal-key
-
-verify_signatures: true
-parallel_downloads: 4
-timeout_ms: 30000
-```
-
-### Remote Operations
-
-```bash
-axiom remote-fetch bash                         # Fetch latest version
-axiom remote-fetch bash@5.2.0                   # Fetch specific version
-axiom remote-fetch bash --source http://cache.example.com
-
-axiom remote-push bash@5.2.0 --target http://cache.example.com
-axiom remote-sync                               # Sync metadata from all sources
-axiom remote-sources                            # List configured sources
-axiom remote-sources --add http://new-cache.example.com
-```
-
-### Cache Server API
-
-The cache server exposes a RESTful API (Protocol v1.0):
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v1/info` | GET | Server information |
-| `/api/v1/packages` | GET | List all packages |
-| `/api/v1/packages/{name}/{version}` | GET | Package metadata |
-| `/api/v1/packages/{name}/{version}/nar` | GET | Package archive |
-| `/api/v1/upload/{name}/{version}` | POST | Upload package |
-
-## Building
-
-Requires:
-- Zig 0.15.0 or later
-- FreeBSD with ZFS or PGSD
-- libzfs development headers
-
-```bash
-zig build
-```
-
-### Testing
-
-Axiom provides several test targets for different use cases:
-
-```bash
-# Quick check - verify compilation succeeds
-zig build check
-
-# Unit tests - no root required
-zig build test
-
-# CI suite - build + unit tests (for automated CI)
-zig build ci
-
-# Full test suite - requires root and ZFS
-sudo zig build ci-full
-
-# Full unit tests with ZFS - requires root
-sudo zig build test-full
-```
-
-#### Individual Test Executables
-
-For debugging specific subsystems:
-
-```bash
-# Manifest parsing (no root)
-./zig-out/bin/test-manifest
-
-# Signature verification (no root)
-./zig-out/bin/test-signature
-
-# Package store (requires root + ZFS)
-sudo ./zig-out/bin/test-store
-
-# Dependency resolver
-./zig-out/bin/test-resolver       # Mock tests
-sudo ./zig-out/bin/test-resolver  # Full tests
-
-# Garbage collector
-./zig-out/bin/test-gc             # Mock tests
-sudo ./zig-out/bin/test-gc        # Full tests
-
-# Package import
-./zig-out/bin/test-import         # Mock tests
-sudo ./zig-out/bin/test-import    # Full tests
-```
-
-### ZFS Integration API
-
-```zig
-const zfs = @import("zfs.zig");
-
-// Initialize ZFS library
-var zfs_handle = try zfs.ZfsHandle.init();
-defer zfs_handle.deinit();
-
-// Create a dataset
-try zfs_handle.createDataset(allocator, "zroot/axiom/test", .{
-    .compression = "lz4",
-    .readonly = false,
-    .atime = false,
-});
-
-// Create a snapshot
-try zfs_handle.snapshot(allocator, "zroot/axiom/test", "snap1", false);
-
-// Clone snapshot to new dataset
-try zfs_handle.clone(
-    allocator,
-    "zroot/axiom/test@snap1",
-    "zroot/axiom/test-clone",
-    null,
-);
-
-// Set property
-try zfs_handle.setProperty(allocator, "zroot/axiom/test", "readonly", "on");
-
-// Get property
-const compression = try zfs_handle.getProperty(allocator, "zroot/axiom/test", "compression");
-defer allocator.free(compression);
-```
+---
 
 ## Documentation
 
-- [USER_GUIDE.md](USER_GUIDE.md) - **Comprehensive user guide** (start here!)
-- [SETUP.md](SETUP.md) - ZFS dataset configuration
-- [ARCHITECTURE.md](ARCHITECTURE.md) - System architecture and design
-- [MANIFEST_FORMAT.md](MANIFEST_FORMAT.md) - Package manifest specifications
-- [RESOLVER.md](RESOLVER.md) - Dependency resolution algorithm
-- [CLI.md](CLI.md) - Command-line interface reference
-- [SECURITY.md](SECURITY.md) - **Security model and threat documentation**
-- [ROADMAP.md](ROADMAP.md) - Future enhancement planning
+* **USER_GUIDE.md** – Comprehensive usage guide
+* **SETUP.md** – ZFS and system setup
+* **ARCHITECTURE.md** – Internal architecture and source layout
+* **CLI.md** – Command-line reference
+* **MANIFEST_FORMAT.md** – Package manifest specification
+* **RESOLVER.md** – Dependency resolution model
+* **SECURITY.md** – Security model and threat assumptions
+* **ROADMAP.md** – Planned evolution
+
+---
 
 ## License
 
 BSD 2-Clause License
 
-Copyright (c) 2025, Pacific Grove Software Distribution Foundation
+Copyright (c) 2025
+Pacific Grove Software Distribution Foundation
+
+---
 
 ## Author
 
-Vester "Vic" Thacker, Principal Scientist, Pacific Grove Software Distribution Foundation
+Vester “Vic” Thacker
+Pacific Grove Software Distribution Foundation
+
+```
+
