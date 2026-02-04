@@ -236,7 +236,7 @@ Pacific Grove Software Distribution Foundation
 
 ## Author
 
-Vester “Vic” Thacker
+Vester Imanuel “Vic” Thacker
 Pacific Grove Software Distribution Foundation
 
 
