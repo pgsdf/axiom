@@ -230,13 +230,13 @@ See **SPONSORS.md** for details.
 BSD 2-Clause License
 
 Copyright (c) 2025
-Pacific Grove Software Distribution Foundation
+Pacific Geoscience Systems Development Foundation
 
 ---
 
 ## Author
 
-Vester Imanuel “Vic” Thacker
-Pacific Grove Software Distribution Foundation
+Vester “Vic” Thacker
+PGSDF
 
 
