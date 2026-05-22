@@ -1,7 +1,6 @@
 # Axiom
 
-**Axiom** is a ZFS-native system manager and package infrastructure for the
-Pacific Grove Software Distribution (PGSD).
+**Axiom** is a ZFS-native system manager and package infrastructure.
 
 It provides an **immutable ZFS-backed software store**, **declarative system
 profiles**, **deterministic dependency resolution**, and **atomic environment
@@ -229,7 +228,7 @@ See **SPONSORS.md** for details.
 
 BSD 2-Clause License
 
-Copyright (c) 2025
+Copyright (c) 2025-2026
 Pacific Geoscience Systems Development Foundation
 
 ---
